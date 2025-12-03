@@ -10,6 +10,7 @@ import tutorRoutes from './routes/tutors.js';
 import appointmentRoutes from './routes/appointments.js';
 import uploadRoutes from './routes/upload.js';
 import { configureCloudinary } from './controllers/uploadController.js';
+import { verifyApiKey } from './middleware/apiKey.js';
 
 // Load env variables
 dotenv.config();
@@ -24,6 +25,7 @@ const app = express();
 // Connect to database
 connectDB();
 
+
 // Middleware
 app.use(cors({
     origin: '*', // In production, specify your Flutter app domain
@@ -32,6 +34,8 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+
+app.use(verifyApiKey);
 
 // Routes
 app.use('/api/auth', authRoutes);
