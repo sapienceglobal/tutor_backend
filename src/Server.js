@@ -8,9 +8,15 @@ import authRoutes from './routes/auth.js';
 import categoryRoutes from './routes/categories.js';
 import tutorRoutes from './routes/tutors.js';
 import appointmentRoutes from './routes/appointments.js';
+import uploadRoutes from './routes/upload.js';
+import { configureCloudinary } from './controllers/uploadController.js';
 
 // Load env variables
 dotenv.config();
+
+
+// after dotenv.config()
+configureCloudinary();
 
 // Initialize express app
 const app = express();
@@ -43,6 +49,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/tutors', tutorRoutes);
 app.use('/api/appointments', appointmentRoutes);
+app.use('/api/upload', uploadRoutes);
 
 // Health check route
 app.get('/', (req, res) => {
