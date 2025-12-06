@@ -6,7 +6,6 @@ import User from '../models/User.js';
 // @route   GET /api/appointments
 export const getMyAppointments = async (req, res) => {
   try {
-    
     const { status } = req.query;
 
     let filter = {};
@@ -14,7 +13,7 @@ export const getMyAppointments = async (req, res) => {
     // If user is a student, show their bookings
     if (req.user.role === 'student') {
       filter.studentId = req.user.id;
-    } 
+    }
     // If user is a tutor, show appointments for their tutor profile
     else if (req.user.role === 'tutor') {
       const tutor = await Tutor.findOne({ userId: req.user.id });
@@ -35,10 +34,16 @@ export const getMyAppointments = async (req, res) => {
       .populate('studentId', 'name email phone profileImage')
       .populate({
         path: 'tutorId',
-        populate: {
-          path: 'userId',
-          select: 'name email phone profileImage'
-        }
+        populate: [
+          {
+            path: 'userId',
+            select: 'name email phone profileImage'
+          },
+          {
+            path: 'categoryId', // ✅ ADDED: Populate category
+            select: 'name icon'
+          }
+        ]
       })
       .sort({ dateTime: -1 });
 
@@ -49,9 +54,9 @@ export const getMyAppointments = async (req, res) => {
     });
   } catch (error) {
     console.error('Get appointments error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
@@ -66,10 +71,16 @@ export const getAppointmentById = async (req, res) => {
       .populate('studentId', 'name email phone profileImage')
       .populate({
         path: 'tutorId',
-        populate: {
-          path: 'userId',
-          select: 'name email phone profileImage'
-        }
+        populate: [
+          {
+            path: 'userId',
+            select: 'name email phone profileImage'
+          },
+          {
+            path: 'categoryId', // ✅ ADDED: Populate category
+            select: 'name icon'
+          }
+        ]
       });
 
     if (!appointment) {
@@ -97,9 +108,9 @@ export const getAppointmentById = async (req, res) => {
     });
   } catch (error) {
     console.error('Get appointment error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
@@ -169,10 +180,16 @@ export const createAppointment = async (req, res) => {
       .populate('studentId', 'name email phone profileImage')
       .populate({
         path: 'tutorId',
-        populate: {
-          path: 'userId',
-          select: 'name email phone profileImage'
-        }
+        populate: [
+          {
+            path: 'userId',
+            select: 'name email phone profileImage'
+          },
+          {
+            path: 'categoryId', 
+            select: 'name icon'
+          }
+        ]
       });
 
     res.status(201).json({
@@ -182,9 +199,9 @@ export const createAppointment = async (req, res) => {
     });
   } catch (error) {
     console.error('Create appointment error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
@@ -197,7 +214,7 @@ export const updateAppointment = async (req, res) => {
     const { status, dateTime, notes } = req.body;
 
     const appointment = await Appointment.findById(id);
-
+    
     if (!appointment) {
       return res.status(404).json({
         success: false,
@@ -242,10 +259,16 @@ export const updateAppointment = async (req, res) => {
       .populate('studentId', 'name email phone profileImage')
       .populate({
         path: 'tutorId',
-        populate: {
-          path: 'userId',
-          select: 'name email phone profileImage'
-        }
+        populate: [
+          {
+            path: 'userId',
+            select: 'name email phone profileImage'
+          },
+          {
+            path: 'categoryId', 
+            select: 'name icon'
+          }
+        ]
       });
 
     res.status(200).json({
@@ -255,9 +278,9 @@ export const updateAppointment = async (req, res) => {
     });
   } catch (error) {
     console.error('Update appointment error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
@@ -301,9 +324,9 @@ export const deleteAppointment = async (req, res) => {
     });
   } catch (error) {
     console.error('Delete appointment error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };

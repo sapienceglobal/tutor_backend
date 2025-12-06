@@ -49,6 +49,7 @@ const uploadToCloudinary = (buffer, folder) =>
 
 // Controller: Upload image
 export const uploadImage = async (req, res) => {
+    
     try {
         if (!req.file) {
             return res.status(400).json({ success: false, message: 'No file uploaded' });
@@ -63,6 +64,7 @@ export const uploadImage = async (req, res) => {
             publicId: result.public_id,
         });
     } catch (error) {
+       
         console.error('Upload error:', error);
         res.status(500).json({ success: false, message: error.message || 'Upload failed' });
     }
