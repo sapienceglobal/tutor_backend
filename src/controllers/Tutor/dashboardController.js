@@ -42,9 +42,9 @@ export const getTutorStats = async (req, res) => {
     const averageRating =
       coursesWithRatings.length > 0
         ? (
-            coursesWithRatings.reduce((sum, c) => sum + c.rating, 0) /
-            coursesWithRatings.length
-          ).toFixed(1)
+          coursesWithRatings.reduce((sum, c) => sum + c.rating, 0) /
+          coursesWithRatings.length
+        ).toFixed(1)
         : 0;
 
     // Get appointments statistics
@@ -105,6 +105,90 @@ export const getTutorStats = async (req, res) => {
     });
   } catch (error) {
     console.error('Get tutor stats error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+    });
+  }
+};
+
+
+// @desc    Get all students enrolled in tutor's courses
+// @route   GET /api/dashboard/students
+export const getTutorStudents = async (req, res) => {
+  try {
+    const tutor = await Tutor.findOne({ userId: req.user.id });
+
+    if (!tutor) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only tutors can access this endpoint',
+      });
+    }
+
+    // Get all courses for this tutor
+    const courses = await Course.find({ tutorId: tutor._id });
+    const courseIds = courses.map(c => c._id);
+
+    // Get all enrollments with student details
+    const enrollments = await Enrollment.find({
+      courseId: { $in: courseIds },
+      status: 'active',
+    })
+      .populate('studentId', 'name email phone profileImage')
+      .populate('courseId', 'title')
+      .sort({ enrolledAt: -1 });
+
+    // Group students by course
+    const studentsByCourse = courses.map(course => {
+      const courseEnrollments = enrollments.filter(
+        e => e.courseId._id.toString() === course._id.toString()
+      );
+
+      return {
+        courseId: course._id,
+        courseTitle: course.title,
+        studentCount: courseEnrollments.length,
+        students: courseEnrollments.map(e => ({
+          studentId: e.studentId._id,
+          name: e.studentId.name,
+          email: e.studentId.email,
+          phone: e.studentId.phone,
+          profileImage: e.studentId.profileImage,
+          enrolledAt: e.enrolledAt,
+          progress: e.progress.percentage,
+        })),
+      };
+    });
+
+    // Get unique students
+    const uniqueStudents = [];
+    const studentIds = new Set();
+
+    enrollments.forEach(e => {
+      if (!studentIds.has(e.studentId._id.toString())) {
+        studentIds.add(e.studentId._id.toString());
+        uniqueStudents.push({
+          studentId: e.studentId._id,
+          name: e.studentId.name,
+          email: e.studentId.email,
+          phone: e.studentId.phone,
+          profileImage: e.studentId.profileImage,
+          coursesEnrolled: enrollments.filter(
+            en => en.studentId._id.toString() === e.studentId._id.toString()
+          ).length,
+        });
+      }
+    });
+
+    res.status(200).json({
+      success: true,
+      totalStudents: uniqueStudents.length,
+      students: uniqueStudents,
+      byCourse: studentsByCourse,
+    });
+  } catch (error) {
+    console.error('Get tutor students error:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error',

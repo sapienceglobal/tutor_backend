@@ -35,10 +35,10 @@ const tutorSchema = new mongoose.Schema({
     type: String,
     trim: true
   }],
-  availability: [{
-    day: String,
-    slots: [String]
-  }],
+  scheduleAppointment: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'ScheduleAppointment',
+  },
   bio: {
     type: String,
     trim: true

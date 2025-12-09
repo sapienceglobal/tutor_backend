@@ -332,7 +332,7 @@ export const getMyCourses = async (req, res) => {
         }
       })
       .sort({ createdAt: -1 });
-     console.log("courses: ",courses);
+  
     res.status(200).json({
       success: true,
       count: courses.length,
