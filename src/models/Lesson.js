@@ -14,8 +14,8 @@ const quizQuestionSchema = new mongoose.Schema({
   points: {
     type: Number,
     default: 1,
-  },
-});
+  }, 
+}, { _id: true }); // Mongoose will auto-generate _id
 
 // Document Schema
 const documentSchema = new mongoose.Schema({
@@ -131,7 +131,7 @@ lessonSchema.pre('save', function(next) {
     );
   }
   
-  next();
+
 });
 
 export default mongoose.model('Lesson', lessonSchema);

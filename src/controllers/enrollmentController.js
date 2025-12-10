@@ -84,7 +84,7 @@ export const enrollInCourse = async (req, res) => {
 export const getMyEnrollments = async (req, res) => {
   try {
     const { status } = req.query;
-
+    
     let filter = { studentId: req.user.id };
     if (status) filter.status = status;
 

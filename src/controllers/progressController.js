@@ -42,7 +42,7 @@ export const updateProgress = async (req, res) => {
       if (lastWatchedPosition !== undefined) {
         progress.lastWatchedPosition = lastWatchedPosition;
       }
-      
+
       if (completed && !progress.completedAt) {
         progress.completedAt = new Date();
       }

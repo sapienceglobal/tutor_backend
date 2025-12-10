@@ -15,8 +15,8 @@ import lessonRoutes from './routes/lessons.js';
 import enrollmentRoutes from './routes/enrollments.js';
 import progressRoutes from './routes/progress.js';
 import dashboardRoutes from './routes/Tutor/dashboard.js';
-
-// import examRoutes from './routes/examRoutes.js';
+ 
+import examRoutes from './routes/examRoutes.js';
 import aiRoutes from './routes/aiRoutes.js';
 
 import { configureCloudinary } from './controllers/uploadController.js';
@@ -75,7 +75,7 @@ app.use('/api/progress', progressRoutes);
 app.use('/api/tutor/dashboard', dashboardRoutes);
 
 
-// app.use('/api/exams', examRoutes);
+app.use('/api/exams', examRoutes);
 app.use('/api/ai', aiRoutes);
 
 
