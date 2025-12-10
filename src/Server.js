@@ -1,10 +1,13 @@
-import "./config/loadEnv.js";
+
 import express from 'express';
 import cors from 'cors';
-import connectDB from './config/database.js';
+import dotenv from 'dotenv';
 
+// Load env variables
+dotenv.config();
 
 // Import routes
+import connectDB from './config/database.js';
 import authRoutes from './routes/auth.js';
 import categoryRoutes from './routes/categories.js';
 import tutorRoutes from './routes/tutors.js';
@@ -15,7 +18,7 @@ import lessonRoutes from './routes/lessons.js';
 import enrollmentRoutes from './routes/enrollments.js';
 import progressRoutes from './routes/progress.js';
 import dashboardRoutes from './routes/Tutor/dashboard.js';
- 
+
 import examRoutes from './routes/examRoutes.js';
 import aiRoutes from './routes/aiRoutes.js';
 
@@ -25,8 +28,12 @@ import { verifyApiKey } from './middleware/apiKey.js';
 
 
 
-// Load env variables
 
+
+console.log("Current Environment:", process.env.NODE_ENV || 'development');
+if (!process.env.MONGO_URI) {
+    console.error("❌ CRITICAL ERROR: MONGO_URI is missing! Check Hostinger Environment Variables.");
+}
 
 
 // after dotenv.config()
