@@ -2,6 +2,7 @@ import Enrollment from '../models/Enrollment.js';
 import Course from '../models/Course.js';
 import Lesson from '../models/Lesson.js';
 import Progress from '../models/Progress.js';
+import { createNotification } from './notificationController.js';
 
 // @desc    Enroll in a course
 // @route   POST /api/enrollments
@@ -56,7 +57,15 @@ export const enrollInCourse = async (req, res) => {
       studentId: req.user.id,
       courseId,
     });
-
+    await createNotification({
+      userId: req.user.id,
+      type: 'course_enrolled',
+      title: '🎉 Course Enrolled!',
+      message: `You have successfully enrolled in "${course.title}"`,
+      data: {
+        courseId: course._id
+      }
+    });
     // Update course enrolled count
     course.enrolledCount += 1;
     await course.save();
@@ -84,7 +93,7 @@ export const enrollInCourse = async (req, res) => {
 export const getMyEnrollments = async (req, res) => {
   try {
     const { status } = req.query;
-    
+
     let filter = { studentId: req.user.id };
     if (status) filter.status = status;
 

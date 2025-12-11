@@ -1,40 +1,31 @@
-
+import "./src/config/loadEnv.js"
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
+// import dotenv from 'dotenv';
 
 // Load env variables
-dotenv.config();
+// dotenv.config();
 
 // Import routes
-import connectDB from './config/database.js';
-import authRoutes from './routes/auth.js';
-import categoryRoutes from './routes/categories.js';
-import tutorRoutes from './routes/tutors.js';
-import appointmentRoutes from './routes/appointments.js';
-import uploadRoutes from './routes/upload.js';
-import courseRoutes from './routes/courses.js';
-import lessonRoutes from './routes/lessons.js';
-import enrollmentRoutes from './routes/enrollments.js';
-import progressRoutes from './routes/progress.js';
-import dashboardRoutes from './routes/Tutor/dashboard.js';
+import connectDB from './src/config/database.js';
+import authRoutes from './src/routes/auth.js';
+import categoryRoutes from './src/routes/categories.js';
+import tutorRoutes from './src/routes/tutors.js';
+import appointmentRoutes from './src/routes/appointments.js';
+import uploadRoutes from './src/routes/upload.js';
+import courseRoutes from './src/routes/courses.js';
+import lessonRoutes from './src/routes/lessons.js';
+import enrollmentRoutes from './src/routes/enrollments.js';
+import progressRoutes from './src/routes/progress.js';
+import dashboardRoutes from './src/routes/Tutor/dashboard.js';
 
-import examRoutes from './routes/examRoutes.js';
-import aiRoutes from './routes/aiRoutes.js';
+import examRoutes from './src/routes/examRoutes.js';
+import aiRoutes from './src/routes/aiRoutes.js';
 
-import { configureCloudinary } from './controllers/uploadController.js';
-import { verifyApiKey } from './middleware/apiKey.js';
+import notificationRoutes from './src/routes/notificationRoutes.js';
 
-
-
-
-
-
-console.log("Current Environment:", process.env.NODE_ENV || 'development');
-if (!process.env.MONGO_URI) {
-    console.error("❌ CRITICAL ERROR: MONGO_URI is missing! Check Hostinger Environment Variables.");
-}
-
+import { configureCloudinary } from './src/controllers/uploadController.js';
+import { verifyApiKey } from './src/middleware/apiKey.js';
 
 // after dotenv.config()
 configureCloudinary();
@@ -84,6 +75,8 @@ app.use('/api/tutor/dashboard', dashboardRoutes);
 
 app.use('/api/exams', examRoutes);
 app.use('/api/ai', aiRoutes);
+
+app.use('/api/notifications', notificationRoutes);
 
 
 

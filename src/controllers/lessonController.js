@@ -24,7 +24,7 @@ export const getLessonsByCourse = async (req, res) => {
         studentId: req.user.id,
         courseId,
       });
-      
+
       const tutor = await Course.findById(courseId).populate('tutorId');
       const isOwner = tutor.tutorId.userId.toString() === req.user.id;
 
@@ -84,7 +84,7 @@ export const getLessonById = async (req, res) => {
 
     // Check access rights
     let canAccess = lesson.isFree;
-    
+
     if (req.user && !canAccess) {
       const enrollment = await Enrollment.findOne({
         studentId: req.user.id,
@@ -129,9 +129,36 @@ export const getLessonById = async (req, res) => {
 
 // @desc    Create lesson (Tutor only)
 // @route   POST /api/lessons
+
+// ✅ Helper function to clean quiz data
+function cleanQuizData(content) {
+  if (!content || !content.quiz || !content.quiz.questions) {
+    return content;
+  }
+
+  const cleanedContent = { ...content };
+
+  cleanedContent.quiz.questions = content.quiz.questions.map(q => {
+    // Remove _id from question
+    const { _id, ...cleanQuestion } = q;
+
+    // Remove _id from options
+    if (cleanQuestion.options && Array.isArray(cleanQuestion.options)) {
+      cleanQuestion.options = cleanQuestion.options.map(opt => {
+        const { _id, ...cleanOpt } = opt;
+        return cleanOpt;
+      });
+    }
+
+    return cleanQuestion;
+  });
+
+  return cleanedContent;
+}
+
 export const createLesson = async (req, res) => {
   try {
-    const {
+    let {
       courseId,
       moduleId,
       title,
@@ -165,6 +192,11 @@ export const createLesson = async (req, res) => {
       });
     }
 
+    // ✅ Clean quiz data if present
+    if (type === 'quiz' && content) {
+      content = cleanQuizData(content);
+    }
+
     const lesson = await Lesson.create({
       courseId,
       moduleId,
@@ -176,6 +208,25 @@ export const createLesson = async (req, res) => {
       isFree: isFree || false,
     });
 
+    // ✅ Notify enrolled students (not tutor)
+    const enrollments = await Enrollment.find({
+      courseId: lesson.courseId,
+      status: 'active'
+    });
+
+    for (const enrollment of enrollments) {
+      await createNotification({
+        userId: enrollment.studentId,
+        type: 'new_lesson',
+        title: '📚 New Lesson Available!',
+        message: `New lesson "${lesson.title}" added to your enrolled course`,
+        data: {
+          courseId: lesson.courseId,
+          lessonId: lesson._id
+        }
+      });
+    }
+
     res.status(201).json({
       success: true,
       message: 'Lesson created successfully',
@@ -186,21 +237,19 @@ export const createLesson = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Internal server error',
+      error: error.message, // ✅ Better error debugging
     });
   }
 };
 
-// @desc    Update lesson (Tutor only)
-// @route   PATCH /api/lessons/:id
 export const updateLesson = async (req, res) => {
   try {
     const { id } = req.params;
+    let updateData = req.body;
 
     const lesson = await Lesson.findById(id).populate({
       path: 'courseId',
-      populate: {
-        path: 'tutorId',
-      },
+      populate: { path: 'tutorId' },
     });
 
     if (!lesson) {
@@ -210,7 +259,7 @@ export const updateLesson = async (req, res) => {
       });
     }
 
-    // Check if user owns the course
+    // Check authorization
     if (lesson.courseId.tutorId.userId.toString() !== req.user.id) {
       return res.status(403).json({
         success: false,
@@ -218,17 +267,13 @@ export const updateLesson = async (req, res) => {
       });
     }
 
-    const allowedUpdates = [
-      'title', 'description', 'type', 'content',
-      'order', 'isFree', 'isPublished',
-    ];
+    // ✅ Clean quiz data if present
+    if (updateData.type === 'quiz' && updateData.content) {
+      updateData.content = cleanQuizData(updateData.content);
+    }
 
-    allowedUpdates.forEach(field => {
-      if (req.body[field] !== undefined) {
-        lesson[field] = req.body[field];
-      }
-    });
-
+    // Update lesson
+    Object.assign(lesson, updateData);
     await lesson.save();
 
     res.status(200).json({
@@ -241,6 +286,7 @@ export const updateLesson = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Internal server error',
+      error: error.message,
     });
   }
 };

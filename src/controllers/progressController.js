@@ -2,6 +2,7 @@ import Progress from '../models/Progress.js';
 import Enrollment from '../models/Enrollment.js';
 import Lesson from '../models/Lesson.js';
 import Course from '../models/Course.js';
+import { createNotification } from './notificationController.js';
 
 // @desc    Update lesson progress
 // @route   POST /api/progress
@@ -46,7 +47,16 @@ export const updateProgress = async (req, res) => {
       if (completed && !progress.completedAt) {
         progress.completedAt = new Date();
       }
-
+      await createNotification({
+        userId: req.user.id,
+        type: 'lesson_completed',
+        title: '✅ Lesson Completed!',
+        message: `You completed "${"lesson title ayega yaha "}`,
+        data: {
+          courseId,
+          lessonId
+        }
+      });
       await progress.save();
     } else {
       progress = await Progress.create({
