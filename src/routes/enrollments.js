@@ -21,6 +21,6 @@ router.get('/course/:courseId', getEnrollmentByCourse);
 router.get('/check/:courseId', protect, checkEnrollment);
 router.get('/students/:courseId', getCourseStudents);
 router.delete('/:id', unenrollFromCourse);
-router.patch('/:id/progress', protect, updateProgress);
+router.patch('/:id/progress', updateProgress);
 
 export default router;

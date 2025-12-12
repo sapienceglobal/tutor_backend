@@ -109,7 +109,7 @@ export const getMyEnrollments = async (req, res) => {
         },
       })
       .sort({ enrolledAt: -1 });
-
+  //  console.log("enrollments ",enrollments)
     res.status(200).json({
       success: true,
       count: enrollments.length,
