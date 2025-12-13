@@ -24,12 +24,7 @@ import aiRoutes from './src/routes/aiRoutes.js';
 
 import notificationRoutes from './src/routes/notificationRoutes.js';
 
-import { configureCloudinary } from './src/controllers/uploadController.js';
 import { verifyApiKey } from './src/middleware/apiKey.js';
-
-// after dotenv.config()
-configureCloudinary();
-
 
 // Initialize express app
 const app = express();

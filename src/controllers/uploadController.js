@@ -2,25 +2,29 @@ import { v2 as cloudinary } from 'cloudinary';
 import multer from 'multer';
 import { Readable } from 'stream';
 
-// Cloudinary config
+const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+const apiKey = process.env.CLOUDINARY_API_KEY;
+const apiSecret = process.env.CLOUDINARY_API_SECRET;
 
-export const configureCloudinary = () => {
-    cloudinary.config({
-        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-        api_key: process.env.CLOUDINARY_API_KEY,
-        api_secret: process.env.CLOUDINARY_API_SECRET,
-    });
-};
+
+if (!cloudName || !apiKey || !apiSecret) {
+    console.error("❌ CRITICAL ERROR: Cloudinary credentials missing in uploadController!");
+}
+
+cloudinary.config({
+    cloud_name: cloudName,
+    api_key: apiKey,
+    api_secret: apiSecret,
+});
+// --- CHANGE END ---
 
 // Multer memory storage
 const storage = multer.memoryStorage();
 const upload = multer({
     storage: storage,
-    limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB limit
+    limits: { fileSize: 5 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
-        // Accept all files whose mimetype starts with 'image/'
         if (!file.mimetype.startsWith('image/')) {
-            console.log('Rejected file type:', file.mimetype);
             return cb(new Error('Only image files are allowed!'), false);
         }
         cb(null, true);
@@ -30,6 +34,11 @@ const upload = multer({
 // Helper: upload buffer to Cloudinary
 const uploadToCloudinary = (buffer, folder) =>
     new Promise((resolve, reject) => {
+        // Debug check inside the upload process
+        if (!cloudinary.config().cloud_name) {
+            return reject(new Error("Cloudinary not configured before upload start"));
+        }
+
         const uploadStream = cloudinary.uploader.upload_stream(
             {
                 folder: folder,
@@ -49,12 +58,12 @@ const uploadToCloudinary = (buffer, folder) =>
 
 // Controller: Upload image
 export const uploadImage = async (req, res) => {
-    
     try {
         if (!req.file) {
             return res.status(400).json({ success: false, message: 'No file uploaded' });
         }
 
+        console.log("Starting upload to Cloudinary..."); // Debug log
         const result = await uploadToCloudinary(req.file.buffer, 'tutor_management/profiles');
 
         res.status(200).json({
@@ -62,10 +71,9 @@ export const uploadImage = async (req, res) => {
             message: 'Image uploaded successfully',
             url: result.secure_url,
             publicId: result.public_id,
-        });
+        }); console.log("Uploaded to Cloudinary...");
     } catch (error) {
-       
-        console.error('Upload error:', error);
+        console.error('Upload error details:', error); // Detailed error log
         res.status(500).json({ success: false, message: error.message || 'Upload failed' });
     }
 };

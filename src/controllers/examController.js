@@ -230,7 +230,6 @@ export const createExam = async (req, res) => {
 export const updateExam = async (req, res) => {
     try {
         const { id } = req.params;
-
         const exam = await Exam.findById(id).populate({
             path: 'courseId',
             populate: {
