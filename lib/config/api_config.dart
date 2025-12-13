@@ -1,6 +1,6 @@
 class ApiConfig {
-  // static const String baseUrl = 'https://tutor-backend-two.vercel.app/api';
-  static const String baseUrl = 'http://192.168.1.7:3000/api';
+  static const String baseUrl = 'https://tutorbackend-production.up.railway.app/api';
+  // static const String baseUrl = 'http://192.168.1.6:3000/api';
 
   // Endpoints
   static const String authEndpoint = '/auth';

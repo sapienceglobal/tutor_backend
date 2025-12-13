@@ -18,48 +18,102 @@ class AppointmentDetailScreen extends StatelessWidget {
     final isTutor = authProvider.user?.role == 'tutor';
 
     Color statusColor;
+    IconData statusIcon;
     switch (appointment.status) {
       case 'confirmed':
-        statusColor = Colors.green;
+        statusColor = const Color(0xFF43A047);
+        statusIcon = Icons.check_circle_rounded;
         break;
       case 'pending':
-        statusColor = Colors.orange;
+        statusColor = const Color(0xFFFFA726);
+        statusIcon = Icons.schedule_rounded;
         break;
       case 'completed':
-        statusColor = Colors.blue;
+        statusColor = const Color(0xFF42A5F5);
+        statusIcon = Icons.done_all_rounded;
         break;
       case 'cancelled':
-        statusColor = Colors.red;
+        statusColor = const Color(0xFFE53935);
+        statusIcon = Icons.cancel_rounded;
         break;
       default:
         statusColor = Colors.grey;
+        statusIcon = Icons.info_outline;
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Appointment Details')),
+      backgroundColor: const Color(0xFFF8F9FE),
+      appBar: AppBar(
+        elevation: 0,
+        backgroundColor: Colors.white,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new, size: 20),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Text(
+          'Appointment Details',
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF1A1A1A),
+          ),
+        ),
+      ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Status Badge
+            // Status Card
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: statusColor.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
+                gradient: LinearGradient(
+                  colors: [statusColor, statusColor.withOpacity(0.8)],
+                ),
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: statusColor.withOpacity(0.4),
+                    blurRadius: 12,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
               ),
               child: Row(
-                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.info_outline, color: statusColor, size: 20),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Status: ${appointment.status.toUpperCase()}',
-                    style: TextStyle(
-                      color: statusColor,
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.3),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Icon(statusIcon, color: Colors.white, size: 32),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Status',
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          appointment.status.toUpperCase(),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -67,264 +121,255 @@ class AppointmentDetailScreen extends StatelessWidget {
             ),
             const SizedBox(height: 24),
 
-            // Participant Info
-            _buildSectionTitle(
-              isStudent ? 'Tutor Information' : 'Student Information',
-            ),
-            const SizedBox(height: 12),
-            _buildInfoCard(
-              context,
-              icon: Icons.person,
-              title: 'Name',
-              value: isStudent
-                  ? appointment.tutor.user.name
-                  : appointment.student.name,
-            ),
-            const SizedBox(height: 8),
-            _buildInfoCard(
-              context,
-              icon: Icons.email,
-              title: 'Email',
-              value: isStudent
-                  ? appointment.tutor.user.email
-                  : appointment.student.email,
-            ),
-            const SizedBox(height: 8),
-            _buildInfoCard(
-              context,
-              icon: Icons.phone,
-              title: 'Phone',
-              value: isStudent
-                  ? appointment.tutor.user.phone
-                  : appointment.student.phone,
-            ),
-            if (isStudent) ...[
-              const SizedBox(height: 8),
-              _buildInfoCard(
-                context,
-                icon: Icons.category,
-                title: 'Category',
-                value: appointment.tutor.category.name,
+            // Participant Section
+            _buildSection(
+              title: isStudent ? 'Tutor Information' : 'Student Information',
+              icon: Icons.person_rounded,
+              child: Column(
+                children: [
+                  _buildInfoRow(
+                    icon: Icons.badge_rounded,
+                    label: 'Name',
+                    value: isStudent
+                        ? appointment.tutor.user.name
+                        : appointment.student.name,
+                    color: const Color(0xFF42A5F5),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildInfoRow(
+                    icon: Icons.email_rounded,
+                    label: 'Email',
+                    value: isStudent
+                        ? appointment.tutor.user.email
+                        : appointment.student.email,
+                    color: const Color(0xFFEF5350),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildInfoRow(
+                    icon: Icons.phone_rounded,
+                    label: 'Phone',
+                    value: isStudent
+                        ? appointment.tutor.user.phone
+                        : appointment.student.phone,
+                    color: const Color(0xFF66BB6A),
+                  ),
+                  if (isStudent) ...[
+                    const SizedBox(height: 12),
+                    _buildInfoRow(
+                      icon: Icons.category_rounded,
+                      label: 'Category',
+                      value: appointment.tutor.category.name,
+                      color: const Color(0xFFAB47BC),
+                    ),
+                  ],
+                ],
               ),
-            ],
-            const SizedBox(height: 24),
+            ),
+            const SizedBox(height: 20),
 
-            // Appointment Details
-            _buildSectionTitle('Appointment Details'),
-            const SizedBox(height: 12),
-            _buildInfoCard(
-              context,
-              icon: Icons.calendar_today,
-              title: 'Date',
-              value: DateFormat(
-                'EEEE, MMM dd, yyyy',
-              ).format(appointment.dateTime),
+            // Appointment Details Section
+            _buildSection(
+              title: 'Appointment Details',
+              icon: Icons.calendar_month_rounded,
+              child: Column(
+                children: [
+                  _buildInfoRow(
+                    icon: Icons.calendar_today_rounded,
+                    label: 'Date',
+                    value: DateFormat('EEEE, MMM dd, yyyy')
+                        .format(appointment.dateTime),
+                    color: const Color(0xFF42A5F5),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildInfoRow(
+                    icon: Icons.access_time_rounded,
+                    label: 'Time',
+                    value: DateFormat('hh:mm a').format(appointment.dateTime),
+                    color: const Color(0xFFAB47BC),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildInfoRow(
+                    icon: Icons.timer_rounded,
+                    label: 'Duration',
+                    value: '${appointment.duration} minutes',
+                    color: const Color(0xFF26A69A),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildInfoRow(
+                    icon: Icons.currency_rupee_rounded,
+                    label: 'Amount',
+                    value: '₹${appointment.amount.toStringAsFixed(2)}',
+                    color: AppColors.primary,
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 8),
-            _buildInfoCard(
-              context,
-              icon: Icons.access_time,
-              title: 'Time',
-              value: DateFormat('hh:mm a').format(appointment.dateTime),
-            ),
-            const SizedBox(height: 8),
-            _buildInfoCard(
-              context,
-              icon: Icons.timer,
-              title: 'Duration',
-              value: '${appointment.duration} minutes',
-            ),
-            const SizedBox(height: 8),
-            _buildInfoCard(
-              context,
-              icon: Icons.attach_money,
-              title: 'Amount',
-              value: '₹${appointment.amount.toStringAsFixed(2)}',
-            ),
-            const SizedBox(height: 24),
 
-            // Notes
+            // Notes Section
             if (appointment.notes.isNotEmpty) ...[
-              _buildSectionTitle('Notes'),
-              const SizedBox(height: 12),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.grey[100],
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  appointment.notes,
-                  style: const TextStyle(fontSize: 14, height: 1.5),
+              const SizedBox(height: 20),
+              _buildSection(
+                title: 'Notes',
+                icon: Icons.note_rounded,
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: Colors.grey.shade300,
+                    ),
+                  ),
+                  child: Text(
+                    appointment.notes,
+                    style: TextStyle(
+                      fontSize: 14,
+                      height: 1.6,
+                      color: Colors.grey.shade800,
+                    ),
+                  ),
                 ),
               ),
-              const SizedBox(height: 24),
             ],
+            const SizedBox(height: 24),
 
             // Action Buttons
             if (appointment.status == 'pending') ...[
-              if (isTutor) ...[
-                // Tutor can confirm
-                Consumer<AppointmentProvider>(
-                  builder: (context, appointmentProvider, _) {
-                    return SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: appointmentProvider.isLoading
-                            ? null
-                            : () => _confirmAppointment(context),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: appointmentProvider.isLoading
-                            ? const SizedBox(
-                                height: 20,
-                                width: 20,
-                                child: CircularProgressIndicator(
-                                  color: Colors.white,
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Text(
-                                'Confirm Appointment',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                      ),
-                    );
-                  },
+              if (isTutor)
+                _buildActionButton(
+                  context: context,
+                  label: 'Confirm Appointment',
+                  icon: Icons.check_circle_rounded,
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF43A047), Color(0xFF66BB6A)],
+                  ),
+                  onPressed: () => _confirmAppointment(context),
                 ),
-                const SizedBox(height: 12),
-              ],
               if (isStudent) ...[
-                // Student can cancel
-                Consumer<AppointmentProvider>(
-                  builder: (context, appointmentProvider, _) {
-                    return SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton(
-                        onPressed: appointmentProvider.isLoading
-                            ? null
-                            : () => _cancelAppointment(context),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.red,
-                          side: const BorderSide(color: Colors.red),
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: appointmentProvider.isLoading
-                            ? const SizedBox(
-                                height: 20,
-                                width: 20,
-                                child: CircularProgressIndicator(
-                                  color: Colors.red,
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Text(
-                                'Cancel Appointment',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                      ),
-                    );
-                  },
+                const SizedBox(height: 12),
+                _buildActionButton(
+                  context: context,
+                  label: 'Cancel Appointment',
+                  icon: Icons.cancel_rounded,
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFFE53935), Color(0xFFEF5350)],
+                  ),
+                  onPressed: () => _cancelAppointment(context),
+                  isOutlined: true,
                 ),
               ],
             ],
-            if (appointment.status == 'confirmed' && isTutor) ...[
-              Consumer<AppointmentProvider>(
-                builder: (context, appointmentProvider, _) {
-                  return SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: appointmentProvider.isLoading
-                          ? null
-                          : () => _completeAppointment(context),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: appointmentProvider.isLoading
-                          ? const SizedBox(
-                              height: 20,
-                              width: 20,
-                              child: CircularProgressIndicator(
-                                color: Colors.white,
-                                strokeWidth: 2,
-                              ),
-                            )
-                          : const Text(
-                              'Mark as Completed',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                    ),
-                  );
-                },
+            if (appointment.status == 'confirmed' && isTutor)
+              _buildActionButton(
+                context: context,
+                label: 'Mark as Completed',
+                icon: Icons.done_all_rounded,
+                gradient: LinearGradient(
+                  colors: [AppColors.primary, AppColors.primary.withOpacity(0.8)],
+                ),
+                onPressed: () => _completeAppointment(context),
               ),
-            ],
           ],
         ),
       ),
     );
   }
 
-  Widget _buildSectionTitle(String title) {
-    return Text(
-      title,
-      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+  Widget _buildSection({
+    required String title,
+    required IconData icon,
+    required Widget child,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: AppColors.primary, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1A1A1A),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          child,
+        ],
+      ),
     );
   }
 
-  Widget _buildInfoCard(
-    BuildContext context, {
+  Widget _buildInfoRow({
     required IconData icon,
-    required String title,
+    required String label,
     required String value,
+    required Color color,
   }) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.grey[100],
+        color: color.withOpacity(0.1),
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: color.withOpacity(0.3),
+        ),
       ),
       child: Row(
         children: [
-          Icon(icon, color: AppColors.primary),
-          const SizedBox(width: 12),
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: color, size: 20),
+          ),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  title,
-                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey.shade600,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 2),
                 Text(
                   value,
                   style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF1A1A1A),
                   ),
                 ),
               ],
@@ -335,11 +380,89 @@ class AppointmentDetailScreen extends StatelessWidget {
     );
   }
 
+  Widget _buildActionButton({
+    required BuildContext context,
+    required String label,
+    required IconData icon,
+    required Gradient gradient,
+    required VoidCallback onPressed,
+    bool isOutlined = false,
+  }) {
+    return Consumer<AppointmentProvider>(
+      builder: (context, appointmentProvider, _) {
+        return Container(
+          height: 56,
+          decoration: BoxDecoration(
+            gradient: isOutlined ? null : gradient,
+            borderRadius: BorderRadius.circular(16),
+            border: isOutlined
+                ? Border.all(color: gradient.colors.first, width: 2)
+                : null,
+            boxShadow: isOutlined
+                ? []
+                : [
+                    BoxShadow(
+                      color: gradient.colors.first.withOpacity(0.4),
+                      blurRadius: 12,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+          ),
+          child: ElevatedButton(
+            onPressed: appointmentProvider.isLoading ? null : onPressed,
+            style: ElevatedButton.styleFrom(
+              backgroundColor:
+                  isOutlined ? Colors.transparent : Colors.transparent,
+              shadowColor: Colors.transparent,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+            child: appointmentProvider.isLoading
+                ? SizedBox(
+                    height: 24,
+                    width: 24,
+                    child: CircularProgressIndicator(
+                      color: isOutlined ? gradient.colors.first : Colors.white,
+                      strokeWidth: 3,
+                    ),
+                  )
+                : Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        icon,
+                        color: isOutlined ? gradient.colors.first : Colors.white,
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        label,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: isOutlined ? gradient.colors.first : Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _confirmAppointment(BuildContext context) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Confirm Appointment'),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.check_circle_outline, color: Color(0xFF43A047)),
+            SizedBox(width: 12),
+            Text('Confirm Appointment'),
+          ],
+        ),
         content: const Text(
           'Are you sure you want to confirm this appointment?',
         ),
@@ -350,6 +473,9 @@ class AppointmentDetailScreen extends StatelessWidget {
           ),
           ElevatedButton(
             onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF43A047),
+            ),
             child: const Text('Confirm'),
           ),
         ],
@@ -366,24 +492,30 @@ class AppointmentDetailScreen extends StatelessWidget {
       );
 
       if (context.mounted) {
-        if (success) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Appointment confirmed successfully'),
-              backgroundColor: Colors.green,
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(
+                  success ? Icons.check_circle : Icons.error_outline,
+                  color: Colors.white,
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  success
+                      ? 'Appointment confirmed successfully'
+                      : appointmentProvider.error ?? 'Failed to confirm',
+                ),
+              ],
             ),
-          );
-          Navigator.of(context).pop();
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                appointmentProvider.error ?? 'Failed to confirm appointment',
-              ),
-              backgroundColor: Colors.red,
+            backgroundColor: success ? const Color(0xFF43A047) : const Color(0xFFE53935),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
             ),
-          );
-        }
+          ),
+        );
+        if (success) Navigator.of(context).pop();
       }
     }
   }
@@ -392,7 +524,14 @@ class AppointmentDetailScreen extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Complete Appointment'),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.done_all, color: Color(0xFF42A5F5)),
+            SizedBox(width: 12),
+            Text('Complete Appointment'),
+          ],
+        ),
         content: const Text('Mark this appointment as completed?'),
         actions: [
           TextButton(
@@ -401,6 +540,9 @@ class AppointmentDetailScreen extends StatelessWidget {
           ),
           ElevatedButton(
             onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF42A5F5),
+            ),
             child: const Text('Complete'),
           ),
         ],
@@ -417,24 +559,30 @@ class AppointmentDetailScreen extends StatelessWidget {
       );
 
       if (context.mounted) {
-        if (success) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Appointment completed successfully'),
-              backgroundColor: Colors.green,
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(
+                  success ? Icons.check_circle : Icons.error_outline,
+                  color: Colors.white,
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  success
+                      ? 'Appointment completed successfully'
+                      : appointmentProvider.error ?? 'Failed to complete',
+                ),
+              ],
             ),
-          );
-          Navigator.of(context).pop();
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                appointmentProvider.error ?? 'Failed to complete appointment',
-              ),
-              backgroundColor: Colors.red,
+            backgroundColor: success ? const Color(0xFF43A047) : const Color(0xFFE53935),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
             ),
-          );
-        }
+          ),
+        );
+        if (success) Navigator.of(context).pop();
       }
     }
   }
@@ -443,7 +591,14 @@ class AppointmentDetailScreen extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Cancel Appointment'),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.cancel, color: Color(0xFFE53935)),
+            SizedBox(width: 12),
+            Text('Cancel Appointment'),
+          ],
+        ),
         content: const Text(
           'Are you sure you want to cancel this appointment?',
         ),
@@ -454,7 +609,9 @@ class AppointmentDetailScreen extends StatelessWidget {
           ),
           ElevatedButton(
             onPressed: () => Navigator.of(context).pop(true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFE53935),
+            ),
             child: const Text('Yes, Cancel'),
           ),
         ],
@@ -470,24 +627,30 @@ class AppointmentDetailScreen extends StatelessWidget {
       );
 
       if (context.mounted) {
-        if (success) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Appointment cancelled successfully'),
-              backgroundColor: Colors.green,
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(
+                  success ? Icons.check_circle : Icons.error_outline,
+                  color: Colors.white,
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  success
+                      ? 'Appointment cancelled successfully'
+                      : appointmentProvider.error ?? 'Failed to cancel',
+                ),
+              ],
             ),
-          );
-          Navigator.of(context).pop();
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                appointmentProvider.error ?? 'Failed to cancel appointment',
-              ),
-              backgroundColor: Colors.red,
+            backgroundColor: success ? const Color(0xFF43A047) : const Color(0xFFE53935),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
             ),
-          );
-        }
+          ),
+        );
+        if (success) Navigator.of(context).pop();
       }
     }
   }

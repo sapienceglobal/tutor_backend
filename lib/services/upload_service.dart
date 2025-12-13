@@ -2,44 +2,77 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:my_app/config/api_config.dart';
 import 'dart:convert';
-import 'api_service.dart';
+import 'api_service.dart'; // Yahan se API Key constant le lenge
 import 'auth_service.dart';
 
 class UploadService {
   static const String _endpoint = '/upload';
 
   // Upload single file
-  static Future<Map<String, dynamic>> uploadFile(File file) async {
-    try {
-      final token = await AuthService.getToken();
-      final uri = Uri.parse('${ApiConfig.baseUrl}$_endpoint/single');
+ // upload_service.dart
 
-      final request = http.MultipartRequest('POST', uri);
-      request.headers['Authorization'] = 'Bearer $token';
+static Future<Map<String, dynamic>> uploadFile(File file) async {
+  try {
+    final token = await AuthService.getToken();
+    
+    // URL Check
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/upload/image'); 
+    
+    final request = http.MultipartRequest('POST', uri);
 
-      request.files.add(
-        await http.MultipartFile.fromPath('file', file.path),
-      );
+    // --- CRITICAL FIX: HARDCODED KEY ---
+    // Variable use mat karein, direct string likhein check karne ke liye
+    // Make sure ye wahi key hai jo .env me hai
+    String myApiKey = "bumpicare_flutter_2025_secure_key_xyz123abc456";
 
-      final streamedResponse = await request.send();
-      final response = await http.Response.fromStream(streamedResponse);
-      final data = json.decode(response.body);
+    // Headers set karne ka safe tarika
+    request.headers.addAll({
+      'Authorization': 'Bearer $token',
+      'x-api-key': myApiKey, 
+    });
 
+    // --- DEBUG PRINT (Flutter Console me ye dekhna zaroori hai) ---
+    print("--------------------------------------------------");
+    print("🛠️ FLUTTER DEBUG: Sending Request to $uri");
+    print("🛠️ FLUTTER DEBUG: Headers Map: ${request.headers}");
+    print("--------------------------------------------------");
+
+    request.files.add(
+      await http.MultipartFile.fromPath('file', file.path),
+    );
+
+    final streamedResponse = await request.send();
+    final response = await http.Response.fromStream(streamedResponse);
+    final data = json.decode(response.body);
+
+    print("📥 Server Response Code: ${response.statusCode}");
+    print("📥 Server Response Body: ${response.body}");
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
       return data;
-    } catch (e) {
-      throw Exception(e.toString());
+    } else {
+      throw Exception(data['message'] ?? 'Upload failed');
     }
+  } catch (e) {
+    print("❌ Exception in Upload: $e");
+    throw Exception(e.toString());
   }
+}
 
-  // Upload multiple files
+  // Same fix for uploadMultipleFiles
   static Future<Map<String, dynamic>> uploadMultipleFiles(
-      List<File> files) async {
+    List<File> files,
+  ) async {
     try {
       final token = await AuthService.getToken();
       final uri = Uri.parse('${ApiConfig.baseUrl}$_endpoint/multiple');
 
       final request = http.MultipartRequest('POST', uri);
+
+      // --- FIX HERE ALSO ---
       request.headers['Authorization'] = 'Bearer $token';
+      request.headers['x-api-key'] = ApiService.apiKey;
+      // ---------------------
 
       for (var file in files) {
         request.files.add(

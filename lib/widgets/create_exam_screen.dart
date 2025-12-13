@@ -122,7 +122,21 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
         padding: EdgeInsets.all(16),
         child: Column(
           children: [
-            TextFormField(decoration: InputDecoration(labelText: 'Title')),
+            TextFormField(
+              controller: _titleController,
+              decoration: const InputDecoration(
+                labelText: 'Title',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.title),
+              ),
+              validator: (value) {
+                if (value == null || value.trim().isEmpty) {
+                  return 'Title is required';
+                }
+                return null;
+              },
+            ),
+
             const SizedBox(height: 12),
             TextFormField(
               controller: _descriptionController,
@@ -184,15 +198,41 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
                   children: [
                     Expanded(
                       child: TextFormField(
-                        decoration: InputDecoration(
+                        controller: _durationController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
                           labelText: 'Duration (min)',
                         ),
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return 'Duration required';
+                          }
+                          if (int.tryParse(value) == null) {
+                            return 'Enter valid number';
+                          }
+                          return null;
+                        },
                       ),
                     ),
+
                     SizedBox(width: 16),
+
                     Expanded(
                       child: TextFormField(
-                        decoration: InputDecoration(labelText: 'Passing %'),
+                        controller: _passingMarksController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Passing %',
+                        ),
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return 'Passing % required';
+                          }
+                          if (int.tryParse(value) == null) {
+                            return 'Enter valid number';
+                          }
+                          return null;
+                        },
                       ),
                     ),
                   ],
@@ -777,8 +817,19 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
     setState(() => _isSaving = true);
 
     try {
-      final duration = int.parse(_durationController.text);
-      final passingMarks = int.parse(_passingMarksController.text);
+      final duration = int.tryParse(_durationController.text.trim());
+      final passingMarks = int.tryParse(_passingMarksController.text.trim());
+
+      if (duration == null || passingMarks == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Duration aur Passing Marks valid are not valid'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        setState(() => _isSaving = false);
+        return;
+      }
 
       final questionsJson = _questions.map((q) => q.toJson()).toList();
 
@@ -833,7 +884,9 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              widget.existingExam == null ? 'Exam created!' : 'Exam updated!',
+              widget.existingExam == null
+                  ? 'Exam created successfully! It is saved as a draft. You can publish it anytime.'
+                  : 'Exam updated successfully!',
             ),
             backgroundColor: Colors.green,
           ),
@@ -841,6 +894,7 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
         Navigator.pop(context, true);
       }
     } catch (e) {
+      print("Error AAGYA Bhai $e");
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
