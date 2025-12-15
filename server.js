@@ -21,6 +21,7 @@ import dashboardRoutes from './src/routes/Tutor/dashboard.js';
 
 import examRoutes from './src/routes/examRoutes.js';
 import aiRoutes from './src/routes/aiRoutes.js';
+import questionSetRoutes from './src/routes/questionSetRoutes.js';
 
 import notificationRoutes from './src/routes/notificationRoutes.js';
 
@@ -72,6 +73,7 @@ app.use('/api/exams', examRoutes);
 app.use('/api/ai', aiRoutes);
 
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/question-sets', questionSetRoutes);
 
 
 
