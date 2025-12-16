@@ -119,7 +119,7 @@ const examSchema = new mongoose.Schema({
   status: {
     type: String,
     enum: ['draft', 'published', 'archived'],
-    default: 'draft',
+    default: 'published',
   },
   isPublished: {
     type: Boolean,
