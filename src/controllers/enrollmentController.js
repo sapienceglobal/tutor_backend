@@ -109,7 +109,11 @@ export const getMyEnrollments = async (req, res) => {
         },
       })
       .sort({ enrolledAt: -1 });
-  //  console.log("enrollments ",enrollments)
+    console.log(`📊 Fetching enrollments for user: ${req.user.id}`);
+    console.log(`Found ${enrollments.length} enrollments`);
+    enrollments.forEach(e => {
+      console.log(`  - Course: ${e.courseId.title} | Progress: ${e.progress.percentage}%`);
+    });
     res.status(200).json({
       success: true,
       count: enrollments.length,
@@ -250,95 +254,95 @@ export const unenrollFromCourse = async (req, res) => {
 
 // @desc    Update lesson progress
 // @route   PATCH /api/enrollments/:id/progress
-export const updateProgress = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { lessonId, watchedDuration, isCompleted } = req.body;
+// export const updateProgress = async (req, res) => {
+//   try {
+//     const { id } = req.params;
+//     const { lessonId, watchedDuration, isCompleted } = req.body;
 
-    if (!lessonId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Lesson ID is required',
-      });
-    }
+//     if (!lessonId) {
+//       return res.status(400).json({
+//         success: false,
+//         message: 'Lesson ID is required',
+//       });
+//     }
 
-    const enrollment = await Enrollment.findById(id);
+//     const enrollment = await Enrollment.findById(id);
 
-    if (!enrollment) {
-      return res.status(404).json({
-        success: false,
-        message: 'Enrollment not found',
-      });
-    }
+//     if (!enrollment) {
+//       return res.status(404).json({
+//         success: false,
+//         message: 'Enrollment not found',
+//       });
+//     }
 
-    // Check if user owns this enrollment
-    if (enrollment.studentId.toString() !== req.user.id) {
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized',
-      });
-    }
+//     // Check if user owns this enrollment
+//     if (enrollment.studentId.toString() !== req.user.id) {
+//       return res.status(403).json({
+//         success: false,
+//         message: 'Not authorized',
+//       });
+//     }
 
-    // Find or create progress
-    let progress = await Progress.findOne({
-      enrollmentId: id,
-      lessonId,
-    });
+//     // Find or create progress
+//     let progress = await Progress.findOne({
+//       enrollmentId: id,
+//       lessonId,
+//     });
 
-    if (progress) {
-      progress.watchedDuration = watchedDuration || progress.watchedDuration;
-      progress.isCompleted = isCompleted !== undefined ? isCompleted : progress.isCompleted;
-      progress.lastWatched = Date.now();
-      await progress.save();
-    } else {
-      progress = await Progress.create({
-        enrollmentId: id,
-        lessonId,
-        watchedDuration: watchedDuration || 0,
-        isCompleted: isCompleted || false,
-      });
-    }
+//     if (progress) {
+//       progress.watchedDuration = watchedDuration || progress.watchedDuration;
+//       progress.isCompleted = isCompleted !== undefined ? isCompleted : progress.isCompleted;
+//       progress.lastWatched = Date.now();
+//       await progress.save();
+//     } else {
+//       progress = await Progress.create({
+//         enrollmentId: id,
+//         lessonId,
+//         watchedDuration: watchedDuration || 0,
+//         isCompleted: isCompleted || false,
+//       });
+//     }
 
-    // Update enrollment progress
-    const totalLessons = await Lesson.countDocuments({ courseId: enrollment.courseId });
-    const completedLessons = await Progress.countDocuments({
-      enrollmentId: id,
-      isCompleted: true,
-    });
+//     // Update enrollment progress
+//     const totalLessons = await Lesson.countDocuments({ courseId: enrollment.courseId });
+//     const completedLessons = await Progress.countDocuments({
+//       enrollmentId: id,
+//       isCompleted: true,
+//     });
 
-    enrollment.progress.completedLessons = await Progress.find({
-      enrollmentId: id,
-      isCompleted: true,
-    }).distinct('lessonId');
+//     enrollment.progress.completedLessons = await Progress.find({
+//       enrollmentId: id,
+//       isCompleted: true,
+//     }).distinct('lessonId');
 
-    enrollment.progress.percentage = totalLessons > 0
-      ? (completedLessons / totalLessons) * 100
-      : 0;
+//     enrollment.progress.percentage = totalLessons > 0
+//       ? (completedLessons / totalLessons) * 100
+//       : 0;
 
-    enrollment.lastAccessed = Date.now();
+//     enrollment.lastAccessed = Date.now();
 
-    // Check if course completed
-    if (enrollment.progress.percentage === 100) {
-      enrollment.status = 'completed';
-      enrollment.completedAt = Date.now();
-    }
+//     // Check if course completed
+//     if (enrollment.progress.percentage === 100) {
+//       enrollment.status = 'completed';
+//       enrollment.completedAt = Date.now();
+//     }
 
-    await enrollment.save();
+//     await enrollment.save();
 
-    res.status(200).json({
-      success: true,
-      message: 'Progress updated successfully',
-      progress,
-      enrollment,
-    });
-  } catch (error) {
-    console.error('Update progress error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-    });
-  }
-};
+//     res.status(200).json({
+//       success: true,
+//       message: 'Progress updated successfully',
+//       progress,
+//       enrollment,
+//     });
+//   } catch (error) {
+//     console.error('Update progress error:', error);
+//     res.status(500).json({
+//       success: false,
+//       message: 'Internal server error',
+//     });
+//   }
+// };
 
 // @desc    Check if enrolled in course
 // @route   GET /api/enrollments/check/:courseId

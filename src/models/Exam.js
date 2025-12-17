@@ -55,7 +55,7 @@ const examSchema = new mongoose.Schema({
     default: 'assessment',
   },
   instructions: String,
-  
+
   // Exam Settings
   duration: {
     type: Number, // in minutes
@@ -73,14 +73,14 @@ const examSchema = new mongoose.Schema({
     type: Number,
     default: 70,
   },
-  
+
   // Questions
   questions: [examQuestionSchema],
   totalQuestions: {
     type: Number,
     default: 0,
   },
-  
+
   // Exam Behavior
   shuffleQuestions: {
     type: Boolean,
@@ -106,7 +106,7 @@ const examSchema = new mongoose.Schema({
     type: Number,
     default: 1,
   },
-  
+
   // Scheduling
   startDate: Date,
   endDate: Date,
@@ -114,7 +114,7 @@ const examSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
-  
+
   // Status
   status: {
     type: String,
@@ -125,7 +125,7 @@ const examSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
-  
+
   // Statistics
   attemptCount: {
     type: Number,
@@ -135,14 +135,14 @@ const examSchema = new mongoose.Schema({
     type: Number,
     default: 0,
   },
-  
+
   // AI Generated
   isAIGenerated: {
     type: Boolean,
     default: false,
   },
   aiPrompt: String,
-  
+
   createdAt: {
     type: Date,
     default: Date.now,
@@ -154,19 +154,20 @@ const examSchema = new mongoose.Schema({
 });
 
 // Update timestamp and calculated fields on save
-examSchema.pre('save', function(next) {
+examSchema.pre('save', function (next) {
   this.updatedAt = Date.now();
   this.totalQuestions = this.questions.length;
   this.totalMarks = this.questions.reduce((sum, q) => sum + (q.points || 1), 0);
-  
+
   if (this.passingMarks && this.totalMarks) {
     this.passingPercentage = Math.round((this.passingMarks / this.totalMarks) * 100);
   }
-  
- 
-}); 
+
+
+});
 
 // Exam Attempt Schema (for tracking student attempts)
+// In Exam.js model
 const examAttemptSchema = new mongoose.Schema({
   examId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -189,9 +190,19 @@ const examAttemptSchema = new mongoose.Schema({
   },
   answers: [{
     questionId: mongoose.Schema.Types.ObjectId,
-    selectedOption: Number, // index of selected option
+    selectedOption: Number,
     isCorrect: Boolean,
     pointsEarned: Number,
+
+    // ✅ NEW: Embed question data for review
+    questionData: {
+      question: String,
+      options: [{ text: String }],
+      correctOption: Number, // Index of correct answer
+      explanation: String,
+      points: Number,
+      difficulty: String,
+    },
   }],
   score: {
     type: Number,
@@ -205,7 +216,7 @@ const examAttemptSchema = new mongoose.Schema({
     type: Boolean,
     required: true,
   },
-  timeSpent: Number, // in seconds
+  timeSpent: Number,
   startedAt: {
     type: Date,
     required: true,

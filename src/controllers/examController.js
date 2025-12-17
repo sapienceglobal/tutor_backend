@@ -337,6 +337,10 @@ export const deleteExam = async (req, res) => {
 
 // @desc    Submit exam (Student)
 // @route   POST /api/exams/:id/submit
+// @desc    Submit exam (Student)
+// @route   POST /api/exams/:id/submit
+// In examController.js - Update submitExam function
+
 export const submitExam = async (req, res) => {
     try {
         const { id } = req.params;
@@ -385,17 +389,42 @@ export const submitExam = async (req, res) => {
 
         // Calculate score
         let score = 0;
+
+        // Build detailed answer array with question data
         const processedAnswers = answers.map((ans) => {
             const question = exam.questions.id(ans.questionId);
+
+            if (!question) {
+                return {
+                    questionId: ans.questionId,
+                    selectedOption: ans.selectedOption,
+                    isCorrect: false,
+                    pointsEarned: 0,
+                };
+            }
+
             const isCorrect = question.options[ans.selectedOption]?.isCorrect || false;
             const pointsEarned = isCorrect ? (question.points || 1) : 0;
             score += pointsEarned;
+
+            // Find correct option index
+            const correctOptionIndex = question.options.findIndex(opt => opt.isCorrect);
 
             return {
                 questionId: ans.questionId,
                 selectedOption: ans.selectedOption,
                 isCorrect,
                 pointsEarned,
+
+                // Include full question data for review
+                questionData: {
+                    question: question.question,
+                    options: question.options.map(opt => ({ text: opt.text })),
+                    correctOption: correctOptionIndex,
+                    explanation: question.explanation || null,
+                    points: question.points,
+                    difficulty: question.difficulty,
+                },
             };
         });
 
@@ -423,17 +452,57 @@ export const submitExam = async (req, res) => {
         exam.averageScore = allAttempts.reduce((sum, a) => sum + a.score, 0) / allAttempts.length;
         await exam.save();
 
+        // ✅ NEW: Check if results should be shown immediately
+        if (!exam.showResultImmediately) {
+            // Don't show results - just confirmation
+            return res.status(200).json({
+                success: true,
+                message: 'Exam submitted successfully',
+                showResultImmediately: false,
+                attemptId: attempt._id,
+                submittedAt: attempt.submittedAt,
+            });
+        }
+
+        // ✅ Show full results
+        const attemptResponse = {
+            score,
+            percentage,
+            isPassed,
+            totalMarks: exam.totalMarks,
+            passingMarks: exam.passingMarks,
+            attemptNumber: attemptCount + 1,
+            timeSpent,
+
+            // Include answers for review
+            answers: processedAnswers.map(ans => {
+                const response = {
+                    questionId: ans.questionId,
+                    selectedOption: ans.selectedOption,
+                    isCorrect: ans.isCorrect,
+                    pointsEarned: ans.pointsEarned,
+                    questionData: ans.questionData,
+                };
+
+                // Only show correct answer if setting allows
+                if (!exam.showCorrectAnswers) {
+                    delete response.questionData.correctOption;
+                    delete response.questionData.explanation;
+                }
+
+                return response;
+            }),
+
+            // Exam settings for UI logic
+            showCorrectAnswers: exam.showCorrectAnswers,
+            showResultImmediately: exam.showResultImmediately,
+        };
+
         res.status(200).json({
             success: true,
             message: 'Exam submitted successfully',
-            attempt: {
-                score,
-                percentage,
-                isPassed,
-                totalMarks: exam.totalMarks,
-                passingMarks: exam.passingMarks,
-                answers: exam.showCorrectAnswers ? processedAnswers : undefined,
-            },
+            showResultImmediately: true,
+            attempt: attemptResponse,
         });
     } catch (error) {
         console.error('Submit exam error:', error);
@@ -443,7 +512,6 @@ export const submitExam = async (req, res) => {
         });
     }
 };
-
 // @desc    Get exam attempts (Student or Tutor)
 // @route   GET /api/exams/:id/attempts
 export const getExamAttempts = async (req, res) => {

@@ -5,7 +5,7 @@ import {
   getEnrollmentByCourse,
   getCourseStudents,
   unenrollFromCourse,
-    updateProgress,     
+    // updateProgress,     
   checkEnrollment,
 } from '../controllers/enrollmentController.js';
 import { protect } from '../middleware/auth.js';
@@ -21,6 +21,6 @@ router.get('/course/:courseId', getEnrollmentByCourse);
 router.get('/check/:courseId', protect, checkEnrollment);
 router.get('/students/:courseId', getCourseStudents);
 router.delete('/:id', unenrollFromCourse);
-router.patch('/:id/progress', updateProgress);
+// router.patch('/:id/progress', updateProgress);
 
 export default router;
