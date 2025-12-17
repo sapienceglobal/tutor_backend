@@ -2,6 +2,7 @@ import Lesson from '../models/Lesson.js';
 import Course from '../models/Course.js';
 import Enrollment from '../models/Enrollment.js';
 import Progress from '../models/Progress.js';
+import { createNotification } from './notificationController.js';
 
 // @desc    Get all lessons for a course
 // @route   GET /api/lessons/course/:courseId
@@ -333,6 +334,212 @@ export const deleteLesson = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Internal server error',
+    });
+  }
+};
+
+
+// File
+
+// ============================================================================
+// UPLOAD DOCUMENT TO LESSON
+// ============================================================================
+export const uploadDocumentToLesson = async (req, res) => {
+  try {
+    const { lessonId } = req.params;
+    const { name, url, type, size, publicId } = req.body;
+
+    // Validate required fields
+    if (!name || !url || !type) {
+      return res.status(400).json({
+        success: false,
+        message: 'Name, URL, and type are required',
+      });
+    }
+
+    // Find lesson
+    const lesson = await Lesson.findById(lessonId);
+    if (!lesson) {
+      return res.status(404).json({
+        success: false,
+        message: 'Lesson not found',
+      });
+    }
+
+    // Check if user is the course owner/tutor
+    const course = await Course.findById(lesson.courseId).populate('tutorId');
+    if (!course) {
+      return res.status(404).json({
+        success: false,
+        message: 'Course not found',
+      });
+    }
+
+    const isOwner = course.tutorId.userId.toString() === req.user.id;
+    if (!isOwner) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only course owner can upload documents',
+      });
+    }
+
+    // Initialize documents array if lesson type is 'document'
+    if (lesson.type === 'document') {
+      if (!lesson.content.documents) {
+        lesson.content.documents = [];
+      }
+
+      // Add document to array
+      lesson.content.documents.push({
+        name,
+        url,
+        type,
+        size,
+        publicId, // Store for deletion
+      });
+    } else {
+      // For other lesson types, add to attachments
+      if (!lesson.content.attachments) {
+        lesson.content.attachments = [];
+      }
+
+      lesson.content.attachments.push({
+        name,
+        url,
+        type,
+        size,
+        publicId,
+      });
+    }
+
+    // Save lesson
+    await lesson.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Document added to lesson successfully',
+      lesson,
+    });
+  } catch (error) {
+    console.error('Upload document error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to add document to lesson',
+    });
+  }
+};
+
+// ============================================================================
+// DELETE DOCUMENT FROM LESSON
+// ============================================================================
+export const deleteDocumentFromLesson = async (req, res) => {
+  try {
+    const { lessonId, documentId } = req.params;
+
+    // Find lesson
+    const lesson = await Lesson.findById(lessonId);
+    if (!lesson) {
+      return res.status(404).json({
+        success: false,
+        message: 'Lesson not found',
+      });
+    }
+
+    // Check ownership
+    const course = await Course.findById(lesson.courseId).populate('tutorId');
+    const isOwner = course.tutorId.userId.toString() === req.user.id;
+    if (!isOwner) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only course owner can delete documents',
+      });
+    }
+
+    let documentFound = false;
+    let publicIdToDelete = null;
+
+    // Remove from documents array
+    if (lesson.content.documents) {
+      const docToDelete = lesson.content.documents.find(
+        doc => doc._id.toString() === documentId
+      );
+      if (docToDelete) {
+        publicIdToDelete = docToDelete.publicId;
+        lesson.content.documents = lesson.content.documents.filter(
+          doc => doc._id.toString() !== documentId
+        );
+        documentFound = true;
+      }
+    }
+
+    // Remove from attachments array if not found in documents
+    if (!documentFound && lesson.content.attachments) {
+      const attToDelete = lesson.content.attachments.find(
+        att => att._id.toString() === documentId
+      );
+      if (attToDelete) {
+        publicIdToDelete = attToDelete.publicId;
+        lesson.content.attachments = lesson.content.attachments.filter(
+          att => att._id.toString() !== documentId
+        );
+        documentFound = true;
+      }
+    }
+
+    if (!documentFound) {
+      return res.status(404).json({
+        success: false,
+        message: 'Document not found',
+      });
+    }
+
+    await lesson.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Document deleted successfully',
+      publicId: publicIdToDelete, // Return publicId so Flutter can delete from Cloudinary
+      lesson,
+    });
+  } catch (error) {
+    console.error('Delete document error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete document',
+    });
+  }
+};
+
+// ============================================================================
+// GET ALL DOCUMENTS OF A LESSON
+// ============================================================================
+export const getLessonDocuments = async (req, res) => {
+  try {
+    const { lessonId } = req.params;
+
+    const lesson = await Lesson.findById(lessonId);
+    if (!lesson) {
+      return res.status(404).json({
+        success: false,
+        message: 'Lesson not found',
+      });
+    }
+
+    // Combine documents and attachments
+    const allDocuments = [
+      ...(lesson.content.documents || []),
+      ...(lesson.content.attachments || []),
+    ];
+
+    res.status(200).json({
+      success: true,
+      documents: allDocuments,
+    });
+  } catch (error) {
+    console.error('Get documents error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get documents',
     });
   }
 };

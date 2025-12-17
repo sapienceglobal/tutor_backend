@@ -14,7 +14,7 @@ const quizQuestionSchema = new mongoose.Schema({
   points: {
     type: Number,
     default: 1,
-  }, 
+  },
 }, { _id: true }); // Mongoose will auto-generate _id
 
 // Document Schema
@@ -23,6 +23,7 @@ const documentSchema = new mongoose.Schema({
   url: String,
   type: String, // pdf, docx, pptx, etc.
   size: Number, // in bytes
+  publicId: String,
 });
 
 const lessonSchema = new mongoose.Schema({
@@ -53,10 +54,10 @@ const lessonSchema = new mongoose.Schema({
     // Video Content
     videoUrl: String,
     duration: Number, // in seconds
-    
+
     // Document Content
     documents: [documentSchema],
-    
+
     // Quiz Content
     quiz: {
       title: String,
@@ -89,7 +90,7 @@ const lessonSchema = new mongoose.Schema({
         default: null, // null = unlimited
       },
     },
-    
+
     // Common attachments (PDFs, resources)
     attachments: [{
       name: String,
@@ -120,17 +121,17 @@ const lessonSchema = new mongoose.Schema({
 });
 
 // Update timestamp on save
-lessonSchema.pre('save', function(next) {
+lessonSchema.pre('save', function (next) {
   this.updatedAt = Date.now();
-  
+
   // Calculate total points for quiz
   if (this.type === 'quiz' && this.content.quiz && this.content.quiz.questions) {
     this.content.quiz.totalPoints = this.content.quiz.questions.reduce(
-      (sum, q) => sum + (q.points || 1), 
+      (sum, q) => sum + (q.points || 1),
       0
     );
   }
-  
+
 
 });
 
