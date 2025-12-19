@@ -26,6 +26,7 @@ import questionSetRoutes from './src/routes/questionSetRoutes.js';
 import notificationRoutes from './src/routes/notificationRoutes.js';
 
 import { verifyApiKey } from './src/middleware/apiKey.js';
+import quizRoutes from './src/routes/quizRoutes.js';
 
 // Initialize express app
 const app = express();
@@ -74,6 +75,7 @@ app.use('/api/ai', aiRoutes);
 
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/question-sets', questionSetRoutes);
+app.use('/api/quiz', quizRoutes)
 
 
 

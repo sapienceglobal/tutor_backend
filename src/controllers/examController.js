@@ -2,6 +2,7 @@ import { Exam, ExamAttempt } from '../models/Exam.js';
 import Course from '../models/Course.js';
 import Enrollment from '../models/Enrollment.js';
 import mongoose from 'mongoose';
+
 // @desc    Get all exams for a course (Tutor)
 // @route   GET /api/exams/course/:courseId
 export const getExamsByCourse = async (req, res) => {
@@ -560,4 +561,290 @@ export const getExamAttempts = async (req, res) => {
             message: 'Internal server error',
         });
     }
+};
+
+
+// @desc    Get Student's Own Attempt History for an Exam
+// @route   GET /api/exams/:examId/my-attempts
+// @access  Private (Student)
+export const getMyExamAttempts = async (req, res) => {
+  try {
+    const { examId } = req.params;
+    const studentId = req.user.id;
+
+    // Verify exam exists
+    const exam = await Exam.findById(examId);
+    if (!exam) {
+      return res.status(404).json({
+        success: false,
+        message: 'Exam not found',
+      });
+    }
+
+    // Get all attempts for this student
+    const attempts = await ExamAttempt.find({
+      examId,
+      studentId,
+    })
+      .sort({ submittedAt: -1 }) // Most recent first
+      .select('-answers'); // Don't send detailed answers in list
+
+    // Calculate summary stats
+    const stats = {
+      totalAttempts: attempts.length,
+      bestScore: attempts.length > 0 
+        ? Math.max(...attempts.map(a => a.score))
+        : 0,
+      averageScore: attempts.length > 0
+        ? Math.round(
+            attempts.reduce((sum, a) => sum + a.score, 0) / attempts.length
+          )
+        : 0,
+      passed: attempts.some(a => a.isPassed),
+    };
+
+    res.status(200).json({
+      success: true,
+      attempts,
+      stats,
+      exam: {
+        id: exam._id,
+        title: exam.title,
+        passingMarks: exam.passingMarks,
+        allowRetake: exam.allowRetake,
+        maxAttempts: exam.maxAttempts,
+      },
+    });
+  } catch (error) {
+    console.error('Get my attempts error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get attempts',
+    });
+  }
+};
+
+// @desc    Get Single Attempt Details (with answers)
+// @route   GET /api/exams/attempt/:attemptId
+// @access  Private (Student - own attempts only)
+export const getAttemptDetails = async (req, res) => {
+  try {
+    const { attemptId } = req.params;
+    const userId = req.user.id;
+
+    const attempt = await ExamAttempt.findById(attemptId).populate('examId');
+
+    if (!attempt) {
+      return res.status(404).json({
+        success: false,
+        message: 'Attempt not found',
+      });
+    }
+
+    // Check authorization (student can only view their own)
+    if (attempt.studentId.toString() !== userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Unauthorized',
+      });
+    }
+
+    const exam = attempt.examId;
+
+    // Build detailed results with questions
+    const detailedResults = exam.questions.map((q, index) => {
+      const studentAnswer = attempt.answers.find(
+        a => a.questionIndex === index
+      );
+      const correctIndex = q.options.findIndex(opt => opt.isCorrect);
+
+      return {
+        questionNumber: index + 1,
+        question: q.question,
+        options: q.options.map(opt => opt.text),
+        correctIndex,
+        selectedIndex: studentAnswer?.selectedOptionIndex ?? -1,
+        isCorrect: studentAnswer?.isCorrect ?? false,
+        explanation: q.explanation,
+        pointsEarned: studentAnswer?.pointsEarned ?? 0,
+        pointsPossible: q.points || 1,
+      };
+    });
+
+    res.status(200).json({
+      success: true,
+      attempt,
+      exam: {
+        title: exam.title,
+        showCorrectAnswers: exam.showCorrectAnswers,
+      },
+      detailedResults: exam.showCorrectAnswers ? detailedResults : null,
+    });
+  } catch (error) {
+    console.error('Get attempt details error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get attempt details',
+    });
+  }
+};
+
+// @desc    Get All Attempts for an Exam (Tutor only)
+// @route   GET /api/exams/:examId/all-attempts
+// @access  Private (Tutor)
+export const getAllExamAttempts = async (req, res) => {
+  try {
+    const { examId } = req.params;
+
+    // Verify exam exists and user owns it
+    const exam = await Exam.findById(examId).populate('tutorId');
+    if (!exam) {
+      return res.status(404).json({
+        success: false,
+        message: 'Exam not found',
+      });
+    }
+
+    if (exam.tutorId.userId.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Unauthorized',
+      });
+    }
+
+    // Get all attempts with student info
+    const attempts = await ExamAttempt.find({ examId })
+      .populate('studentId', 'name email')
+      .sort({ submittedAt: -1 })
+      .select('-answers'); // Don't send detailed answers in list
+
+    // Group by student
+    const studentStats = {};
+    attempts.forEach(attempt => {
+      const studentId = attempt.studentId._id.toString();
+      if (!studentStats[studentId]) {
+        studentStats[studentId] = {
+          student: attempt.studentId,
+          attempts: [],
+          bestScore: 0,
+          totalAttempts: 0,
+          passed: false,
+        };
+      }
+
+      studentStats[studentId].attempts.push(attempt);
+      studentStats[studentId].totalAttempts++;
+      studentStats[studentId].bestScore = Math.max(
+        studentStats[studentId].bestScore,
+        attempt.score
+      );
+      if (attempt.isPassed) {
+        studentStats[studentId].passed = true;
+      }
+    });
+
+    // Convert to array
+    const groupedData = Object.values(studentStats);
+
+    // Overall stats
+    const overallStats = {
+      totalAttempts: attempts.length,
+      uniqueStudents: groupedData.length,
+      averageScore: attempts.length > 0
+        ? Math.round(
+            attempts.reduce((sum, a) => sum + a.score, 0) / attempts.length
+          )
+        : 0,
+      passedCount: groupedData.filter(s => s.passed).length,
+      passRate: groupedData.length > 0
+        ? Math.round(
+            (groupedData.filter(s => s.passed).length / groupedData.length) * 100
+          )
+        : 0,
+    };
+
+    res.status(200).json({
+      success: true,
+      attempts: groupedData,
+      overallStats,
+      exam: {
+        id: exam._id,
+        title: exam.title,
+        passingMarks: exam.passingMarks,
+      },
+    });
+  } catch (error) {
+    console.error('Get all attempts error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get attempts',
+    });
+  }
+};
+
+// @desc    Get Specific Student's Attempt Details (Tutor only)
+// @route   GET /api/exams/tutor/attempt/:attemptId
+// @access  Private (Tutor)
+export const getTutorAttemptDetails = async (req, res) => {
+  try {
+    const { attemptId } = req.params;
+
+    const attempt = await ExamAttempt.findById(attemptId)
+      .populate('examId')
+      .populate('studentId', 'name email');
+
+    if (!attempt) {
+      return res.status(404).json({
+        success: false,
+        message: 'Attempt not found',
+      });
+    }
+
+    const exam = attempt.examId;
+
+    // Verify tutor owns this exam
+    const fullExam = await Exam.findById(exam._id).populate('tutorId');
+    if (fullExam.tutorId.userId.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Unauthorized',
+      });
+    }
+
+    // Build detailed results
+    const detailedResults = exam.questions.map((q, index) => {
+      const studentAnswer = attempt.answers.find(
+        a => a.questionIndex === index
+      );
+      const correctIndex = q.options.findIndex(opt => opt.isCorrect);
+
+      return {
+        questionNumber: index + 1,
+        question: q.question,
+        options: q.options.map(opt => opt.text),
+        correctIndex,
+        selectedIndex: studentAnswer?.selectedOptionIndex ?? -1,
+        isCorrect: studentAnswer?.isCorrect ?? false,
+        explanation: q.explanation,
+        pointsEarned: studentAnswer?.pointsEarned ?? 0,
+        pointsPossible: q.points || 1,
+      };
+    });
+
+    res.status(200).json({
+      success: true,
+      attempt,
+      student: attempt.studentId,
+      exam: {
+        title: exam.title,
+      },
+      detailedResults,
+    });
+  } catch (error) {
+    console.error('Get tutor attempt details error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get attempt details',
+    });
+  }
 };

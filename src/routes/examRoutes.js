@@ -8,8 +8,13 @@ import {
   deleteExam,
   submitExam,
   getExamAttempts,
+  getMyExamAttempts,
+  getAllExamAttempts,
+  getTutorAttemptDetails,
+  getAttemptDetails,
 } from '../controllers/examController.js';
 import { protect } from '../middleware/auth.js';
+
 
 const router = express.Router();
 
@@ -20,5 +25,12 @@ router.post('/', protect, createExam);
 router.post('/:id/submit', protect, submitExam);
 router.patch('/:id', protect, updateExam);
 router.delete('/:id', protect, deleteExam);
+
+router.get('/:examId/my-attempts', protect, getMyExamAttempts);
+router.get('/attempt/:attemptId', protect, getAttemptDetails);
+
+// Tutor routes
+router.get('/:examId/all-attempts', protect, getAllExamAttempts);
+router.get('/tutor/attempt/:attemptId', protect, getTutorAttemptDetails);
 
 export default router;
