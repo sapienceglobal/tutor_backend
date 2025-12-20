@@ -88,8 +88,6 @@ export const createReview = async (req, res) => {
 
         }
 
-        console.log('✅ Review created successfully:', review._id);
-
         res.status(201).json({
             success: true,
             message: 'Review posted successfully',

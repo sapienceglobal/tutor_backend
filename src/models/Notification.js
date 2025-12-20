@@ -18,8 +18,9 @@ const notificationSchema = new mongoose.Schema({
       'announcement',        // Tutor ki taraf se announcement
       'reminder',           // Course continue karne ki reminder
       'certificate',        // Certificate ready ho gaya
-      'tutor_reply', 
-      'review_reply'      // Tutor ne comment/question ka reply diya
+      'tutor_reply',        // Tutor ne comment/question ka reply diya
+      'review_reply',
+      'new_review'
     ],
     required: true
   },
