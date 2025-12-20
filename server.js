@@ -28,6 +28,8 @@ import notificationRoutes from './src/routes/notificationRoutes.js';
 import { verifyApiKey } from './src/middleware/apiKey.js';
 import quizRoutes from './src/routes/quizRoutes.js';
 
+import reviewRoutes from './src/routes/reviewRoutes.js';
+
 // Initialize express app
 const app = express();
 
@@ -76,6 +78,8 @@ app.use('/api/ai', aiRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/question-sets', questionSetRoutes);
 app.use('/api/quiz', quizRoutes)
+
+app.use('/api/reviews', reviewRoutes);
 
 
 
