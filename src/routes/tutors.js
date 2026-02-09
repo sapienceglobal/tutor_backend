@@ -1,15 +1,20 @@
 import express from 'express';
+
 import {
   getAllTutors,
   getTutorById,
   getTutorsByCategory,
   createTutor,
   updateTutor,
-  deleteTutor
+  deleteTutor,
+  getCurrentTutor
 } from '../controllers/tutorController.js';
 import { protect } from '../middleware/auth.js';
 
 const router = express.Router();
+
+// Protected routes
+router.get('/profile', protect, getCurrentTutor);
 
 // Public routes
 router.get('/', getAllTutors);

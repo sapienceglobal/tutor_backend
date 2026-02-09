@@ -31,7 +31,7 @@ export const getAllTutors = async (req, res) => {
     // Search by name if provided
     let filteredTutors = tutors;
     if (search) {
-      filteredTutors = tutors.filter(tutor => 
+      filteredTutors = tutors.filter(tutor =>
         tutor.userId.name.toLowerCase().includes(search.toLowerCase())
       );
     }
@@ -43,9 +43,9 @@ export const getAllTutors = async (req, res) => {
     });
   } catch (error) {
     console.error('Get tutors error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
@@ -73,9 +73,9 @@ export const getTutorById = async (req, res) => {
     });
   } catch (error) {
     console.error('Get tutor error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
@@ -107,9 +107,9 @@ export const getTutorsByCategory = async (req, res) => {
     });
   } catch (error) {
     console.error('Get tutors by category error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
@@ -118,13 +118,13 @@ export const getTutorsByCategory = async (req, res) => {
 // @route   POST /api/tutors
 export const createTutor = async (req, res) => {
   try {
-    const { 
-      categoryId, 
-      hourlyRate, 
-      experience, 
-      subjects, 
-      availability, 
-      bio 
+    const {
+      categoryId,
+      hourlyRate,
+      experience,
+      subjects,
+      availability,
+      bio
     } = req.body;
 
     if (!categoryId || !hourlyRate || !experience) {
@@ -180,9 +180,9 @@ export const createTutor = async (req, res) => {
     });
   } catch (error) {
     console.error('Create tutor error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
@@ -192,13 +192,13 @@ export const createTutor = async (req, res) => {
 export const updateTutor = async (req, res) => {
   try {
     const { id } = req.params;
-    const { 
-      categoryId, 
-      hourlyRate, 
-      experience, 
-      subjects, 
-      availability, 
-      bio 
+    const {
+      categoryId,
+      hourlyRate,
+      experience,
+      subjects,
+      availability,
+      bio
     } = req.body;
 
     const tutor = await Tutor.findById(id);
@@ -238,9 +238,9 @@ export const updateTutor = async (req, res) => {
     });
   } catch (error) {
     console.error('Update tutor error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
@@ -283,9 +283,37 @@ export const deleteTutor = async (req, res) => {
     });
   } catch (error) {
     console.error('Delete tutor error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// @desc    Get current logged in tutor profile
+// @route   GET /api/tutors/profile
+export const getCurrentTutor = async (req, res) => {
+  try {
+    const tutor = await Tutor.findOne({ userId: req.user.id })
+      .populate('userId', 'name email phone profileImage')
+      .populate('categoryId', 'name icon');
+
+    if (!tutor) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tutor profile not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      tutor
+    });
+  } catch (error) {
+    console.error('Get current tutor error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
