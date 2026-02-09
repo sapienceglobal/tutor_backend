@@ -29,6 +29,7 @@ import { verifyApiKey } from './src/middleware/apiKey.js';
 import quizRoutes from './src/routes/quizRoutes.js';
 
 import reviewRoutes from './src/routes/reviewRoutes.js';
+import liveClassRoutes from './src/routes/liveClasses.js';
 
 // Initialize express app
 const app = express();
@@ -79,7 +80,7 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/question-sets', questionSetRoutes);
 app.use('/api/quiz', quizRoutes)
 
-import liveClassRoutes from './src/routes/liveClasses.js';
+
 
 // ... existing code ...
 
