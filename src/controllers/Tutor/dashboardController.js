@@ -270,18 +270,57 @@ export const getEarningsOverview = async (req, res) => {
       totalEarnings: course.price * course.enrolledCount,
     }));
 
-    // Calculate monthly earnings (mock data - implement real logic)
+    // Calculate monthly earnings using aggregation
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+    sixMonthsAgo.setDate(1);
+
+    const monthlyEarningsAgg = await Enrollment.aggregate([
+      {
+        $match: {
+          courseId: { $in: courses.map(c => c._id) },
+          enrolledAt: { $gte: sixMonthsAgo }
+        }
+      },
+      {
+        $lookup: {
+          from: 'courses',
+          localField: 'courseId',
+          foreignField: '_id',
+          as: 'course'
+        }
+      },
+      {
+        $unwind: '$course'
+      },
+      {
+        $group: {
+          _id: {
+            year: { $year: '$enrolledAt' },
+            month: { $month: '$enrolledAt' }
+          },
+          earnings: { $sum: '$course.price' }
+        }
+      },
+      {
+        $sort: { '_id.year': 1, '_id.month': 1 }
+      }
+    ]);
+
+    // Format for frontend (ensure last 6 months exist even if 0 earnings)
     const monthlyEarnings = [];
-    const currentDate = new Date();
     for (let i = 5; i >= 0; i--) {
-      const month = new Date(
-        currentDate.getFullYear(),
-        currentDate.getMonth() - i,
-        1
-      );
+      const d = new Date();
+      d.setMonth(d.getMonth() - i);
+      const year = d.getFullYear();
+      const month = d.getMonth() + 1; // 1-based
+
+      const found = monthlyEarningsAgg.find(m => m._id.year === year && m._id.month === month);
+
       monthlyEarnings.push({
-        month: month.toISOString(),
-        earnings: Math.floor(Math.random() * 10000) + 5000, // Replace with real data
+        name: d.toLocaleString('default', { month: 'short' }), // Jan, Feb
+        revenue: found ? found.earnings : 0,
+        month: d.toISOString()
       });
     }
 
