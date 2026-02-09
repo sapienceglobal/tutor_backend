@@ -79,7 +79,12 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/question-sets', questionSetRoutes);
 app.use('/api/quiz', quizRoutes)
 
+import liveClassRoutes from './src/routes/liveClasses.js';
+
+// ... existing code ...
+
 app.use('/api/reviews', reviewRoutes);
+app.use('/api/live-classes', liveClassRoutes);
 
 
 
