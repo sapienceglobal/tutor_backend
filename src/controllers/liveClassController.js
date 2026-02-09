@@ -58,6 +58,9 @@ export const getLiveClasses = async (req, res) => {
         // If student, potentially filter by enrolled courses (future scope)
         // For now, show all public classes or implement logic to show relevant ones
         // We can also support query params for filtering
+        if (req.query.courseId) {
+            query.courseId = req.query.courseId;
+        }
 
         // Sort by dateTime ascending (nearest first)
         const classes = await LiveClass.find(query)
@@ -70,6 +73,23 @@ export const getLiveClasses = async (req, res) => {
             path: 'tutorId.userId',
             select: 'name profileImage'
         });
+
+        // AUTO-SYNC STATUS: Check for expired classes
+        const now = new Date();
+
+        // Use Promise.all to update statuses in parallel if needed
+        classes = await Promise.all(classes.map(async (cls) => {
+            const startTime = new Date(cls.dateTime);
+            const endTime = new Date(startTime.getTime() + (cls.duration * 60000)); // duration is in minutes
+
+            // If current time is past end time and status is not 'completed' or 'cancelled'
+            if (now > endTime && cls.status !== 'completed' && cls.status !== 'cancelled') {
+                cls.status = 'completed';
+                await cls.save(); // Save the updated status to DB
+            }
+
+            return cls;
+        }));
 
         res.status(200).json({
             success: true,
