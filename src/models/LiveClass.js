@@ -39,6 +39,10 @@ const liveClassSchema = new mongoose.Schema({
         enum: ['zoom', 'google_meet', 'other'],
         default: 'zoom'
     },
+    recordingLink: {
+        type: String,
+        trim: true
+    },
     status: {
         type: String,
         enum: ['scheduled', 'live', 'completed', 'cancelled'],

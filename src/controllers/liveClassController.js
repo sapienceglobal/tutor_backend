@@ -122,3 +122,53 @@ export const deleteLiveClass = async (req, res) => {
         });
     }
 };
+
+// @desc    Update a live class
+// @route   PATCH /api/live-classes/:id
+export const updateLiveClass = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { title, description, courseId, dateTime, duration, meetingLink, recordingLink, platform } = req.body;
+
+        const liveClass = await LiveClass.findById(id);
+
+        if (!liveClass) {
+            return res.status(404).json({
+                success: false,
+                message: 'Class not found'
+            });
+        }
+
+        // Check ownership
+        const tutor = await Tutor.findOne({ userId: req.user.id });
+        if (!tutor || liveClass.tutorId.toString() !== tutor._id.toString()) {
+            return res.status(403).json({
+                success: false,
+                message: 'Not authorized to update this class'
+            });
+        }
+
+        if (title) liveClass.title = title;
+        if (description !== undefined) liveClass.description = description;
+        if (courseId !== undefined) liveClass.courseId = courseId;
+        if (dateTime) liveClass.dateTime = dateTime;
+        if (duration) liveClass.duration = duration;
+        if (meetingLink) liveClass.meetingLink = meetingLink;
+        if (recordingLink !== undefined) liveClass.recordingLink = recordingLink;
+        if (platform) liveClass.platform = platform;
+
+        await liveClass.save();
+
+        res.status(200).json({
+            success: true,
+            message: 'Live class updated successfully',
+            liveClass
+        });
+    } catch (error) {
+        console.error('Update live class error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Internal server error'
+        });
+    }
+};

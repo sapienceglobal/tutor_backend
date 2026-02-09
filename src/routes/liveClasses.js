@@ -3,7 +3,8 @@ import express from 'express';
 import {
     createLiveClass,
     getLiveClasses,
-    deleteLiveClass
+    deleteLiveClass,
+    updateLiveClass
 } from '../controllers/liveClassController.js';
 import { protect } from '../middleware/auth.js';
 
@@ -16,6 +17,7 @@ router.route('/')
     .post(createLiveClass);
 
 router.route('/:id')
+    .patch(updateLiveClass)
     .delete(deleteLiveClass);
 
 export default router;
