@@ -1,6 +1,7 @@
 
 import LiveClass from '../models/LiveClass.js';
 import Tutor from '../models/Tutor.js';
+import Enrollment from '../models/Enrollment.js';
 
 // @desc    Create a new live class
 // @route   POST /api/live-classes
@@ -16,7 +17,7 @@ export const createLiveClass = async (req, res) => {
         // Verify tutor exists
         const tutor = await Tutor.findOne({ userId: req.user._id });
         if (!tutor) {
-             console.warn('Tutor profile not found for user:', req.user._id);
+            console.warn('Tutor profile not found for user:', req.user._id);
             return res.status(404).json({
                 success: false,
                 message: 'Tutor profile not found'
@@ -67,8 +68,25 @@ export const getLiveClasses = async (req, res) => {
             const tutor = await Tutor.findOne({ userId: req.user._id }); // Use _id for safety
             if (tutor) {
                 query.tutorId = tutor._id;
+            }
+        } else if (req.user.role === 'student') {
+            // Industry Standard: Students only see classes for courses they are enrolled in
+            const enrollments = await Enrollment.find({
+                studentId: req.user._id,
+                status: 'active'
+            });
+            const enrolledCourseIds = enrollments.map(e => e.courseId);
+
+            // If specific course requested (e.g. from course page), make sure they are enrolled
+            if (req.query.courseId) {
+                const isEnrolled = enrolledCourseIds.some(id => id.toString() === req.query.courseId);
+                if (!isEnrolled) {
+                    return res.status(403).json({ success: false, message: 'Not enrolled in this course' });
+                }
+                query.courseId = req.query.courseId;
             } else {
-                console.warn('Tutor profile not found for user:', req.user._id);
+                // Otherwise show all their enrolled classes
+                query.courseId = { $in: enrolledCourseIds };
             }
         }
 
@@ -89,14 +107,14 @@ export const getLiveClasses = async (req, res) => {
             .sort({ dateTime: 1 });
 
         // Removed manual LiveClass.populate and auto-sync for stability
-        
+
         // AUTO-SYNC STATUS: Check for expired classes (Safe Implementation)
         const now = new Date();
         // We use Promise.allSettled to ensure one failure doesn't crash the response
         await Promise.allSettled(classes.map(async (cls) => {
             try {
                 if (!cls.dateTime) return;
-                
+
                 const startTime = new Date(cls.dateTime);
                 if (isNaN(startTime.getTime())) return; // Invalid date check
 
@@ -106,7 +124,7 @@ export const getLiveClasses = async (req, res) => {
                 // If current time is past end time and status is not 'completed' or 'cancelled'
                 if (now > endTime && cls.status !== 'completed' && cls.status !== 'cancelled') {
                     cls.status = 'completed';
-                    await cls.save(); 
+                    await cls.save();
                 }
             } catch (err) {
                 console.error(`Error auto-updating class ${cls._id}:`, err);

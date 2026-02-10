@@ -169,14 +169,19 @@ export const getTutorStudents = async (req, res) => {
       if (!studentIds.has(e.studentId._id.toString())) {
         studentIds.add(e.studentId._id.toString());
         uniqueStudents.push({
+          _id: e.studentId._id,
           studentId: e.studentId._id,
           name: e.studentId.name,
           email: e.studentId.email,
           phone: e.studentId.phone,
           profileImage: e.studentId.profileImage,
-          coursesEnrolled: enrollments.filter(
+          joinedAt: e.studentId.createdAt, // Added joinedAt finding it useful for frontend "Joined" column
+          enrolledCourses: enrollments.filter( // Renamed to enrolledCourses to match frontend
             en => en.studentId._id.toString() === e.studentId._id.toString()
-          ).length,
+          ).map(en => ({
+            courseId: en.courseId._id,
+            title: en.courseId.title
+          }))
         });
       }
     });

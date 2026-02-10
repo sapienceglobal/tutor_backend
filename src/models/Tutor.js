@@ -43,6 +43,18 @@ const tutorSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
+  title: {
+    type: String,
+    trim: true
+  },
+  website: {
+    type: String,
+    trim: true
+  },
+  location: {
+    type: String,
+    trim: true
+  },
   isVerified: {
     type: Boolean,
     default: false

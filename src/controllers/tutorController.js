@@ -159,7 +159,10 @@ export const createTutor = async (req, res) => {
       experience,
       subjects: subjects || [],
       availability: availability || [],
-      bio: bio || ''
+      bio: bio || '',
+      title: req.body.title || '',
+      website: req.body.website || '',
+      location: req.body.location || ''
     });
 
     // Update user role to tutor
@@ -223,7 +226,11 @@ export const updateTutor = async (req, res) => {
     if (experience) tutor.experience = experience;
     if (subjects) tutor.subjects = subjects;
     if (availability) tutor.availability = availability;
+    if (availability) tutor.availability = availability;
     if (bio) tutor.bio = bio;
+    if (req.body.title) tutor.title = req.body.title;
+    if (req.body.website) tutor.website = req.body.website;
+    if (req.body.location) tutor.location = req.body.location;
 
     await tutor.save();
 
