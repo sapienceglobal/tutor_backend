@@ -414,16 +414,30 @@ export const submitExam = async (req, res) => {
         };
       }
 
-      const isCorrect = question.options[ans.selectedOption]?.isCorrect || false;
+      // If we have selectedOptionText, use it to find the correct option (handles shuffled options)
+      let isCorrect = false;
+      let selectedOptionIndex = ans.selectedOption;
+
+      if (ans.selectedOptionText && ans.selectedOption !== -1) {
+        // Find the option by text in the original question
+        const optionByText = question.options.find(opt => opt.text === ans.selectedOptionText);
+        if (optionByText) {
+          isCorrect = optionByText.isCorrect || false;
+        }
+      } else if (ans.selectedOption !== -1) {
+        // Fallback: use index (old behavior for backward compatibility)
+        isCorrect = question.options[ans.selectedOption]?.isCorrect || false;
+      }
+
       const pointsEarned = isCorrect ? (question.points || 1) : 0;
       score += pointsEarned;
 
-      // Find correct option index
+      // Find correct option index in original question
       const correctOptionIndex = question.options.findIndex(opt => opt.isCorrect);
 
       return {
         questionId: ans.questionId,
-        selectedOption: ans.selectedOption,
+        selectedOption: selectedOptionIndex,
         isCorrect,
         pointsEarned,
 
