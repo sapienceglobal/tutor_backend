@@ -312,9 +312,18 @@ export const getCurrentTutor = async (req, res) => {
       });
     }
 
+    // Get course count
+    // Dynamic import to avoid circular dependency if Course imports Tutor
+    const Course = (await import('../models/Course.js')).default;
+    const courseCount = await Course.countDocuments({ tutorId: tutor._id });
+
+    // Return tutor object converted to object + courseCount
+    const tutorObj = tutor.toObject();
+    tutorObj.courseCount = courseCount;
+
     res.status(200).json({
       success: true,
-      tutor
+      tutor: tutorObj
     });
   } catch (error) {
     console.error('Get current tutor error:', error);

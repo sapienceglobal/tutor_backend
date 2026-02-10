@@ -33,6 +33,10 @@ const appointmentSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
+  meetingLink: {
+    type: String,
+    trim: true
+  },
   createdAt: {
     type: Date,
     default: Date.now

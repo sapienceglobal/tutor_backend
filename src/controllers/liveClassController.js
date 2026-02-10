@@ -72,14 +72,14 @@ export const getLiveClasses = async (req, res) => {
         } else if (req.user.role === 'student') {
             // Industry Standard: Students only see classes for courses they are enrolled in
             const enrollments = await Enrollment.find({
-                studentId: req.user._id,
-                status: 'active'
+                studentId: req.user._id
             });
             const enrolledCourseIds = enrollments.map(e => e.courseId);
 
             // If specific course requested (e.g. from course page), make sure they are enrolled
             if (req.query.courseId) {
                 const isEnrolled = enrolledCourseIds.some(id => id.toString() === req.query.courseId);
+
                 if (!isEnrolled) {
                     return res.status(403).json({ success: false, message: 'Not enrolled in this course' });
                 }

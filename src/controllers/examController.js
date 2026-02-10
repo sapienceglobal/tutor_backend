@@ -160,6 +160,7 @@ export const createExam = async (req, res) => {
       maxAttempts,
       startDate,
       endDate,
+      status, // Extract status
     } = req.body;
 
     if (!courseId || !title || !duration || questions.length === 0) {
@@ -191,6 +192,8 @@ export const createExam = async (req, res) => {
       return questionWithoutId;
     });
 
+    const examStatus = status || 'published';
+
     const exam = await Exam.create({
       courseId,
       tutorId: course.tutorId._id,
@@ -210,6 +213,8 @@ export const createExam = async (req, res) => {
       startDate,
       endDate,
       isScheduled: !!(startDate && endDate),
+      status: examStatus,
+      isPublished: examStatus === 'published',
     });
 
     res.status(201).json({
@@ -273,6 +278,11 @@ export const updateExam = async (req, res) => {
         }
       }
     });
+
+    // Sync isPublished with status if status was updated
+    if (req.body.status) {
+      exam.isPublished = req.body.status === 'published';
+    }
 
     await exam.save();
 
@@ -682,7 +692,7 @@ export const getAttemptDetails = async (req, res) => {
     // Build detailed results with questions
     const detailedResults = exam.questions.map((q, index) => {
       const studentAnswer = attempt.answers.find(
-        a => a.questionIndex === index
+        a => a.questionId.toString() === q._id.toString()
       );
       const correctIndex = q.options.findIndex(opt => opt.isCorrect);
 
@@ -842,7 +852,7 @@ export const getTutorAttemptDetails = async (req, res) => {
     // Build detailed results
     const detailedResults = exam.questions.map((q, index) => {
       const studentAnswer = attempt.answers.find(
-        a => a.questionIndex === index
+        a => a.questionId.toString() === q._id.toString()
       );
       const correctIndex = q.options.findIndex(opt => opt.isCorrect);
 
@@ -869,13 +879,13 @@ export const getTutorAttemptDetails = async (req, res) => {
       detailedResults,
     });
 
-} catch (error) {
-  console.error('Get tutor attempt details error:', error);
-  res.status(500).json({
-    success: false,
-    message: 'Failed to get attempt details',
-  });
-}
+  } catch (error) {
+    console.error('Get tutor attempt details error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get attempt details',
+    });
+  }
 }
 
 // @desc    Get all exams created by a Tutor

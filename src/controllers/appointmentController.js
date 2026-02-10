@@ -254,6 +254,10 @@ export const updateAppointment = async (req, res) => {
       appointment.notes = notes;
     }
 
+    if (req.body.meetingLink) {
+      appointment.meetingLink = req.body.meetingLink;
+    }
+
     await appointment.save();
 
     const updatedAppointment = await Appointment.findById(id)
