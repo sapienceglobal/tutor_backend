@@ -352,7 +352,88 @@ export const getSchedule = async (req, res) => {
       });
     }
 
-    // Handle case where schedule hasn't been created yet
+    // Check if date query param is present
+    const { date } = req.query;
+
+    if (date) {
+      // Handle specific date availability
+      const requestDate = new Date(date);
+      const dayName = requestDate.toLocaleDateString('en-US', { weekday: 'long' });
+
+      const scheduleDoc = tutor.scheduleAppointment || {};
+      const availability = scheduleDoc.availability || [];
+      const overrides = scheduleDoc.dateOverrides || [];
+      const settings = scheduleDoc.bookingSettings || {};
+
+      let slots = [];
+
+      // 1. Check if date is overridden
+      const override = overrides.find(o => o.date === date);
+
+      if (override) {
+        if (override.isBlocked) {
+          return res.json({ success: true, slots: [] }); // Blocked date
+        }
+        if (override.customSlots && override.customSlots.length > 0) {
+          slots = override.customSlots; // Use custom slots
+        }
+      } else {
+        // 2. Fallback to weekly schedule
+        const daySchedule = availability.find(d => d.day === dayName);
+        if (daySchedule && daySchedule.isActive) {
+          slots = daySchedule.slots || []; // Use weekly slots
+        }
+      }
+
+      // 3. Filter out booked slots
+      if (slots.length > 0) {
+        // Fetch existing appointments for this tutor and date
+        // Need to match date part exactly. 
+        // Assuming appointments are stored with full dateTime.
+        // We need to check if a slot (HH:mm-HH:mm) overlaps with any appointment?
+        // Or typically checking if start time matches.
+        // Simpler: Check if a slot start time exists in appointments for that day.
+
+        const startOfDay = new Date(requestDate);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(requestDate);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        const bookedAppointments = await Appointment.find({
+          tutorId,
+          dateTime: { $gte: startOfDay, $lte: endOfDay },
+          status: { $in: ['pending', 'confirmed'] }
+        });
+
+        // Map booked times
+        const bookedTimes = bookedAppointments.map(app => {
+          const d = new Date(app.dateTime);
+          // Format directly to HH:mm string manually to avoid timezone issues if possible
+          // Assuming stored in UTC, and slot strings are local/tutor time?
+          // Actually safer to rely on matching logic.
+          // If backend stores UTC, we need to be careful.
+          // For simplicity, let's assume simple string matching if appointments store time string?
+          // No, Appointment model has dateTime (Date).
+          // Let's assume slots are "10:00-11:00". Start time "10:00".
+          const hours = d.getHours().toString().padStart(2, '0');
+          const minutes = d.getMinutes().toString().padStart(2, '0');
+          return `${hours}:${minutes}`;
+        });
+
+        // Filter available slots
+        slots = slots.filter(slot => {
+          const [startTime] = slot.split('-');
+          // Check if this start time is already booked
+          // Note: This is a basic check. For duration > 1 hour, need updated logic.
+          // Assuming 1 hour slots for now as per `bookingSettings`.
+          return !bookedTimes.includes(startTime);
+        });
+      }
+
+      return res.json({ success: true, slots });
+    }
+
+    // Default: Return Weekly Schedule (Existing logic)
     const scheduleDoc = tutor.scheduleAppointment || {};
 
     // Sort availability by day order
@@ -361,7 +442,7 @@ export const getSchedule = async (req, res) => {
       (a, b) => dayOrder.indexOf(a.day) - dayOrder.indexOf(b.day)
     );
 
-    // Response structure remains EXACTLY the same for frontend
+    // Response structure
     res.json({
       success: true,
       schedule: sortedAvailability,
@@ -373,7 +454,7 @@ export const getSchedule = async (req, res) => {
         slotCapacity: 1,
         bufferBetweenSlots: 0
       },
-      timezone: tutor.timezone || 'UTC', // Timezone usually stays on Tutor or can be moved, assuming Tutor for now based on your old schema context, adapt if moved.
+      timezone: tutor.timezone || 'UTC',
     });
 
   } catch (err) {
