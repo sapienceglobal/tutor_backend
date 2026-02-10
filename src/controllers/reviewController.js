@@ -424,6 +424,45 @@ export const getTutorReviews = async (req, res) => {
     }
 };
 
+// @desc    Get reviews for a specific tutor (Public)
+// @route   GET /api/reviews/tutor/:tutorId/public
+export const getReviewsByTutorId = async (req, res) => {
+    try {
+        const { tutorId } = req.params;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+
+        // 1. Find all courses by this tutor
+        const courses = await Course.find({ tutorId }).select('_id');
+        const courseIds = courses.map(course => course._id);
+
+        // 2. Find reviews for these courses
+        const totalReviews = await Review.countDocuments({ courseId: { $in: courseIds } });
+
+        const reviews = await Review.find({ courseId: { $in: courseIds } })
+            .populate('studentId', 'name profileImage')
+            .populate('courseId', 'title')
+            .sort({ createdAt: -1 })
+            .skip((page - 1) * limit)
+            .limit(limit)
+            .lean();
+
+        res.status(200).json({
+            success: true,
+            reviews,
+            pagination: {
+                currentPage: page,
+                totalPages: Math.ceil(totalReviews / limit),
+                totalReviews,
+                hasMore: page * limit < totalReviews,
+            },
+        });
+    } catch (error) {
+        console.error('❌ Get reviews by tutor error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch reviews', error: error.message });
+    }
+};
+
 // @desc    Reply to a review (Tutor only)
 // @route   POST /api/reviews/:id/reply
 export const replyToReview = async (req, res) => {
@@ -462,7 +501,7 @@ export const replyToReview = async (req, res) => {
         await review.populate('studentId', 'name profileImage');
         await review.populate('courseId', 'title');
 
-       
+
         if (review.studentId) {
             await createNotification({
                 userId: review.studentId._id ? review.studentId._id.toString() : review.studentId.toString(),
@@ -475,7 +514,7 @@ export const replyToReview = async (req, res) => {
                     route: '/course-details' // Or wherever you want to redirect
                 }
             });
-           
+
         }
         res.status(200).json({
             success: true,

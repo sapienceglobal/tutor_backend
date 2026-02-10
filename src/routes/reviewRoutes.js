@@ -8,6 +8,7 @@ import {
     getMyReview,
     getReviewStats,
     getTutorReviews,
+    getReviewsByTutorId,
     replyToReview,
 } from '../controllers/reviewController.js';
 import { protect } from '../middleware/auth.js';
@@ -29,6 +30,7 @@ router.post('/:id/helpful', toggleHelpful);
 
 // Add these lines
 router.get('/tutor/all', protect, getTutorReviews);
+router.get('/tutor/:tutorId/public', getReviewsByTutorId);
 router.post('/:id/reply', protect, replyToReview);
 
 export default router;
