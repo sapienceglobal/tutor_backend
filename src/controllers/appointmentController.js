@@ -357,11 +357,21 @@ export const getSchedule = async (req, res) => {
 
     if (date) {
       // Handle specific date availability
+      // Handle specific date availability
       const requestDate = new Date(date);
-      const dayName = requestDate.toLocaleDateString('en-US', { weekday: 'long' });
-
+      // Use getDay() to get 0-6 (Sunday-Saturday) and map to names
+      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const dayName = days[requestDate.getDay()]; // This uses local time of the server if not careful, but usually requestDate from string 'YYYY-MM-DD' is UTC midnight.
+      // Wait, new Date('2023-10-27') is UTC. getDay() returns based on local time? 
+      // Actually, new Date('YYYY-MM-DD') is treated as UTC in some environments or Local in others.
+      // Safer to parse parts.
+      const [y, m, d] = date.split('-').map(Number);
+      const safeDate = new Date(y, m - 1, d); // Local time 00:00:00
+      const safeDayName = days[safeDate.getDay()];
+      
       const scheduleDoc = tutor.scheduleAppointment || {};
       const availability = scheduleDoc.availability || [];
+
       const overrides = scheduleDoc.dateOverrides || [];
       const settings = scheduleDoc.bookingSettings || {};
 
@@ -380,8 +390,13 @@ export const getSchedule = async (req, res) => {
       } else {
         // 2. Fallback to weekly schedule
         const daySchedule = availability.find(d => d.day === dayName);
-        if (daySchedule && daySchedule.isActive) {
-          slots = daySchedule.slots || []; // Use weekly slots
+        if (daySchedule) {
+             // If isActive is strictly checked, ensure it's true. 
+             // Determine if we should default to true if it's undefined but slots exist?
+             // For safety, if slots > 0, we can assume active unless explicitly false.
+            if (daySchedule.isActive !== false) {
+                 slots = daySchedule.slots || []; 
+            }
         }
       }
 
@@ -477,6 +492,12 @@ export const saveSchedule = async (req, res) => {
       });
     }
 
+    // Ensure isActive is set for days with slots
+    const processedAvailability = availability.map(day => ({
+        ...day,
+        isActive: day.slots && day.slots.length > 0 ? true : (day.isActive || false)
+    }));
+
     // 1. Find Tutor
     const tutor = await Tutor.findOne({ userId: tutorId });
     if (!tutor) {
@@ -490,12 +511,12 @@ export const saveSchedule = async (req, res) => {
       // Update existing
       scheduleDoc = await ScheduleAppointment.findByIdAndUpdate(
         tutor.scheduleAppointment,
-        { availability },
+        { availability: processedAvailability },
         { new: true, runValidators: true }
       );
     } else {
       // Create new and link
-      scheduleDoc = await ScheduleAppointment.create({ availability });
+      scheduleDoc = await ScheduleAppointment.create({ availability: processedAvailability });
       tutor.scheduleAppointment = scheduleDoc._id;
       await tutor.save();
     }
