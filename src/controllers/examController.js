@@ -875,7 +875,7 @@ export const getTutorAttemptDetails = async (req, res) => {
         question: q.question,
         options: q.options.map(opt => opt.text),
         correctIndex,
-        selectedIndex: studentAnswer?.selectedOptionIndex ?? -1,
+        selectedIndex: studentAnswer?.selectedOption ?? -1,
         isCorrect: studentAnswer?.isCorrect ?? false,
         explanation: q.explanation,
         pointsEarned: studentAnswer?.pointsEarned ?? 0,
