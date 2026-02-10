@@ -876,6 +876,7 @@ export const getTutorAttemptDetails = async (req, res) => {
         options: q.options.map(opt => opt.text),
         correctIndex,
         selectedIndex: studentAnswer?.selectedOption ?? -1,
+        selectedText: studentAnswer?.selectedOptionText || null, // Direct text from shuffled selection
         isCorrect: studentAnswer?.isCorrect ?? false,
         explanation: q.explanation,
         pointsEarned: studentAnswer?.pointsEarned ?? 0,

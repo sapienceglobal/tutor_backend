@@ -190,7 +190,8 @@ const examAttemptSchema = new mongoose.Schema({
   },
   answers: [{
     questionId: mongoose.Schema.Types.ObjectId,
-    selectedOption: Number,
+    selectedOption: Number, // Index from shuffled array
+    selectedOptionText: String, // Actual text of selected option (fixes shuffle bug)
     isCorrect: Boolean,
     pointsEarned: Number,
 
