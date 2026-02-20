@@ -622,7 +622,7 @@ export const updateLanguage = async (req, res) => {
 // ==========================================
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
-const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:5000';
+const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:4000';
 
 // Helper: Build user response object
 const buildUserResponse = (user) => ({
