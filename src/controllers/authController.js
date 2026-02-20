@@ -88,7 +88,9 @@ export const registerUser = async (req, res) => {
         role: user.role,
         profileImage: user.profileImage,
         language: user.language,
-        notificationSettings: user.notificationSettings
+        notificationSettings: user.notificationSettings,
+        authProvider: user.authProvider,
+        hasPassword: true
       }
     });
   } catch (error) {
@@ -100,16 +102,17 @@ export const registerUser = async (req, res) => {
   }
 };
 
+
 // @desc    Login user
 // @route   POST /api/auth/login
 export const loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    if (!email || !password) {
+    if (!email) {
       return res.status(400).json({
         success: false,
-        message: 'Email and password are required'
+        message: 'Email is required'
       });
     }
 
@@ -123,6 +126,29 @@ export const loginUser = async (req, res) => {
       });
     }
 
+    // Industry-level: If they registered via OAuth and have no password
+    if (!user.password) {
+      const provider = user.authProvider === 'github'
+        ? 'GitHub'
+        : user.authProvider === 'google'
+          ? 'Google'
+          : 'social login';
+
+      return res.status(400).json({
+        success: false,
+        code: 'OAUTH_PASSWORD_NOT_SET',
+        message: `This account was created with ${provider}. Continue with ${provider} or use Forgot Password to set a password.`,
+        authProvider: user.authProvider
+      });
+    }
+
+    if (!password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password is required'
+      });
+    }
+
     // Check password
     const isMatch = await bcrypt.compare(password, user.password);
 
@@ -133,40 +159,49 @@ export const loginUser = async (req, res) => {
       });
     }
 
-    // Generate token
-    const token = generateToken(user._id);
+// Generate token
+const token = generateToken(user._id);
 
-    res.status(200).json({
-      success: true,
-      message: 'Login successful',
-      token,
-      user: {
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-        profileImage: user.profileImage,
-        language: user.language,
-        notificationSettings: user.notificationSettings,
-        bio: user.bio,
-        address: user.address
-      }
-    });
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error'
-    });
+res.status(200).json({
+  success: true,
+  message: 'Login successful',
+  token,
+  user: {
+    _id: user._id,
+    name: user.name,
+    email: user.email,
+    phone: user.phone,
+    role: user.role,
+    profileImage: user.profileImage,
+    language: user.language,
+    notificationSettings: user.notificationSettings,
+    bio: user.bio,
+    address: user.address,
+    authProvider: user.authProvider,
+    hasPassword: true
   }
+});
+  } catch (error) {
+  console.error('Login error:', error);
+  res.status(500).json({
+    success: false,
+    message: 'Internal server error'
+  });
+}
 };
 
 // @desc    Get current user
 // @route   GET /api/auth/me
 export const getMe = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id);
+    const user = await User.findById(req.user.id).select('+password');
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
 
     res.status(200).json({
       success: true,
@@ -181,7 +216,9 @@ export const getMe = async (req, res) => {
         notificationSettings: user.notificationSettings,
         createdAt: user.createdAt,
         bio: user.bio,
-        address: user.address
+        address: user.address,
+        authProvider: user.authProvider,
+        hasPassword: Boolean(user.password)
       }
     });
   } catch (error) {
@@ -329,7 +366,11 @@ export const forgotPassword = async (req, res) => {
     const user = await User.findOne({ email });
 
     if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
+      // Do not leak whether an email exists.
+      return res.status(200).json({
+        success: true,
+        message: 'If an account exists with this email, a reset link has been sent'
+      });
     }
 
     // Generate Reset Token
@@ -373,7 +414,7 @@ export const forgotPassword = async (req, res) => {
 
       res.status(200).json({
         success: true,
-        message: 'Password reset link sent to email'
+        message: 'If an account exists with this email, a reset link has been sent'
       });
     } catch (emailError) {
       console.error('Email error:', emailError);
@@ -634,7 +675,8 @@ const buildUserResponse = (user) => ({
   profileImage: user.profileImage,
   language: user.language,
   notificationSettings: user.notificationSettings,
-  authProvider: user.authProvider
+  authProvider: user.authProvider,
+  hasPassword: Boolean(user.password)
 });
 
 // @desc    Initiate Google OAuth
@@ -850,7 +892,7 @@ export const setRole = async (req, res) => {
       });
     }
 
-    const user = await User.findById(req.user._id);
+    const user = await User.findById(req.user._id).select('+password');
     if (!user) {
       return res.status(404).json({
         success: false,

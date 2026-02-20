@@ -8,11 +8,6 @@ import Enrollment from '../models/Enrollment.js';
 // @route   POST /api/live-classes
 export const createLiveClass = async (req, res) => {
     try {
-        console.log('POST /live-classes (Create) request:', {
-            user: req.user ? req.user._id : 'No user',
-            body: req.body
-        });
-
         const { title, description, courseId, dateTime, duration, platform, autoCreate } = req.body;
         let { meetingLink, meetingId, passcode, materialLink } = req.body;
 
@@ -31,7 +26,6 @@ export const createLiveClass = async (req, res) => {
             // For now, we'll keep passcode empty or optional as Jitsi handles access via the room name primarily for free usage.
             passcode = '';
 
-            console.log('Jitsi Room Created:', meetingId);
         }
 
         // Verify tutor exists
@@ -57,8 +51,6 @@ export const createLiveClass = async (req, res) => {
             platform
         });
 
-        console.log('Live class created:', liveClass._id);
-
         res.status(201).json({
             success: true,
             message: 'Live class scheduled successfully',
@@ -68,8 +60,7 @@ export const createLiveClass = async (req, res) => {
         console.error('Create live class error:', error);
         res.status(500).json({
             success: false,
-            message: 'Internal server error',
-            debug: error.message
+            message: 'Internal server error'
         });
     }
 };
@@ -78,11 +69,6 @@ export const createLiveClass = async (req, res) => {
 // @route   GET /api/live-classes
 export const getLiveClasses = async (req, res) => {
     try {
-        console.log('GET /live-classes request:', {
-            user: req.user ? { id: req.user._id, role: req.user.role } : 'No user',
-            query: req.query
-        });
-
         let query = {};
 
         // If tutor, show their classes
@@ -162,8 +148,7 @@ export const getLiveClasses = async (req, res) => {
         console.error('Get live classes error details:', error);
         res.status(500).json({
             success: false,
-            message: 'Internal server error',
-            debug: error.message
+            message: 'Internal server error'
         });
     }
 };

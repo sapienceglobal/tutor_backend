@@ -44,7 +44,6 @@ const upload = multer({
         ];
 
         if (!allowedMimes.includes(file.mimetype)) {
-            console.log("❌ Blocked MIME type:", file.mimetype); // Debugging help
             return cb(new Error('File type not allowed!'), false);
         }
         cb(null, true);
@@ -83,7 +82,6 @@ export const uploadImage = async (req, res) => {
             return res.status(400).json({ success: false, message: 'No file uploaded' });
         }
 
-        console.log("Starting image upload to Cloudinary...");
         const result = await uploadToCloudinary(
             req.file.buffer,
             'tutor_management/profiles',
@@ -96,7 +94,6 @@ export const uploadImage = async (req, res) => {
             url: result.secure_url,
             publicId: result.public_id,
         });
-        console.log("✅ Image uploaded successfully");
     } catch (error) {
         console.error('Upload error:', error);
         res.status(500).json({ success: false, message: error.message || 'Upload failed' });
@@ -110,9 +107,6 @@ export const uploadFile = async (req, res) => {
             return res.status(400).json({ success: false, message: 'No file uploaded' });
         }
 
-        console.log("Starting file/video upload to Cloudinary...");
-        console.log("File type:", req.file.mimetype);
-        console.log("File size:", (req.file.size / 1024 / 1024).toFixed(2), "MB");
 
         // CHANGE 3: Auto-detect resource type (Video vs Raw File)
         // Agar MIME type 'video/' se start hota hai to 'video', nahi to 'raw'
@@ -140,7 +134,6 @@ export const uploadFile = async (req, res) => {
             duration: result.duration || 0, // Video duration (seconds) Cloudinary return karta hai
             resourceType: resourceType // Frontend ko pata chale kya upload hua
         });
-        console.log(`✅ ${resourceType} uploaded successfully`);
     } catch (error) {
         console.error('File upload error:', error);
         res.status(500).json({

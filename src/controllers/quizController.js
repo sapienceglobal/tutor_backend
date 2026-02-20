@@ -293,7 +293,6 @@ export const getAttemptDetails = async (req, res) => {
     try {
         const { attemptId } = req.params;
         const studentId = req.user.id;
-        console.log("AttemptId : ", attemptId);
         const attempt = await QuizAttempt.findOne({
             _id: attemptId,
             studentId,

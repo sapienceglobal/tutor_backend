@@ -225,8 +225,6 @@ export const updateReview = async (req, res) => {
         await review.save();
         await review.populate('studentId', 'name profileImage');
 
-        console.log('✅ Review updated:', review._id);
-
         res.status(200).json({
             success: true,
             message: 'Review updated successfully',
@@ -266,8 +264,6 @@ export const deleteReview = async (req, res) => {
         }
 
         await review.remove(); // This triggers the post-remove hook
-
-        console.log('✅ Review deleted:', id);
 
         res.status(200).json({
             success: true,

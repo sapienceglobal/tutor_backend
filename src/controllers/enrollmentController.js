@@ -112,12 +112,6 @@ export const getMyEnrollments = async (req, res) => {
       })
       .sort({ enrolledAt: -1 });
 
-    console.log(`📊 Fetching enrollments for user: ${req.user.id}`);
-    console.log(`Found ${enrollments.length} enrollments`);
-    enrollments.forEach(e => {
-      console.log(`  - Course: ${e.courseId.title} | Progress: ${e.progress.percentage}%`);
-    });
-
     res.status(200).json({
       success: true,
       count: enrollments.length,
@@ -174,7 +168,6 @@ export const getCourseStudents = async (req, res) => {
     const course = await Course.findById(courseId).populate('tutorId');
 
     if (!course) {
-      console.log('❌ Course not found');
       return res.status(404).json({
         success: false,
         message: 'Course not found',
@@ -182,7 +175,6 @@ export const getCourseStudents = async (req, res) => {
     }
 
     if (course.tutorId.userId.toString() !== req.user.id) {
-      console.log('❌ Authorization failed');
       return res.status(403).json({
         success: false,
         message: 'Not authorized to view students',

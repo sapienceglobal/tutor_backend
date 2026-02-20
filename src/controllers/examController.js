@@ -212,8 +212,6 @@ export const createExam = async (req, res) => {
       hideSolutions
     } = req.body;
 
-    console.log('Create Exam Body:', req.body); // Debugging
-
     if (!courseId) {
       return res.status(400).json({
         success: false,

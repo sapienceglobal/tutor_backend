@@ -274,13 +274,6 @@ export const updateLesson = async (req, res) => {
     }
 
     // ✅ Parse attachments if it's a stringified array
-    console.log('=== DEBUG: Backend received attachments ===');
-    console.log('Has content:', !!updateData.content);
-    console.log('Has attachments:', !!updateData.content?.attachments);
-    console.log('Attachments type:', typeof updateData.content?.attachments);
-    console.log('Attachments value:', updateData.content?.attachments);
-    console.log('=========================================');
-
     if (updateData.content && updateData.content.attachments) {
       if (typeof updateData.content.attachments === 'string') {
         try {

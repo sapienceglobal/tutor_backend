@@ -33,50 +33,35 @@ export const updateProgress = async (req, res) => {
     // Determine requested completion status (handle boolean or string)
     const isCompletedRequest = completed === true || completed === 'true';
 
-    // DEBUG LOG: Request Details
-    // console.log('--- PROGRESS UPDATE REQUEST ---');
-    // console.log(`Lesson ID: ${lessonId}`);
-    // console.log(`Incoming 'completed': ${completed} (Parsed: ${isCompletedRequest})`);
-    // console.log(`Incoming 'timeSpent': ${timeSpent}`);
-
     if (progress) {
       // Update existing
-      // console.log(`>>> Current DB Status: completed=${progress.completed}`);
 
-      // ✅ LOGIC: Only mark true if requested. Never revert to false.
-      if (isCompletedRequest) {
-        if (!progress.completed) {
-          // console.log('>>> ACTION: Marking lesson as COMPLETED (First Time)');
-          progress.completed = true;
-          progress.completedAt = new Date();
+      // Only mark as completed when explicitly requested; never auto-revert.
+      if (isCompletedRequest && !progress.completed) {
+        progress.completed = true;
+        progress.completedAt = new Date();
 
-          // Notification Logic
-          try {
-            const lesson = await Lesson.findById(lessonId);
-            if (lesson) {
-              await createNotification({
-                userId: req.user.id,
-                type: 'lesson_completed',
-                title: '✅ Lesson Completed!',
-                message: `You completed "${lesson.title}"`,
-                data: { courseId, lessonId }
-              });
-            }
-          } catch (err) { console.log("Notification error", err); }
-        } else {
-          console.log('>>> ACTION: Lesson already completed, updating timestamp only.');
+        try {
+          const lesson = await Lesson.findById(lessonId);
+          if (lesson) {
+            await createNotification({
+              userId: req.user.id,
+              type: 'lesson_completed',
+              title: 'Lesson Completed!',
+              message: `You completed "${lesson.title}"`,
+              data: { courseId, lessonId }
+            });
+          }
+        } catch (err) {
+          console.error("Notification error", err);
         }
-      } else {
-        console.log('>>> ACTION: Syncing time only (Not completing).');
       }
-
       if (timeSpent !== undefined) progress.timeSpent = timeSpent;
       if (lastWatchedPosition !== undefined) progress.lastWatchedPosition = lastWatchedPosition;
 
       await progress.save();
     } else {
       // Create new
-      // console.log('>>> ACTION: Creating New Progress Entry');
       progress = await Progress.create({
         studentId: req.user.id,
         courseId,
@@ -140,13 +125,8 @@ export const getLessonProgress = async (req, res) => {
 
 // --- HELPER FUNCTION ---
 async function updateEnrollmentProgress(studentId, courseId) {
-  // console.log('=== ENROLLMENT UPDATE START ===');
-  // console.log('Student ID:', studentId);
-  // console.log('Course ID:', courseId);
   try {
     const enrollment = await Enrollment.findOne({ studentId, courseId });
-    // console.log('Enrollment found:', !!enrollment);
-    // console.log('Current percentage BEFORE update:', enrollment?.progress.percentage);
     if (!enrollment) return;
 
     // 1. Get Total Lessons
@@ -181,10 +161,10 @@ async function updateEnrollmentProgress(studentId, courseId) {
     }
 
     await enrollment.save();
-    // console.log('New percentage AFTER save:', enrollment.progress.percentage);
-    // console.log('=== ENROLLMENT UPDATE END ===');
 
   } catch (error) {
     console.error('Update enrollment progress helper error:', error);
   }
 }
+
+
