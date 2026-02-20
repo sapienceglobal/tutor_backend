@@ -14,6 +14,7 @@ import {
   getAttemptDetails,
   getMyAllAttempts,
   getExamsByTutor,
+  getStudentExams,
 } from '../controllers/examController.js';
 import { protect } from '../middleware/auth.js';
 
@@ -23,6 +24,7 @@ const router = express.Router();
 // Tutor routes (Specific routes must go BEFORE parameterized routes)
 router.get('/tutor/all', protect, getExamsByTutor);
 router.get('/student/history-all', protect, getMyAllAttempts);
+router.get('/student/all', protect, getStudentExams);
 
 
 router.get('/course/:courseId', protect, getExamsByCourse);

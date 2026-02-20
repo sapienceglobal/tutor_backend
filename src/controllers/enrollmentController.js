@@ -320,3 +320,70 @@ export const checkEnrollment = async (req, res) => {
     });
   }
 };
+
+// @desc    Remove student from course (Tutor only)
+// @route   DELETE /api/enrollments/tutor/:id
+export const removeStudentFromCourse = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const enrollment = await Enrollment.findById(id).populate('courseId');
+
+    if (!enrollment) {
+      return res.status(404).json({
+        success: false,
+        message: 'Enrollment not found',
+      });
+    }
+
+    // Verify Tutor Ownership
+    // enrollment.courseId is the populated Course object.
+    
+    const course = await Course.findById(enrollment.courseId._id).populate({
+        path: 'tutorId',
+        select: 'userId'
+    });
+
+    if (!course) {
+        return res.status(404).json({ success: false, message: 'Course not found' });
+    }
+
+    // Check ownership
+    // tutorId is populated, so we check tutorId.userId._id (or string) vs req.user.id
+    // But wait, the population above selects userId from Tutor.
+    // So course.tutorId is the Tutor document. course.tutorId.userId is the User ID (or object).
+    
+    // Let's rely on string comparison
+    if (course.tutorId?.userId?.toString() !== req.user.id) {
+        return res.status(403).json({
+            success: false,
+            message: 'Not authorized to remove student from this course'
+        });
+    }
+
+    // Update course count
+    course.enrolledCount = Math.max(0, course.enrolledCount - 1);
+    await course.save();
+
+    // Delete progress
+    await Progress.deleteMany({
+      studentId: enrollment.studentId,
+      courseId: enrollment.courseId._id,
+    });
+
+    // Delete enrollment
+    await enrollment.deleteOne();
+
+    res.status(200).json({
+      success: true,
+      message: 'Student removed from course successfully',
+    });
+
+  } catch (error) {
+    console.error('Remove student error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+    });
+  }
+};

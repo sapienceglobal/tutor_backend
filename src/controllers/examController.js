@@ -88,8 +88,29 @@ export const getExamById = async (req, res) => {
     const course = await Course.findById(exam.courseId).populate('tutorId');
     const isOwner = course.tutorId.userId.toString() === req.user.id;
 
+    // 1. Schedule Check (for students)
+    if (!isOwner && exam.isScheduled) {
+      const now = new Date();
+      const start = new Date(exam.startDate);
+      const end = new Date(exam.endDate);
+
+      if (now < start) {
+        return res.status(403).json({
+          success: false,
+          message: `Exam has not started yet. Starts at: ${start.toLocaleString()}`
+        });
+      }
+      if (now > end) {
+        return res.status(403).json({
+          success: false,
+          message: `Exam has ended on: ${end.toLocaleString()}`
+        });
+      }
+    }
+
     let enrollment = null;
-    if (!isOwner) {
+    // 2. Enrollment Check (skip if isFree or isOwner)
+    if (!isOwner && !exam.isFree) {
       enrollment = await Enrollment.findOne({
         studentId: req.user.id,
         courseId: exam.courseId._id,
@@ -112,9 +133,32 @@ export const getExamById = async (req, res) => {
       }).sort({ createdAt: -1 });
     }
 
-    // Hide correct answers for students until after submission
+    // Prepare Exam Data
     let examData = exam.toObject();
-    if (!isOwner && !exam.showCorrectAnswers) {
+
+    // 3. Shuffling Logic (for students)
+    if (!isOwner) {
+      // Shuffle Questions
+      if (exam.shuffleQuestions) {
+        for (let i = examData.questions.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [examData.questions[i], examData.questions[j]] = [examData.questions[j], examData.questions[i]];
+        }
+      }
+
+      // Shuffle Options
+      if (exam.shuffleOptions) {
+        examData.questions.forEach(q => {
+          for (let i = q.options.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [q.options[i], q.options[j]] = [q.options[j], q.options[i]];
+          }
+        });
+      }
+    }
+
+    // Hide correct answers for students until after submission (unless it's a practice set)
+    if (!isOwner && !exam.showCorrectAnswers && exam.type !== 'practice') {
       examData.questions = examData.questions.map(q => ({
         ...q,
         options: q.options.map(opt => ({
@@ -160,13 +204,41 @@ export const createExam = async (req, res) => {
       maxAttempts,
       startDate,
       endDate,
+
       status, // Extract status
+      negativeMarking,
+      passingPercentage,
+      isFree,
+      hideSolutions
     } = req.body;
 
-    if (!courseId || !title || !duration || questions.length === 0) {
+    console.log('Create Exam Body:', req.body); // Debugging
+
+    if (!courseId) {
       return res.status(400).json({
         success: false,
-        message: 'Course ID, title, duration, and questions are required',
+        message: 'Course ID is required',
+      });
+    }
+    if (!title) {
+      return res.status(400).json({
+        success: false,
+        message: 'Exam title is required',
+      });
+    }
+    if (!duration) {
+      return res.status(400).json({
+        success: false,
+        message: 'Duration is required',
+      });
+    }
+
+    // Only require questions if publishing or not specified (default published)
+    const isDraft = status === 'draft';
+    if (!isDraft && (!questions || questions.length === 0)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Questions are required to publish an exam',
       });
     }
 
@@ -187,7 +259,8 @@ export const createExam = async (req, res) => {
     }
 
     // Strip _id from questions to let Mongoose generate them
-    const cleanedQuestions = questions.map(q => {
+    const questionsToProcess = questions || [];
+    const cleanedQuestions = questionsToProcess.map(q => {
       const { _id, ...questionWithoutId } = q;
       return questionWithoutId;
     });
@@ -208,6 +281,7 @@ export const createExam = async (req, res) => {
       shuffleOptions: shuffleOptions || false,
       showResultImmediately: showResultImmediately || false,
       showCorrectAnswers: showCorrectAnswers || true,
+      hideSolutions: hideSolutions || false,
       allowRetake: allowRetake || false,
       maxAttempts: maxAttempts || 1,
       startDate,
@@ -215,6 +289,9 @@ export const createExam = async (req, res) => {
       isScheduled: !!(startDate && endDate),
       status: examStatus,
       isPublished: examStatus === 'published',
+      negativeMarking: negativeMarking || false,
+      passingPercentage: passingPercentage || 0,
+      isFree: isFree || false,
     });
 
     res.status(201).json({
@@ -261,8 +338,9 @@ export const updateExam = async (req, res) => {
     const allowedUpdates = [
       'title', 'description', 'type', 'instructions', 'duration',
       'passingMarks', 'questions', 'shuffleQuestions', 'shuffleOptions',
-      'showResultImmediately', 'showCorrectAnswers', 'allowRetake',
+      'showResultImmediately', 'showCorrectAnswers', 'hideSolutions', 'allowRetake',
       'maxAttempts', 'startDate', 'endDate', 'isScheduled', 'status', 'isPublished',
+      'negativeMarking', 'passingPercentage', 'isFree',
     ];
 
     allowedUpdates.forEach(field => {
@@ -365,17 +443,19 @@ export const submitExam = async (req, res) => {
       });
     }
 
-    // Check enrollment
-    const enrollment = await Enrollment.findOne({
-      studentId: req.user.id,
-      courseId: exam.courseId,
-    });
-
-    if (!enrollment) {
-      return res.status(403).json({
-        success: false,
-        message: 'You must be enrolled in the course to take this exam',
+    // Check enrollment (skip if free)
+    if (!exam.isFree) {
+      const enrollment = await Enrollment.findOne({
+        studentId: req.user.id,
+        courseId: exam.courseId,
       });
+
+      if (!enrollment) {
+        return res.status(403).json({
+          success: false,
+          message: 'You must be enrolled in the course to take this exam',
+        });
+      }
     }
 
     // Check previous attempts
@@ -429,7 +509,15 @@ export const submitExam = async (req, res) => {
         isCorrect = question.options[ans.selectedOption]?.isCorrect || false;
       }
 
-      const pointsEarned = isCorrect ? (question.points || 1) : 0;
+      // Calculate points
+      let pointsEarned = 0;
+      if (isCorrect) {
+        pointsEarned = question.points || 1;
+      } else if (ans.selectedOption !== -1 && exam.negativeMarking) {
+        // Negative marking: Deduct 25% of question points
+        pointsEarned = -0.25 * (question.points || 1);
+      }
+
       score += pointsEarned;
 
       // Find correct option index in original question
@@ -453,8 +541,21 @@ export const submitExam = async (req, res) => {
       };
     });
 
+    // Ensure score doesn't go below 0
+    score = Math.max(0, score);
+
     const percentage = Math.round((score / exam.totalMarks) * 100);
-    const isPassed = score >= exam.passingMarks;
+
+    // Determine Pass/Fail
+    // 1. If passingPercentage is set (> 0), use it
+    // 2. Else if passingMarks is set, use it
+    // 3. Fallback to default 33%
+    let isPassed = false;
+    if (exam.passingPercentage > 0) {
+      isPassed = percentage >= exam.passingPercentage;
+    } else {
+      isPassed = score >= (exam.passingMarks || (exam.totalMarks * 0.33));
+    }
 
     // Create attempt
     const attempt = await ExamAttempt.create({
@@ -527,6 +628,7 @@ export const submitExam = async (req, res) => {
       success: true,
       message: 'Exam submitted successfully',
       showResultImmediately: true,
+      attemptId: attempt._id,
       attempt: attemptResponse,
     });
   } catch (error) {
@@ -708,14 +810,15 @@ export const getAttemptDetails = async (req, res) => {
       const studentAnswer = attempt.answers.find(
         a => a.questionId.toString() === q._id.toString()
       );
-      const correctIndex = q.options.findIndex(opt => opt.isCorrect);
+      // Handle boolean or string 'true' for isCorrect (safety check)
+      const correctIndex = q.options.findIndex(opt => opt.isCorrect === true || opt.isCorrect === 'true');
 
       return {
         questionNumber: index + 1,
         question: q.question,
         options: q.options.map(opt => opt.text),
         correctIndex,
-        selectedIndex: studentAnswer?.selectedOptionIndex ?? -1,
+        selectedIndex: studentAnswer?.selectedOption ?? -1, // Fix: use selectedOption
         isCorrect: studentAnswer?.isCorrect ?? false,
         explanation: q.explanation,
         pointsEarned: studentAnswer?.pointsEarned ?? 0,
@@ -730,7 +833,8 @@ export const getAttemptDetails = async (req, res) => {
         title: exam.title,
         showCorrectAnswers: exam.showCorrectAnswers,
       },
-      detailedResults: exam.showCorrectAnswers ? detailedResults : null,
+      detailedResults: (exam.showCorrectAnswers && !exam.hideSolutions) ? detailedResults : null,
+      hideSolutions: exam.hideSolutions // Inform frontend
     });
   } catch (error) {
     console.error('Get attempt details error:', error);
@@ -773,6 +877,7 @@ export const getAllExamAttempts = async (req, res) => {
     // Group by student
     const studentStats = {};
     attempts.forEach(attempt => {
+      if (!attempt.studentId) return; // Skip if student deleted
       const studentId = attempt.studentId._id.toString();
       if (!studentStats[studentId]) {
         studentStats[studentId] = {
@@ -944,7 +1049,8 @@ export const getExamsByTutor = async (req, res) => {
           duration: 1,
           attemptCount: 1,
           averageScore: 1,
-          courseId: '$course._id'
+          courseId: '$course._id',
+          type: 1
         }
       },
       { $sort: { createdAt: -1 } }
@@ -956,6 +1062,99 @@ export const getExamsByTutor = async (req, res) => {
     });
   } catch (error) {
     console.error('Get tutor exams error:', error);
+    res.status(500).json({ message: 'Server Error' });
+  }
+};
+
+// @desc    Get all exams available to a Student (Enrolled Course Exams + Public Practice Sets)
+// @route   GET /api/exams/student/all
+export const getStudentExams = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    // 1. Get Student's Enrollments
+    const enrollments = await Enrollment.find({ studentId: userId, status: 'active' });
+    const enrolledCourseIds = enrollments.map(e => e.courseId);
+
+    // 2. Find Exams
+    // - Belong to enrolled courses AND are published AND (quiz/midterm/final)
+    // - OR are Public Practice Sets
+    const exams = await Exam.aggregate([
+      {
+        $match: {
+          status: 'published',
+          $or: [
+            { courseId: { $in: enrolledCourseIds } }, // Access via enrollment
+            { isPublic: true }, // Publicly accessible
+            { type: 'practice' } // All practice sets (refine if needed)
+          ]
+        }
+      },
+      // Lookup Course details
+      {
+        $lookup: {
+          from: 'courses',
+          localField: 'courseId',
+          foreignField: '_id',
+          as: 'course'
+        }
+      },
+      { $unwind: '$course' },
+      // Lookup Student's attempts for each exam
+      {
+        $lookup: {
+          from: 'examattempts',
+          let: { examId: '$_id' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ['$examId', '$$examId'] },
+                    { $eq: ['$studentId', new mongoose.Types.ObjectId(userId)] }
+                  ]
+                }
+              }
+            },
+            { $project: { score: 1, isPassed: 1, submittedAt: 1 } }
+          ],
+          as: 'myAttempts'
+        }
+      },
+      {
+        $addFields: {
+          myAttemptCount: { $size: '$myAttempts' },
+          lastAttempt: { $last: '$myAttempts' },
+          courseTitle: '$course.title'
+        }
+      },
+      {
+        $project: {
+          title: 1,
+          type: 1,
+          duration: 1,
+          totalQuestions: 1,
+          passingPercentage: 1,
+          difficulty: 1,
+          startDate: 1,
+          endDate: 1,
+          isScheduled: 1,
+          courseTitle: 1,
+          courseId: 1,
+          myAttemptCount: 1,
+          lastAttempt: 1,
+          createdAt: 1
+        }
+      },
+      { $sort: { createdAt: -1 } }
+    ]);
+
+    res.status(200).json({
+      success: true,
+      exams
+    });
+  } catch (error) {
+    console.error('Get student exams error:', error);
     res.status(500).json({ message: 'Server Error' });
   }
 };

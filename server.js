@@ -1,10 +1,6 @@
 import "./src/config/loadEnv.js"
 import express from 'express';
 import cors from 'cors';
-// import dotenv from 'dotenv';
-
-// Load env variables
-// dotenv.config();
 
 // Import routes
 import connectDB from './src/config/database.js';
@@ -12,31 +8,37 @@ import authRoutes from './src/routes/auth.js';
 import categoryRoutes from './src/routes/categories.js';
 import tutorRoutes from './src/routes/tutors.js';
 import appointmentRoutes from './src/routes/appointments.js';
-import uploadRoutes from './src/routes/upload.js';
+import uploadRoutes from './src/routes/uploadRoutes.js';
 import courseRoutes from './src/routes/courses.js';
 import lessonRoutes from './src/routes/lessons.js';
+import lessonCommentRoutes from './src/routes/lessonCommentRoutes.js';
 import enrollmentRoutes from './src/routes/enrollments.js';
 import progressRoutes from './src/routes/progress.js';
 import dashboardRoutes from './src/routes/Tutor/dashboard.js';
+import studentDashboardRoutes from './src/routes/Student/dashboard.js';
+import adminRoutes from './src/routes/admin.js';
+
+import studentExamRoutes from './src/routes/studentExamRoutes.js';
 
 import examRoutes from './src/routes/examRoutes.js';
 import aiRoutes from './src/routes/aiRoutes.js';
 import questionSetRoutes from './src/routes/questionSetRoutes.js';
-
 import notificationRoutes from './src/routes/notificationRoutes.js';
-
-import { verifyApiKey } from './src/middleware/apiKey.js';
 import quizRoutes from './src/routes/quizRoutes.js';
-
+import taxonomyRoutes from './src/routes/taxonomyRoutes.js';
+import questionBankRoutes from './src/routes/questionBankRoutes.js';
 import reviewRoutes from './src/routes/reviewRoutes.js';
 import liveClassRoutes from './src/routes/liveClasses.js';
+import wishlistRoutes from './src/routes/wishlist.js';
+import reportRoutes from './src/routes/reports.js';
+
+import { verifyApiKey } from './src/middleware/apiKey.js';
 
 // Initialize express app
 const app = express();
 
 // Connect to database
 connectDB();
-
 
 // Middleware
 app.use(cors({
@@ -46,20 +48,8 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-
 app.use(verifyApiKey);
 
-// Routes
-app.use('/api/auth', authRoutes);
-
-// Health check route
-app.get('/api/health', (req, res) => {
-    res.status(200).json({
-        success: true,
-        message: 'Server is running',
-        timestamp: new Date().toISOString()
-    });
-});
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/categories', categoryRoutes);
@@ -71,25 +61,32 @@ app.use('/api/lessons', lessonRoutes);
 app.use('/api/enrollments', enrollmentRoutes);
 app.use('/api/progress', progressRoutes);
 app.use('/api/tutor/dashboard', dashboardRoutes);
-
+app.use('/api/student/dashboard', studentDashboardRoutes);
+app.use('/api/admin', adminRoutes);
 
 app.use('/api/exams', examRoutes);
+app.use('/api/student/exams', studentExamRoutes);
 app.use('/api/ai', aiRoutes);
-
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/question-sets', questionSetRoutes);
-app.use('/api/quiz', quizRoutes)
-
-
-
-// ... existing code ...
-
+app.use('/api/quiz', quizRoutes);
+app.use('/api/taxonomy', taxonomyRoutes);
+app.use('/api/question-bank', questionBankRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/live-classes', liveClassRoutes);
-
-
+app.use('/api/wishlist', wishlistRoutes);
+app.use('/api/reports', reportRoutes);
+app.use('/api/comments', lessonCommentRoutes);
 
 // Health check route
+app.get('/api/health', (req, res) => {
+    res.status(200).json({
+        success: true,
+        message: 'Server is running',
+        timestamp: new Date().toISOString()
+    });
+});
+
 app.get('/', (req, res) => {
     res.json({
         success: true,

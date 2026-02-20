@@ -16,18 +16,26 @@ const userSchema = new mongoose.Schema({
   },
   password: {
     type: String,
-    required: [true, 'Password is required'],
     minlength: 6,
     select: false
   },
   phone: {
     type: String,
-    required: [true, 'Phone number is required']
+    default: ''
   },
   role: {
     type: String,
     enum: ['student', 'tutor', 'admin'],
     default: 'student'
+  },
+  authProvider: {
+    type: String,
+    enum: ['local', 'google', 'github'],
+    default: 'local'
+  },
+  providerId: {
+    type: String,
+    default: null
   },
   profileImage: {
     type: String,
@@ -56,6 +64,18 @@ const userSchema = new mongoose.Schema({
       default: false
     }
   },
+  bio: {
+    type: String,
+    maxLength: 500,
+    default: ''
+  },
+  address: {
+    street: { type: String, default: '' },
+    city: { type: String, default: '' },
+    state: { type: String, default: '' },
+    zipCode: { type: String, default: '' },
+    country: { type: String, default: '' }
+  },
   passwordResetOTP: {
     type: String,
     select: false
@@ -63,9 +83,17 @@ const userSchema = new mongoose.Schema({
   passwordResetExpires: {
     type: Date,
     select: false
+  },
+  passwordResetToken: {
+    type: String,
+    select: false
+  },
+  passwordResetTokenExpires: {
+    type: Date,
+    select: false
   }
 }, {
-  timestamps: true // FIXED: Use Mongoose built-in timestamps instead of manual pre-save
+  timestamps: true
 });
 
 // Password compare method

@@ -273,8 +273,43 @@ export const updateLesson = async (req, res) => {
       updateData.content = cleanQuizData(updateData.content);
     }
 
-    // Update lesson
-    Object.assign(lesson, updateData);
+    // ✅ Parse attachments if it's a stringified array
+    console.log('=== DEBUG: Backend received attachments ===');
+    console.log('Has content:', !!updateData.content);
+    console.log('Has attachments:', !!updateData.content?.attachments);
+    console.log('Attachments type:', typeof updateData.content?.attachments);
+    console.log('Attachments value:', updateData.content?.attachments);
+    console.log('=========================================');
+
+    if (updateData.content && updateData.content.attachments) {
+      if (typeof updateData.content.attachments === 'string') {
+        try {
+          updateData.content.attachments = JSON.parse(updateData.content.attachments);
+        } catch (e) {
+          console.error('Failed to parse attachments:', e);
+          updateData.content.attachments = [];
+        }
+      }
+      // Ensure it's an array
+      if (!Array.isArray(updateData.content.attachments)) {
+        updateData.content.attachments = [];
+      }
+    }
+
+    // Update lesson fields manually to avoid shallow copy issues
+    if (updateData.title !== undefined) lesson.title = updateData.title;
+    if (updateData.description !== undefined) lesson.description = updateData.description;
+    if (updateData.isFree !== undefined) lesson.isFree = updateData.isFree;
+    if (updateData.type !== undefined) lesson.type = updateData.type;
+
+    // Handle content object specially
+    if (updateData.content) {
+      lesson.content = {
+        ...lesson.content,
+        ...updateData.content
+      };
+    }
+
     await lesson.save();
 
     res.status(200).json({

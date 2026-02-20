@@ -3,7 +3,8 @@ import {
   getTutorStats,
   getRecentActivities,
   getEarningsOverview,
-  getTutorStudents
+  getTutorStudents,
+  getStudentPerformance
 } from '../../controllers/Tutor/dashboardController.js';
 import { protect } from '../../middleware/auth.js';
 
@@ -16,5 +17,6 @@ router.get('/stats', getTutorStats);
 router.get('/activities', getRecentActivities);
 router.get('/earnings', getEarningsOverview);
 router.get('/students', getTutorStudents);
+router.get('/performance', getStudentPerformance);
 
 export default router;

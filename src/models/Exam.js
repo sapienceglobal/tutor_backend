@@ -71,7 +71,13 @@ const examSchema = new mongoose.Schema({
   },
   passingPercentage: {
     type: Number,
-    default: 70,
+    default: 0, // 0 means use passingMarks absolute value
+  },
+
+  // Exam Behavior
+  negativeMarking: {
+    type: Boolean,
+    default: false,
   },
 
   // Questions
@@ -99,6 +105,14 @@ const examSchema = new mongoose.Schema({
     default: true,
   },
   allowRetake: {
+    type: Boolean,
+    default: false,
+  },
+  hideSolutions: {
+    type: Boolean,
+    default: false,
+  },
+  isFree: {
     type: Boolean,
     default: false,
   },

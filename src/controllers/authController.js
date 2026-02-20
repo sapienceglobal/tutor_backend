@@ -29,9 +29,9 @@ export const registerUser = async (req, res) => {
     const { name, email, password, phone, role } = req.body;
 
     if (!name || !email || !password || !phone) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'All fields are required' 
+      return res.status(400).json({
+        success: false,
+        message: 'All fields are required'
       });
     }
 
@@ -93,9 +93,9 @@ export const registerUser = async (req, res) => {
     });
   } catch (error) {
     console.error('Register error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
@@ -107,9 +107,9 @@ export const loginUser = async (req, res) => {
     const { email, password } = req.body;
 
     if (!email || !password) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Email and password are required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Email and password are required'
       });
     }
 
@@ -148,14 +148,16 @@ export const loginUser = async (req, res) => {
         role: user.role,
         profileImage: user.profileImage,
         language: user.language,
-        notificationSettings: user.notificationSettings
+        notificationSettings: user.notificationSettings,
+        bio: user.bio,
+        address: user.address
       }
     });
   } catch (error) {
     console.error('Login error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
@@ -177,14 +179,16 @@ export const getMe = async (req, res) => {
         profileImage: user.profileImage,
         language: user.language,
         notificationSettings: user.notificationSettings,
-        createdAt: user.createdAt
+        createdAt: user.createdAt,
+        bio: user.bio,
+        address: user.address
       }
     });
   } catch (error) {
     console.error('Get me error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
@@ -193,7 +197,7 @@ export const getMe = async (req, res) => {
 // @route   PATCH /api/auth/profile
 export const updateProfile = async (req, res) => {
   try {
-    const { name, phone } = req.body;
+    const { name, phone, bio, address, profileImage, cloudinaryId } = req.body;
 
     const user = await User.findById(req.user.id);
 
@@ -221,6 +225,15 @@ export const updateProfile = async (req, res) => {
 
     if (name) user.name = name.trim();
     if (phone) user.phone = phone;
+    if (bio !== undefined) user.bio = bio;
+    if (profileImage) user.profileImage = profileImage;
+    if (cloudinaryId) user.cloudinaryId = cloudinaryId;
+    if (address) {
+      user.address = {
+        ...user.address,
+        ...address
+      };
+    }
 
     await user.save();
 
@@ -235,14 +248,16 @@ export const updateProfile = async (req, res) => {
         role: user.role,
         profileImage: user.profileImage,
         language: user.language,
-        notificationSettings: user.notificationSettings
+        notificationSettings: user.notificationSettings,
+        bio: user.bio,
+        address: user.address
       }
     });
   } catch (error) {
     console.error('Update profile error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
@@ -287,68 +302,67 @@ export const updateProfileImage = async (req, res) => {
         role: user.role,
         profileImage: user.profileImage,
         language: user.language,
-        notificationSettings: user.notificationSettings
+        notificationSettings: user.notificationSettings,
+        bio: user.bio,
+        address: user.address
       }
     });
   } catch (error) {
     console.error('Update profile image error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
 
-// @desc    Send OTP for password reset
+// @desc    Send Password Reset Link
 // @route   POST /api/auth/forgot-password
 export const forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
 
     if (!email) {
-      return res.status(400).json({
-        success: false,
-        message: 'Email is required'
-      });
+      return res.status(400).json({ success: false, message: 'Email is required' });
     }
 
-    const user = await User.findOne({ email }).select('+passwordResetOTP +passwordResetExpires');
+    const user = await User.findOne({ email });
 
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
+      return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    // Generate 6-digit OTP
-    const otp = crypto.randomInt(100000, 999999).toString();
+    // Generate Reset Token
+    const resetToken = crypto.randomBytes(20).toString('hex');
 
-    // Hash OTP and save to database
-    const hashedOTP = await bcrypt.hash(otp, 10);
-    user.passwordResetOTP = hashedOTP;
-    user.passwordResetExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
+    // Hash token and save to DB
+    user.passwordResetToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+    user.passwordResetTokenExpires = Date.now() + 10 * 60 * 1000; // 10 Minutes
 
-    await user.save();
+    await user.save({ validateBeforeSave: false });
 
-    // Send OTP via email
+    // Create Reset URL
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const link = `${frontendUrl}/reset-password/${resetToken}`;
+
     try {
       const transporter = createEmailTransporter();
 
       const mailOptions = {
         from: process.env.EMAIL_USER,
         to: user.email,
-        subject: 'Password Reset OTP - Tutor Management',
+        subject: 'Password Reset Request - Tutor Management',
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #2196F3;">Password Reset Request</h2>
+            <h2 style="color: #2196F3;">Password Reset</h2>
             <p>Hello ${user.name},</p>
-            <p>You requested to reset your password. Use the OTP below to proceed:</p>
-            <div style="background-color: #f5f5f5; padding: 20px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 5px; margin: 20px 0;">
-              ${otp}
+            <p>You requested to reset your password. Please click the button below to reset it:</p>
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="${link}" style="background-color: #2196F3; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold;">Reset Password</a>
             </div>
-            <p style="color: #666;">This OTP will expire in 10 minutes.</p>
-            <p style="color: #666;">If you didn't request this, please ignore this email.</p>
+            <p style="color: #666;">Or copy and paste this link in your browser:</p>
+            <p style="background-color: #f5f5f5; padding: 10px; word-break: break-all; font-size: 12px;">${link}</p>
+            <p style="color: #666;">This link will expire in 10 minutes.</p>
             <hr style="margin: 30px 0; border: none; border-top: 1px solid #ddd;">
             <p style="color: #999; font-size: 12px;">© 2024 Tutor Management. All rights reserved.</p>
           </div>
@@ -359,103 +373,65 @@ export const forgotPassword = async (req, res) => {
 
       res.status(200).json({
         success: true,
-        message: 'OTP sent to your email successfully'
+        message: 'Password reset link sent to email'
       });
     } catch (emailError) {
       console.error('Email error:', emailError);
-      // Reset OTP fields if email fails
-      user.passwordResetOTP = undefined;
-      user.passwordResetExpires = undefined;
-      await user.save();
+      user.passwordResetToken = undefined;
+      user.passwordResetTokenExpires = undefined;
+      await user.save({ validateBeforeSave: false });
 
       return res.status(500).json({
         success: false,
-        message: 'Failed to send OTP. Please try again.'
+        message: 'Email could not be sent'
       });
     }
   } catch (error) {
     console.error('Forgot password error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
-    });
+    res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
 
-// @desc    Verify OTP and reset password
-// @route   POST /api/auth/reset-password
+// @desc    Reset Password via Token
+// @route   POST /api/auth/reset-password/:token
 export const resetPassword = async (req, res) => {
   try {
-    const { email, otp, newPassword } = req.body;
+    const { token } = req.params;
+    const { password } = req.body;
 
-    if (!email || !otp || !newPassword) {
-      return res.status(400).json({
-        success: false,
-        message: 'All fields are required'
-      });
+    if (!password) {
+      return res.status(400).json({ success: false, message: 'Password is required' });
     }
 
-    if (newPassword.length < 6) {
-      return res.status(400).json({
-        success: false,
-        message: 'Password must be at least 6 characters'
-      });
-    }
+    // Hash token to compare with DB
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
 
-    const user = await User.findOne({ email }).select('+passwordResetOTP +passwordResetExpires +password');
+    const user = await User.findOne({
+      passwordResetToken: hashedToken,
+      passwordResetTokenExpires: { $gt: Date.now() }
+    });
 
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
+      return res.status(400).json({ success: false, message: 'Invalid or expired token' });
     }
 
-    // Check if OTP exists and not expired
-    if (!user.passwordResetOTP || !user.passwordResetExpires) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please request a new OTP'
-      });
-    }
+    // Set new password
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(password, salt);
 
-    if (Date.now() > user.passwordResetExpires) {
-      return res.status(400).json({
-        success: false,
-        message: 'OTP has expired. Please request a new one'
-      });
-    }
-
-    // Verify OTP
-    const isValidOTP = await bcrypt.compare(otp, user.passwordResetOTP);
-
-    if (!isValidOTP) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid OTP'
-      });
-    }
-
-    // Hash new password
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-
-    // Update password and clear OTP fields
-    user.password = hashedPassword;
-    user.passwordResetOTP = undefined;
-    user.passwordResetExpires = undefined;
+    // Clear reset fields
+    user.passwordResetToken = undefined;
+    user.passwordResetTokenExpires = undefined;
 
     await user.save();
 
     res.status(200).json({
       success: true,
-      message: 'Password reset successfully'
+      message: 'Password reset successful. You can now login.'
     });
   } catch (error) {
     console.error('Reset password error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
-    });
+    res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
 
@@ -519,10 +495,51 @@ export const changePassword = async (req, res) => {
     });
   } catch (error) {
     console.error('Change password error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
+  }
+};
+
+// @desc    Set initial password (for OAuth users)
+// @route   POST /api/auth/set-password
+export const setInitialPassword = async (req, res) => {
+  try {
+    const { newPassword } = req.body;
+
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 6 characters'
+      });
+    }
+
+    const user = await User.findById(req.user.id).select('+password');
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    if (user.password) {
+      return res.status(400).json({
+        success: false,
+        message: 'User already has a password. Please use Change Password.'
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    user.password = hashedPassword;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Password set successfully'
+    });
+
+  } catch (error) {
+    console.error('Set password error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
 
@@ -554,9 +571,9 @@ export const updateNotificationSettings = async (req, res) => {
     });
   } catch (error) {
     console.error('Update notification settings error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
@@ -593,9 +610,270 @@ export const updateLanguage = async (req, res) => {
     });
   } catch (error) {
     console.error('Update language error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// ==========================================
+// OAUTH LOGIN HANDLERS
+// ==========================================
+
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:5000';
+
+// Helper: Build user response object
+const buildUserResponse = (user) => ({
+  _id: user._id,
+  name: user.name,
+  email: user.email,
+  phone: user.phone,
+  role: user.role,
+  profileImage: user.profileImage,
+  language: user.language,
+  notificationSettings: user.notificationSettings,
+  authProvider: user.authProvider
+});
+
+// @desc    Initiate Google OAuth
+// @route   GET /api/auth/google
+export const googleAuth = (req, res) => {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const redirectUri = `${BACKEND_URL}/api/auth/google/callback`;
+  const scope = encodeURIComponent('openid email profile');
+  const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent`;
+  res.redirect(url);
+};
+
+// @desc    Google OAuth Callback
+// @route   GET /api/auth/google/callback
+export const googleCallback = async (req, res) => {
+  try {
+    const { code } = req.query;
+    if (!code) {
+      return res.redirect(`${FRONTEND_URL}/login?error=Google login failed`);
+    }
+
+    const redirectUri = `${BACKEND_URL}/api/auth/google/callback`;
+
+    // Exchange code for tokens
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        code,
+        client_id: process.env.GOOGLE_CLIENT_ID,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET,
+        redirect_uri: redirectUri,
+        grant_type: 'authorization_code'
+      })
+    });
+    const tokenData = await tokenRes.json();
+
+    if (!tokenData.access_token) {
+      console.error('Google token error:', tokenData);
+      return res.redirect(`${FRONTEND_URL}/login?error=Google authentication failed`);
+    }
+
+    // Get user profile
+    const profileRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` }
+    });
+    const profile = await profileRes.json();
+
+    if (!profile.email) {
+      return res.redirect(`${FRONTEND_URL}/login?error=Could not get email from Google`);
+    }
+
+    // Find or create user
+    let user = await User.findOne({ email: profile.email });
+    let isNewUser = false;
+
+    if (user) {
+      // Existing user - update provider info & profile image if from OAuth
+      if (!user.providerId) {
+        user.authProvider = 'google';
+        user.providerId = profile.id;
+      }
+      if (profile.picture && user.profileImage === 'https://via.placeholder.com/150') {
+        user.profileImage = profile.picture;
+      }
+      await user.save();
+    } else {
+      // New user
+      isNewUser = true;
+      user = await User.create({
+        name: profile.name,
+        email: profile.email,
+        profileImage: profile.picture || 'https://via.placeholder.com/150',
+        authProvider: 'google',
+        providerId: profile.id,
+        role: 'student' // Temporary, will be set on role selection page
+      });
+    }
+
+    const token = generateToken(user._id);
+
+    if (isNewUser) {
+      // New user - redirect to role selection
+      return res.redirect(`${FRONTEND_URL}/select-role?token=${token}&name=${encodeURIComponent(user.name)}&avatar=${encodeURIComponent(user.profileImage)}`);
+    }
+
+    // Existing user - redirect to callback page
+    return res.redirect(`${FRONTEND_URL}/oauth-callback?token=${token}`);
+
+  } catch (error) {
+    console.error('Google callback error:', error);
+    return res.redirect(`${FRONTEND_URL}/login?error=Google login failed`);
+  }
+};
+
+// @desc    Initiate GitHub OAuth
+// @route   GET /api/auth/github
+export const githubAuth = (req, res) => {
+  const clientId = process.env.GITHUB_CLIENT_ID;
+  const redirectUri = `${BACKEND_URL}/api/auth/github/callback`;
+  const scope = encodeURIComponent('user:email read:user');
+  const url = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}`;
+  res.redirect(url);
+};
+
+// @desc    GitHub OAuth Callback
+// @route   GET /api/auth/github/callback
+export const githubCallback = async (req, res) => {
+  try {
+    const { code } = req.query;
+    if (!code) {
+      return res.redirect(`${FRONTEND_URL}/login?error=GitHub login failed`);
+    }
+
+    // Exchange code for access token
+    const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        client_id: process.env.GITHUB_CLIENT_ID,
+        client_secret: process.env.GITHUB_CLIENT_SECRET,
+        code
+      })
+    });
+    const tokenData = await tokenRes.json();
+
+    if (!tokenData.access_token) {
+      console.error('GitHub token error:', tokenData);
+      return res.redirect(`${FRONTEND_URL}/login?error=GitHub authentication failed`);
+    }
+
+    // Get user profile
+    const profileRes = await fetch('https://api.github.com/user', {
+      headers: {
+        Authorization: `Bearer ${tokenData.access_token}`,
+        'User-Agent': 'TutorApp'
+      }
+    });
+    const profile = await profileRes.json();
+
+    // Get primary email (GitHub may not include email in profile)
+    let email = profile.email;
+    if (!email) {
+      const emailRes = await fetch('https://api.github.com/user/emails', {
+        headers: {
+          Authorization: `Bearer ${tokenData.access_token}`,
+          'User-Agent': 'TutorApp'
+        }
+      });
+      const emails = await emailRes.json();
+      const primaryEmail = emails.find(e => e.primary && e.verified);
+      email = primaryEmail?.email || emails[0]?.email;
+    }
+
+    if (!email) {
+      return res.redirect(`${FRONTEND_URL}/login?error=Could not get email from GitHub. Please make your email public.`);
+    }
+
+    // Find or create user
+    let user = await User.findOne({ email });
+    let isNewUser = false;
+
+    if (user) {
+      // Existing user - update provider info
+      if (!user.providerId) {
+        user.authProvider = 'github';
+        user.providerId = String(profile.id);
+      }
+      if (profile.avatar_url && user.profileImage === 'https://via.placeholder.com/150') {
+        user.profileImage = profile.avatar_url;
+      }
+      await user.save();
+    } else {
+      // New user
+      isNewUser = true;
+      user = await User.create({
+        name: profile.name || profile.login,
+        email,
+        profileImage: profile.avatar_url || 'https://via.placeholder.com/150',
+        authProvider: 'github',
+        providerId: String(profile.id),
+        role: 'student' // Temporary
+      });
+    }
+
+    const token = generateToken(user._id);
+
+    if (isNewUser) {
+      return res.redirect(`${FRONTEND_URL}/select-role?token=${token}&name=${encodeURIComponent(user.name)}&avatar=${encodeURIComponent(user.profileImage)}`);
+    }
+
+    return res.redirect(`${FRONTEND_URL}/oauth-callback?token=${token}`);
+
+  } catch (error) {
+    console.error('GitHub callback error:', error);
+    return res.redirect(`${FRONTEND_URL}/login?error=GitHub login failed`);
+  }
+};
+
+// @desc    Set role for new OAuth user
+// @route   POST /api/auth/set-role
+export const setRole = async (req, res) => {
+  try {
+    const { role } = req.body;
+
+    if (!role || !['student', 'tutor'].includes(role)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid role (student or tutor) is required'
+      });
+    }
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    user.role = role;
+    await user.save();
+
+    const token = generateToken(user._id);
+
+    res.json({
+      success: true,
+      message: 'Role set successfully',
+      token,
+      user: buildUserResponse(user)
+    });
+  } catch (error) {
+    console.error('Set role error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
