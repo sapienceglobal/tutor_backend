@@ -48,6 +48,26 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Public health routes (no API key required)
+app.get('/api/health', (req, res) => {
+    res.status(200).json({
+        success: true,
+        message: 'Server is running',
+        service: 'tutor-backend',
+        timestamp: new Date().toISOString()
+    });
+});
+
+app.get('/', (req, res) => {
+    res.status(200).json({
+        success: true,
+        message: 'Tutor Management API is running',
+        service: 'tutor-backend',
+        version: '1.0.0',
+        docs: '/api/health'
+    });
+});
+
 app.use(verifyApiKey);
 
 // Routes
@@ -78,23 +98,6 @@ app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/comments', lessonCommentRoutes);
 
-// Health check route
-app.get('/api/health', (req, res) => {
-    res.status(200).json({
-        success: true,
-        message: 'Server is running',
-        timestamp: new Date().toISOString()
-    });
-});
-
-app.get('/', (req, res) => {
-    res.json({
-        success: true,
-        message: 'Tutor Management API is running 🚀',
-        version: '1.0.0'
-    });
-});
-
 // Error handling middleware
 app.use((err, req, res, next) => {
     console.error('Error:', err);
@@ -119,3 +122,4 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📡 API: http://localhost:${PORT}/api`);
 });
+
