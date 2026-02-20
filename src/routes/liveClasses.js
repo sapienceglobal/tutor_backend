@@ -4,8 +4,11 @@ import {
     createLiveClass,
     getLiveClasses,
     deleteLiveClass,
-    updateLiveClass
+    updateLiveClass,
+    getJoinConfig,
+    markAttendance
 } from '../controllers/liveClassController.js';
+import { getClassAttendanceReport } from '../controllers/attendanceController.js';
 import { protect } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -19,5 +22,10 @@ router.route('/')
 router.route('/:id')
     .patch(updateLiveClass)
     .delete(deleteLiveClass);
+
+
+router.post('/:id/join-config', getJoinConfig);
+router.post('/:id/attendance', markAttendance);
+router.get('/:id/attendance-report', getClassAttendanceReport);
 
 export default router;

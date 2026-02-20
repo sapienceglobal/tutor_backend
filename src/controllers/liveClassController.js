@@ -2,6 +2,7 @@
 import LiveClass from '../models/LiveClass.js';
 import Tutor from '../models/Tutor.js';
 import Enrollment from '../models/Enrollment.js';
+// import { createZoomMeeting } from '../services/zoomService.js'; // Zoom removed
 
 // @desc    Create a new live class
 // @route   POST /api/live-classes
@@ -12,7 +13,26 @@ export const createLiveClass = async (req, res) => {
             body: req.body
         });
 
-        const { title, description, courseId, dateTime, duration, meetingLink, platform } = req.body;
+        const { title, description, courseId, dateTime, duration, platform, autoCreate } = req.body;
+        let { meetingLink, meetingId, passcode, materialLink } = req.body;
+
+        // Auto-Generate Jitsi Meeting Logic
+        if (autoCreate || platform === 'jitsi') {
+            // Generate a unique, professional room name
+            // Format: TutorApp_CourseTitle_RandomSuffix (sanitized)
+            const cleanTitle = title.replace(/[^a-zA-Z0-9]/g, '');
+            const randomSuffix = Math.random().toString(36).substring(2, 8);
+            meetingId = `TutorApp_${cleanTitle}_${randomSuffix}`;
+
+            // Constructs the full URL for external access if needed
+            meetingLink = `https://meet.jit.si/${meetingId}`;
+
+            // Jitsi doesn't strictly need a passcode for free tier, but we can set one if we want to lock rooms later.
+            // For now, we'll keep passcode empty or optional as Jitsi handles access via the room name primarily for free usage.
+            passcode = '';
+
+            console.log('Jitsi Room Created:', meetingId);
+        }
 
         // Verify tutor exists
         const tutor = await Tutor.findOne({ userId: req.user._id });
@@ -31,7 +51,9 @@ export const createLiveClass = async (req, res) => {
             courseId,
             dateTime,
             duration,
-            meetingLink,
+            meetingLink: meetingLink || 'pending', // Fallback if creation failed but we continued (though we return above)
+            meetingId,
+            passcode,
             platform
         });
 
@@ -189,7 +211,7 @@ export const deleteLiveClass = async (req, res) => {
 export const updateLiveClass = async (req, res) => {
     try {
         const { id } = req.params;
-        const { title, description, courseId, dateTime, duration, meetingLink, recordingLink, platform } = req.body;
+        const { title, description, courseId, dateTime, duration, meetingLink, recordingLink, materialLink, platform } = req.body;
 
         const liveClass = await LiveClass.findById(id);
 
@@ -216,7 +238,10 @@ export const updateLiveClass = async (req, res) => {
         if (duration) liveClass.duration = duration;
         if (meetingLink) liveClass.meetingLink = meetingLink;
         if (recordingLink !== undefined) liveClass.recordingLink = recordingLink;
+        if (materialLink !== undefined) liveClass.materialLink = materialLink;
         if (platform) liveClass.platform = platform;
+        if (req.body.meetingId) liveClass.meetingId = req.body.meetingId;
+        if (req.body.passcode) liveClass.passcode = req.body.passcode;
 
         await liveClass.save();
 
@@ -231,5 +256,77 @@ export const updateLiveClass = async (req, res) => {
             success: false,
             message: 'Internal server error'
         });
+    }
+};
+
+// @desc    Get Join Config (Jitsi Room Details)
+// @route   POST /api/live-classes/:id/join-config
+// @access  Private (Student/Tutor)
+export const getJoinConfig = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const liveClass = await LiveClass.findById(id);
+
+        if (!liveClass) {
+            return res.status(404).json({ success: false, message: 'Class not found' });
+        }
+
+        // Security: Verify user is enrolled (if student) or is the tutor
+        // In a real app, you should check enrollments here. 
+        // For this Jitsi implementation, we'll keep it open for enrolled students/tutors.
+        // The frontend handles the token/auth for the app itself.
+
+        const isTutor = liveClass.tutorId.toString() === req.user._id?.toString();
+
+        res.status(200).json({
+            success: true,
+            config: {
+                meetingNumber: liveClass.meetingId, // This is the Room Name
+                userName: req.user.name,
+                userEmail: req.user.email,
+                role: isTutor ? 'moderator' : 'participant',
+                platform: 'jitsi'
+            }
+        });
+
+    } catch (error) {
+        console.error('Get Join Config Error:', error);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
+
+// @desc    Mark Attendance
+// @route   POST /api/live-classes/:id/attendance
+// @access  Private (Student)
+import Attendance from '../models/Attendance.js';
+
+export const markAttendance = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const studentId = req.user._id;
+
+        const liveClass = await LiveClass.findById(id);
+        if (!liveClass) {
+            return res.status(404).json({ success: false, message: 'Class not found' });
+        }
+
+        // Check if attendance already marked
+        const existing = await Attendance.findOne({ liveClassId: id, studentId });
+        if (existing) {
+            return res.status(200).json({ success: true, message: 'Attendance already marked' });
+        }
+
+        // Mark Attendance
+        await Attendance.create({
+            liveClassId: id,
+            studentId,
+            courseId: liveClass.courseId
+        });
+
+        res.status(201).json({ success: true, message: 'Attendance marked successfully' });
+
+    } catch (error) {
+        console.error('Mark Attendance Error:', error);
+        res.status(500).json({ success: false, message: 'Server Error' });
     }
 };

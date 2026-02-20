@@ -34,12 +34,24 @@ const liveClassSchema = new mongoose.Schema({
         required: [true, 'Meeting link is required'],
         trim: true
     },
+    meetingId: {
+        type: String,
+        trim: true
+    },
+    passcode: {
+        type: String,
+        trim: true
+    },
     platform: {
         type: String,
-        enum: ['zoom', 'google_meet', 'other'],
+        enum: ['zoom', 'google_meet', 'jitsi', 'other'],
         default: 'zoom'
     },
     recordingLink: {
+        type: String,
+        trim: true
+    },
+    materialLink: { // For Notes/PDFs
         type: String,
         trim: true
     },
