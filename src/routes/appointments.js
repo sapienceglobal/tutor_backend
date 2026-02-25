@@ -5,7 +5,7 @@ import {
   createAppointment,
   updateAppointment,
   deleteAppointment,
-  
+
   getSchedule,
   saveSchedule,
   deleteDay,
@@ -17,25 +17,25 @@ import {
   updateBookingSettings,
   checkSlotAvailability
 } from '../controllers/appointmentController.js';
-import { protect } from '../middleware/auth.js';
+import { protect, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
 
 router.use(protect);
 // --- Weekly Schedule (existing) ---
-router.get("/schedule/:tutorId", getSchedule);
-router.post("/schedule", saveSchedule);
-router.delete("/schedule/:day", deleteDay);
-router.post("/schedule/slot/delete", deleteSlot);
+router.get("/schedule/:tutorId", getSchedule); // Anyone can view schedule
+router.post("/schedule", authorize('tutor'), saveSchedule);
+router.delete("/schedule/:day", authorize('tutor'), deleteDay);
+router.post("/schedule/slot/delete", authorize('tutor'), deleteSlot);
 
 // --- Date Overrides (NEW) ---
-router.post("/schedule/block-date", blockDate);
-router.delete("/schedule/unblock-date/:date", unblockDate);
-router.post("/schedule/custom-slots", setCustomSlots);
+router.post("/schedule/block-date", authorize('tutor'), blockDate);
+router.delete("/schedule/unblock-date/:date", authorize('tutor'), unblockDate);
+router.post("/schedule/custom-slots", authorize('tutor'), setCustomSlots);
 router.get("/schedule/overrides/:tutorId", getDateOverrides);
 
 // --- Booking Settings (NEW) ---
-router.put("/schedule/booking-settings", updateBookingSettings);
+router.put("/schedule/booking-settings", authorize('tutor'), updateBookingSettings);
 
 // --- Availability Check (NEW) ---
 router.get("/schedule/check-availability", checkSlotAvailability);

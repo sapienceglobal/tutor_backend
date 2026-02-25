@@ -5,8 +5,8 @@ import nodemailer from 'nodemailer';
 import crypto from 'crypto';
 
 // Generate JWT Token
-const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, {
+const generateToken = (id, role) => {
+  return jwt.sign({ id, role }, process.env.JWT_SECRET, {
     expiresIn: '30d'
   });
 };
@@ -61,6 +61,13 @@ export const registerUser = async (req, res) => {
       });
     }
 
+    // Security Hardening: Prevent Role Elevation
+    let assignedRole = role || 'student';
+    // Only allow 'student' or 'tutor' to be registered directly. Block 'admin'.
+    if (assignedRole === 'admin') {
+      assignedRole = 'student'; // Force down to student
+    }
+
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
@@ -70,11 +77,11 @@ export const registerUser = async (req, res) => {
       email,
       password: hashedPassword,
       phone,
-      role: role || 'student'
+      role: assignedRole
     });
 
     // Generate token
-    const token = generateToken(user._id);
+    const token = generateToken(user._id, assignedRole);
 
     res.status(201).json({
       success: true,
@@ -126,7 +133,7 @@ export const loginUser = async (req, res) => {
       });
     }
 
-    // Industry-level: If they registered via OAuth and have no password
+    //  If they registered via OAuth and have no password
     if (!user.password) {
       const provider = user.authProvider === 'github'
         ? 'GitHub'
@@ -159,35 +166,35 @@ export const loginUser = async (req, res) => {
       });
     }
 
-// Generate token
-const token = generateToken(user._id);
+    // Generate token
+    const token = generateToken(user._id, user.role);
 
-res.status(200).json({
-  success: true,
-  message: 'Login successful',
-  token,
-  user: {
-    _id: user._id,
-    name: user.name,
-    email: user.email,
-    phone: user.phone,
-    role: user.role,
-    profileImage: user.profileImage,
-    language: user.language,
-    notificationSettings: user.notificationSettings,
-    bio: user.bio,
-    address: user.address,
-    authProvider: user.authProvider,
-    hasPassword: true
-  }
-});
+    res.status(200).json({
+      success: true,
+      message: 'Login successful',
+      token,
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        profileImage: user.profileImage,
+        language: user.language,
+        notificationSettings: user.notificationSettings,
+        bio: user.bio,
+        address: user.address,
+        authProvider: user.authProvider,
+        hasPassword: true
+      }
+    });
   } catch (error) {
-  console.error('Login error:', error);
-  res.status(500).json({
-    success: false,
-    message: 'Internal server error'
-  });
-}
+    console.error('Login error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
 };
 
 // @desc    Get current user
@@ -865,7 +872,7 @@ export const githubCallback = async (req, res) => {
       });
     }
 
-    const token = generateToken(user._id);
+    const token = generateToken(user._id, user.role);
 
     if (isNewUser) {
       return res.redirect(`${FRONTEND_URL}/select-role?token=${token}&name=${encodeURIComponent(user.name)}&avatar=${encodeURIComponent(user.profileImage)}`);
@@ -903,7 +910,7 @@ export const setRole = async (req, res) => {
     user.role = role;
     await user.save();
 
-    const token = generateToken(user._id);
+    const token = generateToken(user._id, user.role);
 
     res.json({
       success: true,

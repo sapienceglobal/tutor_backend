@@ -1,6 +1,8 @@
 import "./src/config/loadEnv.js"
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 
 // Import routes
 import connectDB from './src/config/database.js';
@@ -41,12 +43,38 @@ const app = express();
 connectDB();
 
 // Middleware
+app.use(helmet()); // Set security HTTP headers
+
+const allowedOrigins = ['http://localhost:3000', 'http://195.35.20.207:5000'];
+
 app.use(cors({
-    origin: '*', // In production, specify your Flutter app domain
-    credentials: true
+    origin: function (origin, callback) {
+        // allow requests with no origin (like mobile apps or curl requests)
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.indexOf(origin) === -1) {
+            var msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+            return callback(new Error(msg), false);
+        }
+        return callback(null, true);
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key']
 }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+
+app.use(express.json({ limit: '10mb' })); // Prevent large payloads
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Global Rate Limiting
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 500, // Limit each IP to 500 requests per `window` (here, per 15 minutes)
+    message: 'Too many requests from this IP, please try again after 15 minutes',
+    standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+    legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+});
+
+app.use('/api', limiter);
 
 // Public health routes (no API key required)
 app.get('/api/health', (req, res) => {

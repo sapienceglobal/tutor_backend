@@ -68,7 +68,7 @@ export const getAdminStats = async (req, res) => {
         const recentUsers = await User.find()
             .sort({ createdAt: -1 })
             .limit(5)
-            .select('name email role createdAt profileImage');
+            .select('-password name email role createdAt profileImage');
 
         // 5. Monthly Data (Chart) - Real Aggregation
         const monthlyData = Array.from({ length: 7 }, (_, i) => { // Last 7 months

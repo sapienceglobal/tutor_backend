@@ -8,14 +8,14 @@ import {
     publishSetToExam
 
 } from '../controllers/questionSetController.js';
-import { protect } from '../middleware/auth.js';
+import { protect, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
 
-router.get('/course/:courseId', protect, getQuestionSetsByCourse);
-router.post('/', protect, createQuestionSet);
-router.post('/:id/publish', protect, publishSetToExam);
-router.patch('/:id', protect, updateQuestionSet);
-router.delete('/:id', protect, deleteQuestionSet);
+router.get('/course/:courseId', protect, authorize('tutor', 'admin'), getQuestionSetsByCourse);
+router.post('/', protect, authorize('tutor', 'admin'), createQuestionSet);
+router.post('/:id/publish', protect, authorize('tutor', 'admin'), publishSetToExam);
+router.patch('/:id', protect, authorize('tutor', 'admin'), updateQuestionSet);
+router.delete('/:id', protect, authorize('tutor', 'admin'), deleteQuestionSet);
 
 export default router;

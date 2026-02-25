@@ -38,6 +38,37 @@ export const createLiveClass = async (req, res) => {
             });
         }
 
+        // Industry Standard Check 1: Cannot schedule in the past
+        const parsedDateTime = new Date(dateTime);
+        if (parsedDateTime < new Date()) {
+            return res.status(400).json({
+                success: false,
+                message: 'Cannot schedule a class in the past. Please select a future time.'
+            });
+        }
+
+        // Industry Standard Check 2: Check for overlapping classes
+        const classStart = parsedDateTime;
+        const classEnd = new Date(classStart.getTime() + (duration || 60) * 60000);
+
+        const existingClasses = await LiveClass.find({ tutorId: tutor._id });
+        const hasOverlap = existingClasses.some(existingCls => {
+            if (!existingCls.dateTime) return false;
+            const existingStart = new Date(existingCls.dateTime);
+            const existingDuration = existingCls.duration || 60;
+            const existingEnd = new Date(existingStart.getTime() + existingDuration * 60000);
+
+            // Overlap condition: New class starts before existing ends AND new class ends after existing starts
+            return (classStart < existingEnd && classEnd > existingStart);
+        });
+
+        if (hasOverlap) {
+            return res.status(400).json({
+                success: false,
+                message: 'Scheduling Conflict: You already have another live class scheduled that overlaps with this time slot.'
+            });
+        }
+
         const liveClass = await LiveClass.create({
             tutorId: tutor._id,
             title,
@@ -214,6 +245,41 @@ export const updateLiveClass = async (req, res) => {
                 success: false,
                 message: 'Not authorized to update this class'
             });
+        }
+
+        // Validate scheduling logic if time or duration is updated
+        if (dateTime || duration) {
+            const newDateTime = dateTime ? new Date(dateTime) : new Date(liveClass.dateTime);
+            const newDuration = duration || liveClass.duration;
+
+            // Past Time check
+            if (newDateTime < new Date() && String(newDateTime) !== String(liveClass.dateTime)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Cannot reschedule a class to the past.'
+                });
+            }
+
+            // Conflict Check
+            const classStart = newDateTime;
+            const classEnd = new Date(classStart.getTime() + newDuration * 60000);
+
+            const existingClasses = await LiveClass.find({ tutorId: tutor._id, _id: { $ne: id } });
+            const hasOverlap = existingClasses.some(existingCls => {
+                if (!existingCls.dateTime) return false;
+                const existingStart = new Date(existingCls.dateTime);
+                const existingDuration = existingCls.duration || 60;
+                const existingEnd = new Date(existingStart.getTime() + existingDuration * 60000);
+
+                return (classStart < existingEnd && classEnd > existingStart);
+            });
+
+            if (hasOverlap) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Scheduling Conflict: This new time overlaps with another of your scheduled classes.'
+                });
+            }
         }
 
         if (title) liveClass.title = title;

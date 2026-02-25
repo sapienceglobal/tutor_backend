@@ -23,7 +23,7 @@ export const getAllCourses = async (req, res) => {
         path: 'tutorId',
         populate: {
           path: 'userId',
-          select: 'name profileImage',
+          select: '-password name profileImage',
         },
       })
       .sort({ createdAt: -1 });
@@ -61,7 +61,7 @@ export const getCourseById = async (req, res) => {
         path: 'tutorId',
         populate: {
           path: 'userId',
-          select: 'name email phone profileImage',
+          select: '-password name email phone profileImage',
         },
       });
 
@@ -156,7 +156,7 @@ export const createCourse = async (req, res) => {
         path: 'tutorId',
         populate: {
           path: 'userId',
-          select: 'name profileImage',
+          select: '-password name profileImage',
         },
       });
 
@@ -217,7 +217,7 @@ export const updateCourse = async (req, res) => {
         path: 'tutorId',
         populate: {
           path: 'userId',
-          select: 'name profileImage',
+          select: '-password name profileImage',
         },
       });
 
@@ -314,7 +314,7 @@ export const getCoursesByTutor = async (req, res) => {
 export const getMyCourses = async (req, res) => {
   try {
     const tutor = await Tutor.findOne({ userId: req.user.id });
-    
+
     if (!tutor) {
       return res.status(403).json({
         success: false,
@@ -332,7 +332,7 @@ export const getMyCourses = async (req, res) => {
         }
       })
       .sort({ createdAt: -1 });
-  
+
     res.status(200).json({
       success: true,
       count: courses.length,
@@ -373,7 +373,7 @@ export const getCourseStudentsDetailed = async (req, res) => {
 
     // Get all enrollments with student details
     const enrollments = await Enrollment.find({ courseId: id })
-      .populate('studentId', 'name email phone profileImage')
+      .populate('studentId', '-password name email phone profileImage')
       .sort({ enrolledAt: -1 });
 
     // Get lesson count for progress calculation

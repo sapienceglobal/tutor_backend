@@ -24,7 +24,7 @@ export const getAllTutors = async (req, res) => {
     }
 
     const tutors = await Tutor.find(filter)
-      .populate('userId', 'name email phone profileImage')
+      .populate('userId', '-password name email phone profileImage')
       .populate('categoryId', 'name icon')
       .sort({ rating: -1, studentsCount: -1 });
 
@@ -57,7 +57,7 @@ export const getTutorById = async (req, res) => {
     const { id } = req.params;
 
     const tutor = await Tutor.findById(id)
-      .populate('userId', 'name email phone profileImage')
+      .populate('userId', '-password name email phone profileImage')
       .populate('categoryId', 'name icon description');
 
     if (!tutor) {
@@ -95,7 +95,7 @@ export const getTutorsByCategory = async (req, res) => {
     }
 
     const tutors = await Tutor.find({ categoryId, isVerified: true })
-      .populate('userId', 'name email phone profileImage')
+      .populate('userId', '-password name email phone profileImage')
       .populate('categoryId', 'name icon')
       .sort({ rating: -1 });
 
@@ -173,7 +173,7 @@ export const createTutor = async (req, res) => {
     await category.save();
 
     const populatedTutor = await Tutor.findById(tutor._id)
-      .populate('userId', 'name email phone profileImage')
+      .populate('userId', '-password name email phone profileImage')
       .populate('categoryId', 'name icon');
 
     res.status(201).json({
@@ -235,7 +235,7 @@ export const updateTutor = async (req, res) => {
     await tutor.save();
 
     const updatedTutor = await Tutor.findById(id)
-      .populate('userId', 'name email phone profileImage')
+      .populate('userId', '-password name email phone profileImage')
       .populate('categoryId', 'name icon');
 
     res.status(200).json({

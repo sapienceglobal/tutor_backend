@@ -868,7 +868,7 @@ export const getAllExamAttempts = async (req, res) => {
 
     // Get all attempts with student info
     const attempts = await ExamAttempt.find({ examId })
-      .populate('studentId', 'name email')
+      .populate('studentId', '-password name email')
       .sort({ submittedAt: -1 })
       .select('-answers'); // Don't send detailed answers in list
 

@@ -172,7 +172,7 @@ export const getTutorStudents = async (req, res) => {
       courseId: { $in: courseIds },
       status: 'active',
     })
-      .populate('studentId', 'name email phone profileImage')
+      .populate('studentId', '-password name email phone profileImage')
       .populate('courseId', 'title')
       .sort({ enrolledAt: -1 });
 
@@ -186,7 +186,7 @@ export const getTutorStudents = async (req, res) => {
         courseId: course._id,
         courseTitle: course.title,
         studentCount: courseEnrollments.length,
-        students: courseEnrollments.map(e => ({
+        students: courseEnrollments.filter(e => e.studentId).map(e => ({
           studentId: e.studentId._id,
           name: e.studentId.name,
           email: e.studentId.email,
@@ -203,6 +203,9 @@ export const getTutorStudents = async (req, res) => {
     const studentIds = new Set();
 
     enrollments.forEach(e => {
+      // Defensive check: If student was deleted but enrollment remains
+      if (!e.studentId || !e.studentId._id) return;
+
       if (!studentIds.has(e.studentId._id.toString())) {
         studentIds.add(e.studentId._id.toString());
         uniqueStudents.push({
@@ -214,7 +217,7 @@ export const getTutorStudents = async (req, res) => {
           profileImage: e.studentId.profileImage,
           joinedAt: e.studentId.createdAt, // Added joinedAt finding it useful for frontend "Joined" column
           enrolledCourses: enrollments.filter( // Renamed to enrolledCourses to match frontend
-            en => en.studentId._id.toString() === e.studentId._id.toString()
+            en => en.studentId && en.studentId._id.toString() === e.studentId._id.toString()
           ).map(en => ({
             courseId: en.courseId._id,
             title: en.courseId.title
@@ -259,7 +262,7 @@ export const getRecentActivities = async (req, res) => {
     const recentEnrollments = await Enrollment.find({
       courseId: { $in: courseIds },
     })
-      .populate('studentId', 'name profileImage')
+      .populate('studentId', '-password name profileImage')
       .populate('courseId', 'title')
       .sort({ enrolledAt: -1 })
       .limit(10);

@@ -6,12 +6,12 @@ import {
   getTutorStudents,
   getStudentPerformance
 } from '../../controllers/Tutor/dashboardController.js';
-import { protect } from '../../middleware/auth.js';
+import { protect, authorize } from '../../middleware/auth.js';
 
 const router = express.Router();
 
-// All routes are protected
-router.use(protect);
+// All routes are protected and restricted to tutors only
+router.use(protect, authorize('tutor'));
 
 router.get('/stats', getTutorStats);
 router.get('/activities', getRecentActivities);
