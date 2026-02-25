@@ -1,6 +1,7 @@
 import User from '../models/User.js';
 import Course from '../models/Course.js';
 import Enrollment from '../models/Enrollment.js';
+import bcrypt from 'bcryptjs';
 
 // @desc    Get Admin Dashboard Stats
 // @route   GET /api/admin/stats
@@ -197,6 +198,127 @@ export const deleteUser = async (req, res) => {
         res.status(200).json({ success: true, message: 'User deleted successfully' });
     } catch (error) {
         console.error('Delete user error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+// @desc    Create a new user manually
+// @route   POST /api/admin/users
+// @access  Private (Admin)
+export const createUser = async (req, res) => {
+    try {
+        const { name, email, password, phone, role } = req.body;
+
+        if (!name || !email || !password || !role) {
+            return res.status(400).json({ success: false, message: 'Please provide all required fields' });
+        }
+
+        const userExists = await User.findOne({ email });
+        if (userExists) {
+            return res.status(400).json({ success: false, message: 'User already exists' });
+        }
+
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        const user = await User.create({
+            name,
+            email,
+            password: hashedPassword,
+            phone,
+            role
+        });
+
+        res.status(201).json({
+            success: true,
+            user: { _id: user._id, name: user.name, email: user.email, role: user.role }
+        });
+    } catch (error) {
+        console.error('Create user error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+// @desc    Update user details
+// @route   PUT /api/admin/users/:id
+// @access  Private (Admin)
+export const updateUser = async (req, res) => {
+    try {
+        const user = await User.findById(req.params.id);
+
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        const { name, email, phone, role } = req.body;
+
+        if (name) user.name = name;
+        if (email) user.email = email;
+        if (phone) user.phone = phone;
+        if (role) user.role = role;
+
+        const updatedUser = await user.save();
+
+        res.status(200).json({
+            success: true,
+            user: { _id: updatedUser._id, name: updatedUser.name, email: updatedUser.email, role: updatedUser.role }
+        });
+    } catch (error) {
+        console.error('Update user error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+// @desc    Block or User Status update
+// @route   PUT /api/admin/users/:id/status
+// @access  Private (Admin)
+export const updateUserStatus = async (req, res) => {
+    try {
+        const { isBlocked } = req.body;
+        const user = await User.findById(req.params.id);
+
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        // Prevent admin from blocking themselves
+        if (user._id.toString() === req.user.id) {
+            return res.status(400).json({ success: false, message: 'You cannot block yourself' });
+        }
+
+        user.isBlocked = isBlocked;
+        await user.save();
+
+        res.status(200).json({
+            success: true,
+            message: `User has been ${isBlocked ? 'blocked' : 'unblocked'} successfully`
+        });
+    } catch (error) {
+        console.error('Update user status error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+// @desc    Update course status (Approve/Suspend)
+// @route   PUT /api/admin/courses/:id/status
+// @access  Private (Admin)
+export const updateCourseStatus = async (req, res) => {
+    try {
+        const { status } = req.body; // e.g., 'published', 'rejected', 'suspended'
+        const course = await Course.findById(req.params.id);
+
+        if (!course) {
+            return res.status(404).json({ success: false, message: 'Course not found' });
+        }
+
+        course.status = status;
+        await course.save();
+
+        res.status(200).json({ 
+            success: true, 
+            message: `Course status updated to ${status} successfully` 
+        });
+    } catch (error) {
+        console.error('Update course status error:', error);
         res.status(500).json({ success: false, message: 'Server error' });
     }
 };

@@ -30,6 +30,14 @@ export const protect = async (req, res, next) => {
       });
     }
 
+    // Prevent blocked users from making requests
+    if (req.user.isBlocked) {
+      return res.status(403).json({
+        success: false,
+        message: 'Your account has been blocked. Access revoked.'
+      });
+    }
+
     next();
   } catch (error) {
     console.error('Auth middleware error:', error);

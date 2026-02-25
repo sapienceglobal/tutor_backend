@@ -12,7 +12,11 @@ import {
     getSystemLogs,
     getTutorDetails,
     getStudentDetails,
-    getAdminCourseDetails
+    getAdminCourseDetails,
+    createUser,
+    updateUser,
+    updateUserStatus,
+    updateCourseStatus
 } from '../controllers/adminController.js';
 
 const router = express.Router();
@@ -25,7 +29,11 @@ router.get('/stats', getAdminStats);
 router.get('/tutors', getAllTutors);
 router.get('/students', getAllStudents);
 router.get('/courses', getAllCourses);
+router.post('/users', createUser);
+router.put('/users/:id', updateUser);
+router.put('/users/:id/status', updateUserStatus);
 router.delete('/users/:id', deleteUser);
+router.put('/courses/:id/status', updateCourseStatus);
 router.delete('/courses/:id', deleteCourse);
 
 // Advanced Routes

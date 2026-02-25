@@ -133,6 +133,14 @@ export const loginUser = async (req, res) => {
       });
     }
 
+    // Check if user is blocked by admin
+    if (user.isBlocked) {
+      return res.status(403).json({
+        success: false,
+        message: 'Your account has been blocked by the Administrator. Please contact support.'
+      });
+    }
+
     //  If they registered via OAuth and have no password
     if (!user.password) {
       const provider = user.authProvider === 'github'
@@ -741,6 +749,10 @@ export const googleCallback = async (req, res) => {
     let isNewUser = false;
 
     if (user) {
+      if (user.isBlocked) {
+        return res.redirect(`${FRONTEND_URL}/login?error=Your account has been blocked by the Administrator. Please contact support.`);
+      }
+
       // Existing user - update provider info & profile image if from OAuth
       if (!user.providerId) {
         user.authProvider = 'google';
@@ -850,6 +862,10 @@ export const githubCallback = async (req, res) => {
     let isNewUser = false;
 
     if (user) {
+      if (user.isBlocked) {
+        return res.redirect(`${FRONTEND_URL}/login?error=Your account has been blocked by the Administrator. Please contact support.`);
+      }
+
       // Existing user - update provider info
       if (!user.providerId) {
         user.authProvider = 'github';

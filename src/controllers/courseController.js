@@ -72,6 +72,26 @@ export const getCourseById = async (req, res) => {
       });
     }
 
+    // Security: Block access to non-published courses for students
+    if (course.status !== 'published') {
+      let canAccess = false;
+      if (req.user) {
+        if (req.user.role === 'admin') canAccess = true;
+        // Check if user is the tutor who created the course
+        if (req.user.role === 'tutor' && course.tutorId?.userId?.toString() === req.user.id) {
+          canAccess = true;
+        }
+      }
+
+      if (!canAccess) {
+        return res.status(403).json({
+          success: false,
+          message: `This course is currently ${course.status} and cannot be accessed.`,
+        });
+      }
+    }
+
+
     // Get lessons for this course
     const lessons = await Lesson.find({ courseId: id, isPublished: true })
       .sort({ order: 1 });

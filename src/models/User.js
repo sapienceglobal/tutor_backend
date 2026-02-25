@@ -64,6 +64,10 @@ const userSchema = new mongoose.Schema({
       default: false
     }
   },
+  isBlocked: {
+    type: Boolean,
+    default: false
+  },
   bio: {
     type: String,
     maxLength: 500,

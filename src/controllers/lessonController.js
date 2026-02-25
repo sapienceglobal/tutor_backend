@@ -18,6 +18,23 @@ export const getLessonsByCourse = async (req, res) => {
       });
     }
 
+    if (course.status !== 'published') {
+      let canAccess = false;
+      if (req.user) {
+        if (req.user.role === 'admin') canAccess = true;
+        const courseWithTutor = await Course.findById(courseId).populate('tutorId');
+        if (req.user.role === 'tutor' && courseWithTutor.tutorId?.userId?.toString() === req.user.id) {
+          canAccess = true;
+        }
+      }
+      if (!canAccess) {
+        return res.status(403).json({
+          success: false,
+          message: `This course is currently ${course.status}. Lessons are unavailable.`,
+        });
+      }
+    }
+
     // Check if user is enrolled or owns the course
     let canAccess = false;
     if (req.user) {
@@ -81,6 +98,23 @@ export const getLessonById = async (req, res) => {
         success: false,
         message: 'Lesson not found',
       });
+    }
+
+    if (lesson.courseId && lesson.courseId.status !== 'published') {
+      let canAccess = false;
+      if (req.user) {
+        if (req.user.role === 'admin') canAccess = true;
+        const courseWithTutor = await Course.findById(lesson.courseId._id).populate('tutorId');
+        if (req.user.role === 'tutor' && courseWithTutor.tutorId?.userId?.toString() === req.user.id) {
+          canAccess = true;
+        }
+      }
+      if (!canAccess) {
+        return res.status(403).json({
+          success: false,
+          message: `The parent course is currently ${lesson.courseId.status}. This lesson is unavailable.`,
+        });
+      }
     }
 
     // Check access rights
