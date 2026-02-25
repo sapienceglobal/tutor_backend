@@ -172,7 +172,7 @@ export const getTutorStudents = async (req, res) => {
       courseId: { $in: courseIds },
       status: 'active',
     })
-      .populate('studentId', '-password name email phone profileImage')
+      .populate('studentId', 'name email phone profileImage')
       .populate('courseId', 'title')
       .sort({ enrolledAt: -1 });
 
@@ -262,7 +262,7 @@ export const getRecentActivities = async (req, res) => {
     const recentEnrollments = await Enrollment.find({
       courseId: { $in: courseIds },
     })
-      .populate('studentId', '-password name profileImage')
+      .populate('studentId', 'name profileImage')
       .populate('courseId', 'title')
       .sort({ enrolledAt: -1 })
       .limit(10);
