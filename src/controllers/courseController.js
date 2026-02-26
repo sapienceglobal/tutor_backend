@@ -3,6 +3,8 @@ import Lesson from '../models/Lesson.js';
 import Enrollment from '../models/Enrollment.js';
 import Tutor from '../models/Tutor.js';
 import Settings from '../models/Settings.js';
+import Category from '../models/Category.js';
+import User from '../models/User.js';
 import jwt from 'jsonwebtoken';
 
 // @desc    Get all published courses
@@ -109,7 +111,7 @@ export const getCourseById = async (req, res) => {
     // Check if user is enrolled (if authenticated)
     let isEnrolled = false;
     let isInstructor = false;
-    
+
     if (req.user) {
       const enrollment = await Enrollment.findOne({
         studentId: req.user.id,
@@ -131,10 +133,10 @@ export const getCourseById = async (req, res) => {
     // Security: Strict Role-Based Access Control
     // 1. Tutors can ONLY access their own courses (unless they somehow enrolled as a student, but tutors shouldn't act as students).
     if (req.user && req.user.role === 'tutor' && !isInstructor) {
-        return res.status(403).json({
-          success: false,
-          message: `Access Denied: Tutors can only preview their own created courses.`,
-        });
+      return res.status(403).json({
+        success: false,
+        message: `Access Denied: Tutors can only preview their own created courses.`,
+      });
     }
 
     // Security: Block access to unavailable courses for non-enrolled students
@@ -235,7 +237,7 @@ export const createCourse = async (req, res) => {
         path: 'tutorId',
         populate: {
           path: 'userId',
-          select: '-password name profileImage',
+          select: 'name profileImage',
         },
       });
 
@@ -305,7 +307,7 @@ export const updateCourse = async (req, res) => {
         path: 'tutorId',
         populate: {
           path: 'userId',
-          select: '-password name profileImage',
+          select: 'name profileImage',
         },
       });
 
