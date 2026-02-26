@@ -16,8 +16,12 @@ import {
     createUser,
     updateUser,
     updateUserStatus,
-    updateCourseStatus
+    updateCourseStatus,
+    getSettings,
+    updateSettings,
+    verifyTutor
 } from '../controllers/adminController.js';
+import { getAllPayouts, updatePayoutStatus } from '../controllers/payoutController.js';
 
 const router = express.Router();
 
@@ -34,6 +38,9 @@ router.put('/users/:id', updateUser);
 router.put('/users/:id/status', updateUserStatus);
 router.delete('/users/:id', deleteUser);
 router.put('/courses/:id/status', updateCourseStatus);
+// System Settings (Admin Only)
+router.get('/settings', getSettings);
+router.put('/settings', updateSettings);
 router.delete('/courses/:id', deleteCourse);
 
 // Advanced Routes
@@ -41,9 +48,17 @@ router.get('/stats/detailed', getDetailedStats);
 router.get('/earnings', getFinancialStats);
 router.get('/logs', getSystemLogs);
 
-// Detail Routes
+// Detail & Actions Routes
 router.get('/tutors/:id', getTutorDetails);
+router.put('/tutors/:id/verify', verifyTutor);
 router.get('/students/:id', getStudentDetails);
 router.get('/courses/:id', getAdminCourseDetails);
+
+// Payout Routes
+router.get('/payouts', getAllPayouts);
+router.put('/payouts/:id', updatePayoutStatus);
+// Legacy alias routes for compatibility
+router.get('/payout-requests', getAllPayouts);
+router.put('/payout-requests/:id', updatePayoutStatus);
 
 export default router;

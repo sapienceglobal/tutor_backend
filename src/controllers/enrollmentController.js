@@ -17,8 +17,12 @@ export const enrollInCourse = async (req, res) => {
       });
     }
 
-    // Check if course exists
-    const course = await Course.findById(courseId);
+    // Check if course exists and its availability
+    const course = await Course.findById(courseId).populate({
+        path: 'tutorId',
+        populate: { path: 'userId' },
+    });
+    
     if (!course) {
       return res.status(404).json({
         success: false,
@@ -26,10 +30,14 @@ export const enrollInCourse = async (req, res) => {
       });
     }
 
-    if (course.status !== 'published') {
+    const isTutorVerified = course.tutorId && course.tutorId.isVerified;
+    const isTutorBlocked = course.tutorId && course.tutorId.userId && course.tutorId.userId.isBlocked;
+    const isCourseAvailable = course.status === 'published' && isTutorVerified && !isTutorBlocked;
+
+    if (!isCourseAvailable) {
       return res.status(400).json({
         success: false,
-        message: 'Course is not available for enrollment',
+        message: 'Course is not currently available for new enrollments',
       });
     }
 

@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
+import Settings from '../models/Settings.js';
 
 export const protect = async (req, res, next) => {
   try {
@@ -36,6 +37,19 @@ export const protect = async (req, res, next) => {
         success: false,
         message: 'Your account has been blocked. Access revoked.'
       });
+    }
+
+    // Check Maintenance Mode
+    const settings = await Settings.findOne();
+    if (settings && settings.maintenanceMode) {
+      // Allow only admins to bypass maintenance mode
+      if (req.user.role !== 'admin') {
+        return res.status(503).json({
+          success: false,
+          isMaintenanceMode: true,
+          message: 'Platform is currently under maintenance. Please try again later.'
+        });
+      }
     }
 
     next();

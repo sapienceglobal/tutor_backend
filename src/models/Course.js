@@ -78,7 +78,7 @@ const courseSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['draft', 'published', 'archived', 'suspended', 'rejected'],
+    enum: ['draft', 'pending', 'published', 'archived', 'suspended', 'rejected'],
     default: 'draft',
   },
   requirements: [String],

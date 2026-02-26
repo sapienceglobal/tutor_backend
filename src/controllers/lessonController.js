@@ -26,6 +26,10 @@ export const getLessonsByCourse = async (req, res) => {
         if (req.user.role === 'tutor' && courseWithTutor.tutorId?.userId?.toString() === req.user.id) {
           canAccess = true;
         }
+        const enrollment = await Enrollment.findOne({ studentId: req.user.id, courseId });
+        if (enrollment) {
+            canAccess = true;
+        }
       }
       if (!canAccess) {
         return res.status(403).json({
@@ -107,6 +111,10 @@ export const getLessonById = async (req, res) => {
         const courseWithTutor = await Course.findById(lesson.courseId._id).populate('tutorId');
         if (req.user.role === 'tutor' && courseWithTutor.tutorId?.userId?.toString() === req.user.id) {
           canAccess = true;
+        }
+        const enrollment = await Enrollment.findOne({ studentId: req.user.id, courseId: lesson.courseId._id });
+        if (enrollment) {
+            canAccess = true;
         }
       }
       if (!canAccess) {

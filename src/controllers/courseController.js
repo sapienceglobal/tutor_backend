@@ -2,6 +2,8 @@ import Course from '../models/Course.js';
 import Lesson from '../models/Lesson.js';
 import Enrollment from '../models/Enrollment.js';
 import Tutor from '../models/Tutor.js';
+import Settings from '../models/Settings.js';
+import jwt from 'jsonwebtoken';
 
 // @desc    Get all published courses
 // @route   GET /api/courses
@@ -9,6 +11,31 @@ export const getAllCourses = async (req, res) => {
   try {
 
     const { categoryId, level, isFree, search, tutorId } = req.query;
+
+    // Check Guest Browsing Settings
+    const settings = await Settings.findOne();
+    if (settings && settings.allowGuestBrowsing === false) {
+      let token;
+      if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+        token = req.headers.authorization.split(' ')[1];
+      }
+
+      if (!token) {
+        return res.status(401).json({
+          success: false,
+          message: 'Guest browsing is currently disabled. Please log in to view courses.'
+        });
+      }
+
+      try {
+        jwt.verify(token, process.env.JWT_SECRET);
+      } catch (err) {
+        return res.status(401).json({
+          success: false,
+          message: 'Session expired. Please log in to view courses.'
+        });
+      }
+    }
 
     let filter = { status: 'published' };
 
@@ -23,10 +50,17 @@ export const getAllCourses = async (req, res) => {
         path: 'tutorId',
         populate: {
           path: 'userId',
-          select: 'name profileImage',
+          select: 'name profileImage isBlocked',
         },
       })
       .sort({ createdAt: -1 });
+
+    // Filter out courses with unverified/blocked tutors
+    courses = courses.filter(course => {
+      const isTutorVerified = course.tutorId && course.tutorId.isVerified;
+      const isUserBlocked = course.tutorId && course.tutorId.userId && course.tutorId.userId.isBlocked;
+      return isTutorVerified && !isUserBlocked;
+    });
 
     // Search by title
     if (search) {
@@ -72,13 +106,48 @@ export const getCourseById = async (req, res) => {
       });
     }
 
-    // Security: Block access to non-published courses for students
-    if (course.status !== 'published') {
+    // Check if user is enrolled (if authenticated)
+    let isEnrolled = false;
+    let isInstructor = false;
+    
+    if (req.user) {
+      const enrollment = await Enrollment.findOne({
+        studentId: req.user.id,
+        courseId: id,
+      });
+      isEnrolled = !!enrollment;
+
+      if (req.user.role === 'tutor' && course.tutorId?.userId?._id?.toString() === req.user.id) {
+        isInstructor = true;
+      }
+    }
+
+    // Determine if the course is publicly available
+    // A course is available if it's published AND its tutor is verified/not blocked
+    const isTutorVerified = course.tutorId && course.tutorId.isVerified;
+    const isTutorBlocked = course.tutorId && course.tutorId.userId && course.tutorId.userId.isBlocked;
+    const isCourseAvailable = course.status === 'published' && isTutorVerified && !isTutorBlocked;
+
+    // Security: Strict Role-Based Access Control
+    // 1. Tutors can ONLY access their own courses (unless they somehow enrolled as a student, but tutors shouldn't act as students).
+    if (req.user && req.user.role === 'tutor' && !isInstructor) {
+        return res.status(403).json({
+          success: false,
+          message: `Access Denied: Tutors can only preview their own created courses.`,
+        });
+    }
+
+    // Security: Block access to unavailable courses for non-enrolled students
+    if (!isCourseAvailable) {
       let canAccess = false;
       if (req.user) {
         if (req.user.role === 'admin') canAccess = true;
         // Check if user is the tutor who created the course
-        if (req.user.role === 'tutor' && course.tutorId?.userId?.toString() === req.user.id) {
+        if (isInstructor) {
+          canAccess = true;
+        }
+        // Check if user is already enrolled (retain access principle)
+        if (isEnrolled) {
           canAccess = true;
         }
       }
@@ -86,31 +155,21 @@ export const getCourseById = async (req, res) => {
       if (!canAccess) {
         return res.status(403).json({
           success: false,
-          message: `This course is currently ${course.status} and cannot be accessed.`,
+          message: `This course is currently unavailable or suspended, and cannot be accessed.`,
         });
       }
     }
 
-
     // Get lessons for this course
     const lessons = await Lesson.find({ courseId: id, isPublished: true })
       .sort({ order: 1 });
-
-    // Check if user is enrolled (if authenticated)
-    let isEnrolled = false;
-    if (req.user) {
-      const enrollment = await Enrollment.findOne({
-        studentId: req.user.id,
-        courseId: id,
-      });
-      isEnrolled = !!enrollment;
-    }
 
     res.status(200).json({
       success: true,
       course,
       lessons,
       isEnrolled,
+      isInstructor,
     });
   } catch (error) {
     console.error('Get course error:', error);
@@ -222,6 +281,15 @@ export const updateCourse = async (req, res) => {
       'price', 'level', 'duration', 'language', 'modules',
       'requirements', 'whatYouWillLearn', 'status',
     ];
+
+    // Intercept Publish Request based on Admin Auto-Approve Setting
+    if (req.body.status === 'published') {
+      const settings = await Settings.findOne();
+      if (settings && settings.autoApproveCourses === false) {
+        // Force status to pending if auto-approve is disabled
+        req.body.status = 'pending';
+      }
+    }
 
     allowedUpdates.forEach(field => {
       if (req.body[field] !== undefined) {

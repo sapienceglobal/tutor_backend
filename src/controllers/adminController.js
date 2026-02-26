@@ -2,20 +2,41 @@ import User from '../models/User.js';
 import Course from '../models/Course.js';
 import Enrollment from '../models/Enrollment.js';
 import bcrypt from 'bcryptjs';
+import { authorize } from '../middleware/auth.js';
+import Settings from '../models/Settings.js';
+import Tutor from '../models/Tutor.js';
+import { logAdminAction } from '../utils/logger.js';
+import AuditLog from '../models/AuditLog.js';
 
 // @desc    Get Admin Dashboard Stats
 // @route   GET /api/admin/stats
 // @access  Private (Admin)
 export const getAdminStats = async (req, res) => {
     try {
-        // 1. Total Counts
-        const totalTutors = await User.countDocuments({ role: 'tutor' });
-        const totalStudents = await User.countDocuments({ role: 'student' });
-        const totalCourses = await Course.countDocuments();
-        const activeCourses = await Course.countDocuments({ status: 'published' });
+        const { startDate, endDate } = req.query;
+        let dateFilter = {};
+        if (startDate && endDate) {
+            const parsedStart = new Date(startDate);
+            const parsedEnd = new Date(endDate);
+            // End of the day inclusive
+            parsedEnd.setHours(23, 59, 59, 999);
 
-        // 2. Global Financials
-        const allEnrollments = await Enrollment.find({ status: 'active' }).populate('courseId', 'price');
+            dateFilter = {
+                createdAt: {
+                    $gte: parsedStart,
+                    $lte: parsedEnd
+                }
+            };
+        }
+
+        // 1. Total Counts (Filtered by date if provided, though typically "total" implies all-time. We'll filter what makes sense)
+        const totalTutors = await User.countDocuments({ role: 'tutor', ...dateFilter });
+        const totalStudents = await User.countDocuments({ role: 'student', ...dateFilter });
+        const totalCourses = await Course.countDocuments(dateFilter);
+        const activeCourses = await Course.countDocuments({ status: 'published', ...dateFilter });
+
+        // 2. Global Financials (Filtered by date)
+        const allEnrollments = await Enrollment.find({ status: 'active', ...dateFilter }).populate('courseId', 'price');
         const totalRevenue = allEnrollments.reduce((sum, enr) => sum + (enr.courseId?.price || 0), 0);
 
         // 3. Real Trend Calculation (Current Month vs Last Month)
@@ -140,11 +161,27 @@ export const getAdminStats = async (req, res) => {
 // @access  Private (Admin)
 export const getAllTutors = async (req, res) => {
     try {
-        const tutors = await User.find({ role: 'tutor' })
+        const users = await User.find({ role: 'tutor' })
             .select('-password')
-            .sort({ createdAt: -1 });
+            .sort({ createdAt: -1 })
+            .lean(); // Lean for mutability
 
-        res.status(200).json({ success: true, count: tutors.length, tutors });
+        // Also fetch their corresponding Tutor profiles to get `isVerified` and `tutor._id`
+        const userIds = users.map(u => u._id);
+        const tutorsProfiles = await Tutor.find({ userId: { $in: userIds } }).lean();
+
+        // Merge User doc with Tutor profile doc
+        const detailedTutors = users.map(user => {
+            const profile = tutorsProfiles.find(t => t.userId.toString() === user._id.toString());
+            return {
+                ...user,
+                tutorId: profile ? profile._id : null,
+                isVerified: profile ? profile.isVerified : false,
+                rating: profile ? profile.rating : 0
+            };
+        });
+
+        res.status(200).json({ success: true, count: detailedTutors.length, tutors: detailedTutors });
     } catch (error) {
         console.error('Get tutors error:', error);
         res.status(500).json({ success: false, message: 'Server error' });
@@ -228,6 +265,14 @@ export const createUser = async (req, res) => {
             role
         });
 
+        if (role === 'tutor') {
+            const settings = (await Settings.findOne()) || {};
+            await Tutor.create({ 
+                userId: user._id,
+                isVerified: settings.autoApproveTutors || false
+            });
+        }
+
         res.status(201).json({
             success: true,
             user: { _id: user._id, name: user.name, email: user.email, role: user.role }
@@ -292,6 +337,10 @@ export const updateUserStatus = async (req, res) => {
             success: true,
             message: `User has been ${isBlocked ? 'blocked' : 'unblocked'} successfully`
         });
+
+        // Audit Log
+        const action = isBlocked ? 'BLOCK_TUTOR' : 'UNBLOCK_TUTOR';
+        await logAdminAction(req.user.id, action, 'user', user._id, { email: user.email });
     } catch (error) {
         console.error('Update user status error:', error);
         res.status(500).json({ success: false, message: 'Server error' });
@@ -317,6 +366,13 @@ export const updateCourseStatus = async (req, res) => {
             success: true, 
             message: `Course status updated to ${status} successfully` 
         });
+
+        // Audit Log
+        let action = 'UPDATE_COURSE';
+        if (status === 'published') action = 'APPROVE_COURSE';
+        else if (status === 'rejected') action = 'REJECT_COURSE';
+        else if (status === 'suspended') action = 'SUSPEND_COURSE';
+        await logAdminAction(req.user.id, action, 'course', course._id, { title: course.title, newStatus: status });
     } catch (error) {
         console.error('Update course status error:', error);
         res.status(500).json({ success: false, message: 'Server error' });
@@ -336,6 +392,9 @@ export const deleteCourse = async (req, res) => {
 
         await course.deleteOne();
         res.status(200).json({ success: true, message: 'Course deleted successfully' });
+
+        // Audit Log
+        await logAdminAction(req.user.id, 'DELETE_COURSE', 'course', course._id, { title: course.title });
     } catch (error) {
         console.error('Delete course error:', error);
         res.status(500).json({ success: false, message: 'Server error' });
@@ -466,53 +525,56 @@ export const getFinancialStats = async (req, res) => {
 // @access  Private (Admin)
 export const getSystemLogs = async (req, res) => {
     try {
-        // Industry level logging usually involves ELK stack or similar.
-        // For this app, we will simulate logs based on recent user/course creation
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 20;
+        const skip = (page - 1) * limit;
 
+        const logs = await AuditLog.find()
+            .populate('adminId', 'name email profileImage')
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit);
+
+        const total = await AuditLog.countDocuments();
+
+        // Also fetch recent registrations for combined view if needed, but we'll stick to AuditLogs primarily
         const recentUsers = await User.find().sort({ createdAt: -1 }).limit(5).select('name role createdAt');
-        const recentCourses = await Course.find().sort({ createdAt: -1 }).limit(5).select('title tutorId createdAt');
+        
+        let formattedLogs = logs.map(log => {
+            let severity = 'info';
+            if (log.action.includes('REJECT') || log.action.includes('DELETE') || log.action.includes('BLOCK')) severity = 'warning';
+            if (log.action.includes('APPROVE') || log.action.includes('VERIFY') || log.action.includes('PAID')) severity = 'success';
+            
+            return {
+                _id: log._id,
+                type: log.action.replace(/_/g, ' '),
+                message: `Admin ${log.adminId?.name || 'System'} performed ${log.action} on ${log.entityType}`,
+                timestamp: log.createdAt,
+                severity: severity,
+                details: log.details,
+                admin: log.adminId
+            };
+        });
 
-        const logs = [];
-
-        recentUsers.forEach(user => {
-            logs.push({
-                type: 'User Registration',
-                message: `New ${user.role} registered: ${user.name}`,
-                timestamp: user.createdAt,
-                severity: 'info'
+        // Mix in user registrations as "System" logs if on page 1 for the dashboard feel
+        if (page === 1) {
+            recentUsers.forEach(user => {
+                formattedLogs.push({
+                    _id: `user_${user._id}`,
+                    type: 'USER REGISTRATION',
+                    message: `New ${user.role} registered: ${user.name}`,
+                    timestamp: user.createdAt,
+                    severity: 'system'
+                });
             });
-        });
-
-        recentCourses.forEach(course => {
-            logs.push({
-                type: 'Course Created',
-                message: `New course created: ${course.title}`,
-                timestamp: course.createdAt,
-                severity: 'success'
-            });
-        });
-
-        // Add some simulated system events
-        logs.push({
-            type: 'System',
-            message: 'Daily backup completed successfully',
-            timestamp: new Date(Date.now() - 1000 * 60 * 60 * 2), // 2 hours ago
-            severity: 'system'
-        });
-
-        logs.push({
-            type: 'Security',
-            message: 'Failed login attempt from IP 192.168.1.1',
-            timestamp: new Date(Date.now() - 1000 * 60 * 60 * 5), // 5 hours ago
-            severity: 'warning'
-        });
-
-        // Sort by timestamp desc
-        logs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+            formattedLogs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        }
 
         res.status(200).json({
             success: true,
-            logs
+            logs: formattedLogs,
+            totalPages: Math.ceil(total / limit),
+            currentPage: page
         });
 
     } catch (error) {
@@ -566,6 +628,36 @@ export const getTutorDetails = async (req, res) => {
 
     } catch (error) {
         console.error('Get tutor details error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+// @desc    Verify or Unverify Tutor Profile
+// @route   PUT /api/admin/tutors/:id/verify
+// @access  Private (Admin)
+export const verifyTutor = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { isVerified } = req.body;
+
+        const tutor = await Tutor.findById(id);
+        if (!tutor) {
+            return res.status(404).json({ success: false, message: 'Tutor not found' });
+        }
+
+        tutor.isVerified = isVerified;
+        await tutor.save();
+
+        res.status(200).json({
+            success: true,
+            message: `Tutor profile ${isVerified ? 'verified' : 'unverified'} successfully`,
+            tutor
+        });
+
+        // Audit Log
+        await logAdminAction(req.user.id, 'VERIFY_TUTOR', 'tutor', tutor._id, { userId: tutor.userId, isVerified });
+    } catch (error) {
+        console.error('Verify tutor error:', error);
         res.status(500).json({ success: false, message: 'Server error' });
     }
 };
@@ -637,6 +729,82 @@ export const getAdminCourseDetails = async (req, res) => {
 
     } catch (error) {
         console.error('Get course details error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+// @desc    Get Platform Settings
+// @route   GET /api/admin/settings
+// @access  Private (Admin)
+export const getSettings = async (req, res) => {
+    try {
+        let settings = await Settings.findOne();
+        
+        // Ensure default settings exist if first time
+        if (!settings) {
+            settings = await Settings.create({});
+        }
+
+        res.status(200).json({
+            success: true,
+            settings
+        });
+    } catch (error) {
+        console.error('Get settings error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+// @desc    Update Platform Settings
+// @route   PUT /api/admin/settings
+// @access  Private (Admin)
+export const updateSettings = async (req, res) => {
+    try {
+        const { 
+            siteName, 
+            supportEmail, 
+            defaultLanguage, 
+            maintenanceMode, 
+            allowRegistration,
+            autoApproveCourses,
+            allowGuestBrowsing,
+            platformCommission,
+            supportPhone,
+            facebookLink,
+            twitterLink
+        } = req.body;
+        
+        let settings = await Settings.findOne();
+        if (!settings) {
+            settings = new Settings();
+        }
+
+        if (siteName !== undefined) settings.siteName = siteName;
+        if (supportEmail !== undefined) settings.supportEmail = supportEmail;
+        if (defaultLanguage !== undefined) settings.defaultLanguage = defaultLanguage;
+        if (maintenanceMode !== undefined) settings.maintenanceMode = maintenanceMode;
+        if (allowRegistration !== undefined) settings.allowRegistration = allowRegistration;
+        
+        if (autoApproveCourses !== undefined) settings.autoApproveCourses = autoApproveCourses;
+        if (allowGuestBrowsing !== undefined) settings.allowGuestBrowsing = allowGuestBrowsing;
+        if (platformCommission !== undefined) settings.platformCommission = platformCommission;
+        if (supportPhone !== undefined) settings.supportPhone = supportPhone;
+        if (facebookLink !== undefined) settings.facebookLink = facebookLink;
+        if (twitterLink !== undefined) settings.twitterLink = twitterLink;
+        
+        settings.updatedAt = Date.now();
+        await settings.save();
+
+        res.status(200).json({
+            success: true,
+            message: 'Settings updated successfully',
+            settings
+        });
+
+        // Audit Log
+        await logAdminAction(req.user.id, 'UPDATE_SETTINGS', 'setting', null, { settingsUpdated: Object.keys(req.body) });
+    } catch (error) {
+        console.error('Update settings error:', error);
         res.status(500).json({ success: false, message: 'Server error' });
     }
 };

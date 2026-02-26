@@ -8,7 +8,7 @@ export const getAllTutors = async (req, res) => {
   try {
     const { categoryId, minRating, maxRate, search } = req.query;
 
-    // Build filter object
+    // Build filter object - Only show approved/verified tutors to students
     let filter = { isVerified: true };
 
     if (categoryId) {
@@ -32,7 +32,7 @@ export const getAllTutors = async (req, res) => {
     let filteredTutors = tutors;
     if (search) {
       filteredTutors = tutors.filter(tutor =>
-        tutor.userId.name.toLowerCase().includes(search.toLowerCase())
+        tutor.userId && tutor.userId.name && tutor.userId.name.toLowerCase().includes(search.toLowerCase())
       );
     }
 
@@ -301,15 +301,22 @@ export const deleteTutor = async (req, res) => {
 // @route   GET /api/tutors/profile
 export const getCurrentTutor = async (req, res) => {
   try {
-    const tutor = await Tutor.findOne({ userId: req.user.id })
+    let tutor = await Tutor.findOne({ userId: req.user.id })
       .populate('userId', 'name email phone profileImage')
       .populate('categoryId', 'name icon');
 
     if (!tutor) {
-      return res.status(404).json({
-        success: false,
-        message: 'Tutor profile not found'
-      });
+      if (req.user.role === 'tutor') {
+        tutor = await Tutor.create({ userId: req.user.id });
+        tutor = await Tutor.findById(tutor._id)
+          .populate('userId', 'name email phone profileImage')
+          .populate('categoryId', 'name icon');
+      } else {
+        return res.status(404).json({
+          success: false,
+          message: 'Tutor profile not found'
+        });
+      }
     }
 
     // Get course count
@@ -341,9 +348,13 @@ export const getTutorStats = async (req, res) => {
     const userId = req.user.id;
 
     // 1. Get Tutor Profile
-    const tutor = await Tutor.findOne({ userId });
+    let tutor = await Tutor.findOne({ userId });
     if (!tutor) {
-      return res.status(404).json({ success: false, message: 'Tutor profile not found' });
+      if (req.user.role === 'tutor') {
+        tutor = await Tutor.create({ userId });
+      } else {
+        return res.status(404).json({ success: false, message: 'Tutor profile not found' });
+      }
     }
 
     // 2. Get Courses
@@ -515,7 +526,8 @@ export const getTutorStats = async (req, res) => {
           courses: coursesTrend,
           earnings: earningsTrend,
           reviews: reviewsTrend
-        }
+        },
+        isVerified: tutor.isVerified
       }
     });
 

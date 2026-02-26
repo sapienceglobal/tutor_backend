@@ -8,17 +8,16 @@ const tutorSchema = new mongoose.Schema({
   },
   categoryId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Category',
-    required: true
+    ref: 'Category' // Made optional for auto-creation during registration
   },
   hourlyRate: {
     type: Number,
-    required: [true, 'Hourly rate is required'],
+    default: 0,
     min: 0
   },
   experience: {
     type: Number,
-    required: [true, 'Experience is required'],
+    default: 0,
     min: 0
   },
   rating: {

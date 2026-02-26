@@ -3,6 +3,10 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
 import crypto from 'crypto';
+import Tutor from '../models/Tutor.js';
+import Settings from '../models/Settings.js';
+
+// Setup JWT Generator from 'crypto';
 
 // Generate JWT Token
 const generateToken = (id, role) => {
@@ -32,6 +36,15 @@ export const registerUser = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'All fields are required'
+      });
+    }
+
+    // Check if Registration is globally allowed by Admin
+    const settings = await Settings.findOne();
+    if (settings && settings.allowRegistration === false) {
+      return res.status(403).json({
+        success: false,
+        message: 'Registration is currently disabled by the Administrator. Please try again later.'
       });
     }
 
@@ -79,6 +92,15 @@ export const registerUser = async (req, res) => {
       phone,
       role: assignedRole
     });
+
+    // Auto-create Tutor profile if role is 'tutor'
+    if (assignedRole === 'tutor') {
+      const settings = (await Settings.findOne()) || {};
+      await Tutor.create({ 
+        userId: user._id,
+        isVerified: settings.autoApproveTutors || false
+      });
+    }
 
     // Generate token
     const token = generateToken(user._id, assignedRole);
@@ -173,7 +195,6 @@ export const loginUser = async (req, res) => {
         message: 'Invalid Password'
       });
     }
-
     // Generate token
     const token = generateToken(user._id, user.role);
 
@@ -763,6 +784,12 @@ export const googleCallback = async (req, res) => {
       }
       await user.save();
     } else {
+      // Check if Registration is globally allowed by Admin
+      const settings = await Settings.findOne();
+      if (settings && settings.allowRegistration === false) {
+        return res.redirect(`${FRONTEND_URL}/login?error=Registration is currently disabled by the Administrator. Please try again later.`);
+      }
+
       // New user
       isNewUser = true;
       user = await User.create({
@@ -876,6 +903,12 @@ export const githubCallback = async (req, res) => {
       }
       await user.save();
     } else {
+      // Check if Registration is globally allowed by Admin
+      const settings = await Settings.findOne();
+      if (settings && settings.allowRegistration === false) {
+        return res.redirect(`${FRONTEND_URL}/login?error=Registration is currently disabled by the Administrator. Please try again later.`);
+      }
+
       // New user
       isNewUser = true;
       user = await User.create({
