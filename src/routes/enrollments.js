@@ -9,15 +9,14 @@ import {
   checkEnrollment,
   removeStudentFromCourse
 } from '../controllers/enrollmentController.js';
-import { protect } from '../middleware/auth.js';
+import { protect, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// All routes are protected
 router.use(protect);
 
-router.post('/', enrollInCourse);
-router.get('/my-enrollments', getMyEnrollments);
+router.post('/', authorize('student'), enrollInCourse);
+router.get('/my-enrollments', authorize('student'), getMyEnrollments);
 router.get('/course/:courseId', getEnrollmentByCourse);
 router.get('/check/:courseId', protect, checkEnrollment);
 router.get('/students/:courseId', getCourseStudents);

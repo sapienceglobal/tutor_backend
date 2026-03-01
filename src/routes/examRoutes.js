@@ -30,7 +30,7 @@ router.get('/course/:courseId', protect, getExamsByCourse);
 router.get('/:id', protect, getExamById);
 router.get('/:id/attempts', protect, authorize('tutor', 'admin'), getExamAttempts);
 router.post('/', protect, authorize('tutor', 'admin'), createExam);
-router.post('/:id/submit', protect, submitExam); // Students submit exams
+router.post('/:id/submit', protect, authorize('student'), submitExam);
 router.patch('/:id', protect, authorize('tutor', 'admin'), updateExam);
 router.delete('/:id', protect, authorize('tutor', 'admin'), deleteExam);
 

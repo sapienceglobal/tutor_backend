@@ -8,16 +8,18 @@ import {
     renewSubscription,
     retryFailedPayment,
 } from '../controllers/paymentController.js';
-import { protect } from '../middleware/auth.js';
+import { protect, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
 
-router.post('/create-order', protect, createOrder);
-router.post('/verify', protect, verifyPayment);
-router.get('/my-payments', protect, getMyPayments);
-router.get('/all', protect, getAllMyPayments);
-router.get('/:id/invoice', protect, generateInvoice);
-router.post('/renew-subscription', protect, renewSubscription);
-router.post('/:id/retry', protect, retryFailedPayment);
+router.use(protect);
+
+router.post('/create-order', authorize('student'), createOrder);
+router.post('/verify', authorize('student'), verifyPayment);
+router.get('/my-payments', authorize('student'), getMyPayments);
+router.get('/all', authorize('student'), getAllMyPayments);
+router.get('/:id/invoice', authorize('student'), generateInvoice);
+router.post('/renew-subscription', renewSubscription);
+router.post('/:id/retry', authorize('student'), retryFailedPayment);
 
 export default router;

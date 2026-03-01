@@ -50,6 +50,7 @@ import assignmentRoutes from './src/routes/assignments.js';
 import instituteRoutes from './src/routes/institute.js';
 
 import { verifyApiKey } from './src/middleware/apiKey.js';
+import { auditMiddleware } from './src/middleware/auditMiddleware.js';
 
 // Initialize express app
 const app = express();
@@ -57,12 +58,12 @@ const app = express();
 // Connect to database
 connectDB();
 
-// Middleware
+// Middleware — CSP: unsafe-eval removed for security; use nonce for inline scripts if needed
 app.use(helmet({
     contentSecurityPolicy: {
         directives: {
             defaultSrc: ["'self'"],
-            scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+            scriptSrc: ["'self'", "'unsafe-inline'"],
             styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
             imgSrc: ["'self'", "data:", "blob:", "https:", "http:"],
             fontSrc: ["'self'", "https://fonts.gstatic.com"],
@@ -136,6 +137,7 @@ app.get('/', (req, res) => {
 });
 
 app.use(verifyApiKey);
+app.use(auditMiddleware);
 
 // Routes
 app.use('/api/auth', authRoutes);
