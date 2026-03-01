@@ -54,6 +54,10 @@ const tutorSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
+  blockedStudents: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }],
   isVerified: {
     type: Boolean,
     default: false

@@ -46,6 +46,9 @@ export const getAllCourses = async (req, res) => {
     if (isFree !== undefined) filter.isFree = isFree === 'true';
     if (tutorId) filter.tutorId = tutorId;
 
+    // Tenant Isolation
+    if (req.tenant) filter.instituteId = req.tenant._id;
+
     let courses = await Course.find(filter)
       .populate('categoryId', 'name icon')
       .populate({
@@ -222,6 +225,7 @@ export const createCourse = async (req, res) => {
       thumbnail,
       categoryId,
       tutorId: tutor._id,
+      instituteId: req.tenant?._id || null,
       price: price || 0,
       level: level || 'beginner',
       duration: duration || 0,
@@ -381,7 +385,10 @@ export const getCoursesByTutor = async (req, res) => {
   try {
     const { tutorId } = req.params;
 
-    const courses = await Course.find({ tutorId, status: 'published' })
+    const filter = { tutorId, status: 'published' };
+    if (req.tenant) filter.instituteId = req.tenant._id;
+
+    const courses = await Course.find(filter)
       .populate('categoryId', 'name icon')
       .sort({ createdAt: -1 });
 
@@ -412,7 +419,10 @@ export const getMyCourses = async (req, res) => {
       });
     }
 
-    const courses = await Course.find({ tutorId: tutor._id })
+    const filter = { tutorId: tutor._id };
+    if (req.tenant) filter.instituteId = req.tenant._id;
+
+    const courses = await Course.find(filter)
       .populate('categoryId', 'name icon')
       .populate({
         path: 'tutorId',

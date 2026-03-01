@@ -11,12 +11,15 @@ export const getExamsByCourse = async (req, res) => {
     const studentId = req.user.id; // Assuming user is authenticated
 
     // Aggregation Pipeline to merge Exam data with Student's Attempts
+    const matchQuery = {
+      courseId: new mongoose.Types.ObjectId(courseId),
+      status: 'published' // Only show published exams to students
+    };
+    if (req.tenant) matchQuery.instituteId = new mongoose.Types.ObjectId(req.tenant._id);
+
     const exams = await Exam.aggregate([
       {
-        $match: {
-          courseId: new mongoose.Types.ObjectId(courseId),
-          status: 'published' // Only show published exams to students
-        }
+        $match: matchQuery
       },
       // Lookup attempts for this specific student
       {
@@ -209,7 +212,9 @@ export const createExam = async (req, res) => {
       negativeMarking,
       passingPercentage,
       isFree,
-      hideSolutions
+      hideSolutions,
+      sections,
+      isAdaptive
     } = req.body;
 
     if (!courseId) {
@@ -268,6 +273,7 @@ export const createExam = async (req, res) => {
     const exam = await Exam.create({
       courseId,
       tutorId: course.tutorId._id,
+      instituteId: req.tenant?._id || null,
       title,
       description,
       type: type || 'assessment',
@@ -290,6 +296,8 @@ export const createExam = async (req, res) => {
       negativeMarking: negativeMarking || false,
       passingPercentage: passingPercentage || 0,
       isFree: isFree || false,
+      sections: sections || [],
+      isAdaptive: isAdaptive || false,
     });
 
     res.status(201).json({
@@ -338,7 +346,7 @@ export const updateExam = async (req, res) => {
       'passingMarks', 'questions', 'shuffleQuestions', 'shuffleOptions',
       'showResultImmediately', 'showCorrectAnswers', 'hideSolutions', 'allowRetake',
       'maxAttempts', 'startDate', 'endDate', 'isScheduled', 'status', 'isPublished',
-      'negativeMarking', 'passingPercentage', 'isFree',
+      'negativeMarking', 'passingPercentage', 'isFree', 'sections', 'isAdaptive',
     ];
 
     allowedUpdates.forEach(field => {
@@ -575,6 +583,13 @@ export const submitExam = async (req, res) => {
     const allAttempts = await ExamAttempt.find({ examId: id });
     exam.averageScore = allAttempts.reduce((sum, a) => sum + a.score, 0) / allAttempts.length;
     await exam.save();
+
+    // --- Compute Percentile ---
+    const allScores = allAttempts.map(a => a.score).sort((a, b) => a - b);
+    const rank = allScores.filter(s => s < score).length;
+    const percentile = Math.round((rank / allScores.length) * 100);
+    attempt.percentile = percentile;
+    await attempt.save();
 
     // ✅ NEW: Check if results should be shown immediately
     if (!exam.showResultImmediately) {
@@ -826,7 +841,10 @@ export const getAttemptDetails = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      attempt,
+      attempt: {
+        ...attempt.toObject(),
+        percentile: attempt.percentile,
+      },
       exam: {
         title: exam.title,
         showCorrectAnswers: exam.showCorrectAnswers,
@@ -1154,5 +1172,73 @@ export const getStudentExams = async (req, res) => {
   } catch (error) {
     console.error('Get student exams error:', error);
     res.status(500).json({ message: 'Server Error' });
+  }
+};
+
+// @desc    Get next adaptive question
+// @route   POST /api/student/exams/:id/next-question
+// @access  Private (Student)
+export const getNextAdaptiveQuestion = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { answeredQuestionIds = [], lastAnswerCorrect } = req.body;
+
+    const exam = await Exam.findById(id);
+    if (!exam) {
+      return res.status(404).json({ success: false, message: 'Exam not found' });
+    }
+
+    if (!exam.isAdaptive) {
+      return res.status(400).json({ success: false, message: 'This exam is not adaptive' });
+    }
+
+    // Filter out already answered questions
+    const answeredSet = new Set(answeredQuestionIds.map(String));
+    const unanswered = exam.questions.filter(q => !answeredSet.has(q._id.toString()));
+
+    if (unanswered.length === 0) {
+      return res.status(200).json({
+        success: true,
+        finished: true,
+        message: 'All questions answered',
+      });
+    }
+
+    // Determine target difficulty
+    let targetDifficulty = 'medium'; // default start
+    if (answeredQuestionIds.length > 0) {
+      if (lastAnswerCorrect === true) {
+        targetDifficulty = 'hard';
+      } else if (lastAnswerCorrect === false) {
+        targetDifficulty = 'easy';
+      }
+    }
+
+    // Pick from target difficulty, fallback to any unanswered
+    let nextQuestion = unanswered.find(q => q.difficulty === targetDifficulty);
+    if (!nextQuestion) {
+      // Fallback: try medium, then any
+      nextQuestion = unanswered.find(q => q.difficulty === 'medium') || unanswered[0];
+    }
+
+    // Strip correct answer info
+    const safeQuestion = {
+      _id: nextQuestion._id,
+      question: nextQuestion.question,
+      options: nextQuestion.options.map(opt => ({ text: opt.text, _id: opt._id })),
+      difficulty: nextQuestion.difficulty,
+      points: nextQuestion.points,
+    };
+
+    res.status(200).json({
+      success: true,
+      finished: false,
+      question: safeQuestion,
+      remainingCount: unanswered.length - 1,
+      totalQuestions: exam.questions.length,
+    });
+  } catch (error) {
+    console.error('Adaptive question error:', error);
+    res.status(500).json({ success: false, message: 'Failed to get next question' });
   }
 };

@@ -1,21 +1,43 @@
 import mongoose from 'mongoose';
 
-// Question Schema for Exam
 const examQuestionSchema = new mongoose.Schema({
   question: {
     type: String,
     required: true,
   },
+  questionType: {
+    type: String,
+    enum: ['mcq', 'numeric', 'match_the_following', 'passage_based'],
+    default: 'mcq',
+  },
   options: [{
     text: {
       type: String,
-      required: true,
     },
     isCorrect: {
       type: Boolean,
       default: false,
     },
   }],
+  // For numeric questions
+  numericAnswer: {
+    type: Number,
+    default: null,
+  },
+  tolerance: {
+    type: Number,
+    default: 0, // allowable error margin
+  },
+  // For match-the-following
+  pairs: [{
+    left: String,
+    right: String,
+  }],
+  // For passage-based
+  passage: {
+    type: String,
+    default: null,
+  },
   explanation: String,
   points: {
     type: Number,
@@ -27,7 +49,7 @@ const examQuestionSchema = new mongoose.Schema({
     default: 'medium',
   },
   tags: [String],
-}, { _id: true }); // Mongoose will auto-generate _id
+}, { _id: true });
 
 const examSchema = new mongoose.Schema({
   courseId: {
@@ -39,6 +61,11 @@ const examSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Tutor',
     required: true,
+  },
+  instituteId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Institute',
+    default: null,
   },
   title: {
     type: String,
@@ -119,6 +146,20 @@ const examSchema = new mongoose.Schema({
   maxAttempts: {
     type: Number,
     default: 1,
+  },
+
+  // Sections (optional, for section-based timing)
+  sections: [{
+    name: { type: String, required: true },
+    duration: { type: Number, required: true }, // minutes for this section
+    questionStartIndex: { type: Number, required: true },
+    questionEndIndex: { type: Number, required: true },
+  }],
+
+  // Adaptive Testing
+  isAdaptive: {
+    type: Boolean,
+    default: false,
   },
 
   // Scheduling
@@ -232,6 +273,10 @@ const examAttemptSchema = new mongoose.Schema({
     required: true,
   },
   timeSpent: Number,
+  percentile: {
+    type: Number,
+    default: null,
+  },
   startedAt: {
     type: Date,
     required: true,
@@ -243,6 +288,16 @@ const examAttemptSchema = new mongoose.Schema({
   createdAt: {
     type: Date,
     default: Date.now,
+  },
+
+  // --- Test Integrity: Tab-switch logging ---
+  tabSwitchLog: [{
+    switchedAt: { type: Date, default: Date.now },
+    count: { type: Number, default: 1 },
+  }],
+  tabSwitchCount: {
+    type: Number,
+    default: 0,
   },
 });
 

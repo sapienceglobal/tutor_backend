@@ -12,7 +12,7 @@ import {
   getTutorStudentDetails
 } from '../controllers/tutorController.js';
 import { requestPayout, getMyPayouts } from '../controllers/payoutController.js';
-import { protect, authorize } from '../middleware/auth.js';
+import { protect, authorize, optionalAuth } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -25,9 +25,9 @@ router.get('/students/:id', protect, authorize('tutor'), getTutorStudentDetails)
 router.post('/payouts/request', protect, authorize('tutor'), requestPayout);
 router.get('/payouts', protect, authorize('tutor'), getMyPayouts);
 
-// Public routes
-router.get('/', getAllTutors);
-router.get('/category/:categoryId', getTutorsByCategory);
+// Public routes (optionalAuth to populate req.user for blocked student filtering)
+router.get('/', optionalAuth, getAllTutors);
+router.get('/category/:categoryId', optionalAuth, getTutorsByCategory);
 
 // Protected routes (Tutor only)
 router.post('/', protect, authorize('tutor'), createTutor);
@@ -36,6 +36,6 @@ router.patch('/:id', protect, authorize('tutor'), updateTutor);
 router.delete('/:id', protect, authorize('tutor'), deleteTutor);
 
 // Generic ID route MUST be last to prevent intercepting /payouts etc.
-router.get('/:id', getTutorById);
+router.get('/:id', optionalAuth, getTutorById);
 
 export default router;

@@ -25,8 +25,13 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['student', 'tutor', 'admin'],
+    enum: ['student', 'tutor', 'admin', 'superadmin'],
     default: 'student'
+  },
+  instituteId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Institute',
+    default: null
   },
   authProvider: {
     type: String,
@@ -95,7 +100,35 @@ const userSchema = new mongoose.Schema({
   passwordResetTokenExpires: {
     type: Date,
     select: false
-  }
+  },
+
+  // --- 2FA ---
+  twoFactorSecret: {
+    type: String,
+    select: false,
+    default: null,
+  },
+  twoFactorEnabled: {
+    type: Boolean,
+    default: false,
+  },
+
+  // --- Session Management ---
+  activeSessions: [{
+    token: { type: String, required: true },
+    device: { type: String, default: 'Unknown' },
+    ip: { type: String, default: '' },
+    browser: { type: String, default: '' },
+    lastActive: { type: Date, default: Date.now },
+    createdAt: { type: Date, default: Date.now },
+  }],
+
+  // --- Refresh Token ---
+  refreshToken: {
+    type: String,
+    select: false,
+    default: null,
+  },
 }, {
   timestamps: true
 });

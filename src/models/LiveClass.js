@@ -20,6 +20,11 @@ const liveClassSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Course'
     },
+    instituteId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Institute',
+        default: null
+    },
     dateTime: {
         type: Date,
         required: [true, 'Date and time is required']

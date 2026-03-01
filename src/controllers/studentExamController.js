@@ -100,7 +100,9 @@ export const getExamById = async (req, res) => {
                 duration: exam.duration,
                 instructions: exam.instructions,
                 questions: secureQuestions,
-                totalMarks: exam.totalMarks
+                totalMarks: exam.totalMarks,
+                sections: exam.sections || [],
+                isAdaptive: exam.isAdaptive || false,
             }
         });
 
@@ -159,22 +161,31 @@ export const submitExam = async (req, res) => {
         const attempt = await ExamAttempt.create({
             examId: id,
             studentId,
-            courseId: exam.courseId, // Needed for schema validation
-            attemptNumber: 1, // Logic for tracking attempts can be added if needed
+            courseId: exam.courseId,
+            attemptNumber: 1,
             answers: processedAnswers,
             score,
             percentage,
             isPassed,
             timeSpent,
-            startedAt: new Date(), // Approximate
+            startedAt: new Date(),
             submittedAt: new Date()
         });
+
+        // --- Compute Percentile ---
+        const allAttempts = await ExamAttempt.find({ examId: id });
+        const allScores = allAttempts.map(a => a.score).sort((a, b) => a - b);
+        const rank = allScores.filter(s => s < score).length;
+        const percentile = Math.round((rank / allScores.length) * 100);
+        attempt.percentile = percentile;
+        await attempt.save();
 
         res.status(200).json({
             success: true,
             score,
             isPassed,
             percentage,
+            percentile,
             attemptId: attempt._id
         });
 
@@ -236,6 +247,7 @@ export const getAttemptDetails = async (req, res) => {
                 isPassed: attempt.isPassed,
                 timeSpent: attempt.timeSpent,
                 submittedAt: attempt.submittedAt,
+                percentile: attempt.percentile,
                 totalQuestions: attempt.examId.totalQuestions,
                 correctCount: attempt.answers.filter(a => a.isCorrect).length,
                 incorrectCount: attempt.answers.filter(a => !a.isCorrect && a.selectedOption !== -1).length,
@@ -249,3 +261,67 @@ export const getAttemptDetails = async (req, res) => {
         res.status(500).json({ success: false, message: 'Server Error' });
     }
 };
+
+// @desc    Log tab switch during exam (test integrity)
+// @route   POST /api/student/exams/:id/tab-switch
+export const logTabSwitch = async (req, res) => {
+    try {
+        const { id } = req.params; // attempt ID
+        const attempt = await ExamAttempt.findById(id);
+
+        if (!attempt) {
+            return res.status(404).json({ success: false, message: 'Attempt not found' });
+        }
+
+        if (attempt.studentId.toString() !== req.user.id) {
+            return res.status(403).json({ success: false, message: 'Unauthorized' });
+        }
+
+        // Log the tab switch
+        attempt.tabSwitchLog.push({ switchedAt: new Date() });
+        attempt.tabSwitchCount = (attempt.tabSwitchCount || 0) + 1;
+        await attempt.save();
+
+        res.status(200).json({
+            success: true,
+            tabSwitchCount: attempt.tabSwitchCount,
+            message: `Warning: Tab switch ${attempt.tabSwitchCount} recorded`,
+        });
+    } catch (error) {
+        console.error('Log tab switch error:', error);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
+
+// @desc    Check if student can attempt exam (duplicate prevention)
+// @route   GET /api/student/exams/:id/can-attempt
+export const checkCanAttempt = async (req, res) => {
+    try {
+        const { id } = req.params; // exam ID
+        const exam = await Exam.findById(id);
+
+        if (!exam) {
+            return res.status(404).json({ success: false, message: 'Exam not found' });
+        }
+
+        const existingAttempts = await ExamAttempt.countDocuments({
+            examId: id,
+            studentId: req.user.id,
+        });
+
+        const maxAttempts = exam.maxAttempts || 1;
+        const canAttempt = exam.allowRetake ? existingAttempts < maxAttempts : existingAttempts === 0;
+
+        res.status(200).json({
+            success: true,
+            canAttempt,
+            existingAttempts,
+            maxAttempts,
+            message: canAttempt ? 'You can take this exam' : 'Maximum attempts reached for this exam',
+        });
+    } catch (error) {
+        console.error('Check can attempt error:', error);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
+

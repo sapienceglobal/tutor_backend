@@ -1,0 +1,11 @@
+
+> tutor-backend@1.0.0 start
+> node server.js
+
+[dotenv@17.2.3] injecting env (19) from .env -- tip: 👥 sync secrets across teammates & machines: https://dotenvx.com/ops
+ENV Loaded from config file
+[dotenv@17.2.3] injecting env (0) from .env -- tip: 🔐 prevent committing .env to code: https://dotenvx.com/precommit
+🚀 Server running on port 4000
+📡 API: http://localhost:4000/api
+✅ MongoDB Connected Successfully
+Terminate batch job (Y/N)? Terminate batch job (Y/N)? 

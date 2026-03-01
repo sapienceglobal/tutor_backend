@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 
 const moduleSchema = new mongoose.Schema({
-   _id: { type: mongoose.Schema.Types.ObjectId, auto: true },
+  _id: { type: mongoose.Schema.Types.ObjectId, auto: true },
   title: {
     type: String,
     required: true,
@@ -37,6 +37,11 @@ const courseSchema = new mongoose.Schema({
     ref: 'Tutor',
     required: true,
   },
+  instituteId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Institute',
+    default: null,
+  },
   price: {
     type: Number,
     default: 0,
@@ -44,7 +49,7 @@ const courseSchema = new mongoose.Schema({
   },
   isFree: {
     type: Boolean,
-    default: function() {
+    default: function () {
       return this.price === 0;
     },
   },

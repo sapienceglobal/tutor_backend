@@ -249,7 +249,7 @@ export const createUser = async (req, res) => {
 
         if (role === 'tutor') {
             const settings = (await Settings.findOne()) || {};
-            await Tutor.create({ 
+            await Tutor.create({
                 userId: user._id,
                 isVerified: settings.autoApproveTutors || false
             });
@@ -340,9 +340,9 @@ export const updateCourseStatus = async (req, res) => {
         course.status = status;
         await course.save();
 
-        res.status(200).json({ 
-            success: true, 
-            message: `Course status updated to ${status} successfully` 
+        res.status(200).json({
+            success: true,
+            message: `Course status updated to ${status} successfully`
         });
     } catch (error) {
         console.error('Update course status error:', error);
@@ -701,7 +701,7 @@ export const getAdminCourseDetails = async (req, res) => {
 export const getSettings = async (req, res) => {
     try {
         let settings = await Settings.findOne();
-        
+
         // Ensure default settings exist if first time
         if (!settings) {
             settings = await Settings.create({});
@@ -722,38 +722,27 @@ export const getSettings = async (req, res) => {
 // @access  Private (Admin)
 export const updateSettings = async (req, res) => {
     try {
-        const { 
-            siteName, 
-            supportEmail, 
-            defaultLanguage, 
-            maintenanceMode, 
-            allowRegistration,
-            autoApproveCourses,
-            allowGuestBrowsing,
-            platformCommission,
-            supportPhone,
-            facebookLink,
-            twitterLink
-        } = req.body;
-        
         let settings = await Settings.findOne();
         if (!settings) {
             settings = new Settings();
         }
 
-        if (siteName !== undefined) settings.siteName = siteName;
-        if (supportEmail !== undefined) settings.supportEmail = supportEmail;
-        if (defaultLanguage !== undefined) settings.defaultLanguage = defaultLanguage;
-        if (maintenanceMode !== undefined) settings.maintenanceMode = maintenanceMode;
-        if (allowRegistration !== undefined) settings.allowRegistration = allowRegistration;
-        
-        if (autoApproveCourses !== undefined) settings.autoApproveCourses = autoApproveCourses;
-        if (allowGuestBrowsing !== undefined) settings.allowGuestBrowsing = allowGuestBrowsing;
-        if (platformCommission !== undefined) settings.platformCommission = platformCommission;
-        if (supportPhone !== undefined) settings.supportPhone = supportPhone;
-        if (facebookLink !== undefined) settings.facebookLink = facebookLink;
-        if (twitterLink !== undefined) settings.twitterLink = twitterLink;
-        
+        // All updatable fields from Settings model
+        const updatableFields = [
+            'siteName', 'supportEmail', 'defaultLanguage', 'maintenanceMode',
+            'allowRegistration', 'autoApproveCourses', 'autoApproveTutors',
+            'allowGuestBrowsing', 'platformCommission', 'supportPhone',
+            'facebookLink', 'twitterLink', 'primaryColor', 'footerText',
+            'contactEmail', 'contactAddress', 'favicon', 'googleAnalyticsId',
+            'metaPixelId', 'instagramLink', 'linkedinLink', 'youtubeLink'
+        ];
+
+        updatableFields.forEach(field => {
+            if (req.body[field] !== undefined) {
+                settings[field] = req.body[field];
+            }
+        });
+
         settings.updatedAt = Date.now();
         await settings.save();
 

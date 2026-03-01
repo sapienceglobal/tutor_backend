@@ -34,6 +34,21 @@ import liveClassRoutes from './src/routes/liveClasses.js';
 import wishlistRoutes from './src/routes/wishlist.js';
 import reportRoutes from './src/routes/reports.js';
 
+// --- Phase 2-5 Routes (previously missing) ---
+import batchRoutes from './src/routes/batches.js';
+import leaveRoutes from './src/routes/leave.js';
+import calendarRoutes from './src/routes/calendar.js';
+import certificateRoutes from './src/routes/certificateRoutes.js';
+import cmsRoutes from './src/routes/cmsRoutes.js';
+import crmRoutes from './src/routes/crmRoutes.js';
+import facilityRoutes from './src/routes/facilityRoutes.js';
+import paymentRoutes from './src/routes/paymentRoutes.js';
+import superadminRoutes from './src/routes/superadmin.js';
+import zoomConfigRoutes from './src/routes/zoomConfigRoutes.js';
+import attendanceRoutes from './src/routes/attendance.js';
+import assignmentRoutes from './src/routes/assignments.js';
+import instituteRoutes from './src/routes/institute.js';
+
 import { verifyApiKey } from './src/middleware/apiKey.js';
 
 // Initialize express app
@@ -43,17 +58,29 @@ const app = express();
 connectDB();
 
 // Middleware
-app.use(helmet()); // Set security HTTP headers
+app.use(helmet({
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+            styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+            imgSrc: ["'self'", "data:", "blob:", "https:", "http:"],
+            fontSrc: ["'self'", "https://fonts.gstatic.com"],
+            connectSrc: ["'self'", "http://localhost:*", "https:"],
+            frameSrc: ["'self'", "https://zoom.us"],
+        },
+    },
+    crossOriginEmbedderPolicy: false,
+    hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+}));
 
-const allowedOrigins = ['http://localhost:3000', 'http://195.35.20.207:5000'];
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://195.35.20.207:5000').split(',');
 
 app.use(cors({
     origin: function (origin, callback) {
-        // allow requests with no origin (like mobile apps or curl requests)
         if (!origin) return callback(null, true);
         if (allowedOrigins.indexOf(origin) === -1) {
-            var msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-            return callback(new Error(msg), false);
+            return callback(new Error('CORS policy does not allow this origin.'), false);
         }
         return callback(null, true);
     },
@@ -62,19 +89,31 @@ app.use(cors({
     allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key']
 }));
 
-app.use(express.json({ limit: '10mb' })); // Prevent large payloads
+app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Global Rate Limiting
-const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 500, // Limit each IP to 500 requests per `window` (here, per 15 minutes)
-    message: 'Too many requests from this IP, please try again after 15 minutes',
-    standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-    legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+// Global Rate Limiting — 500 req/15min per IP
+const globalLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 500,
+    message: { success: false, message: 'Too many requests, please try again later.' },
+    standardHeaders: true,
+    legacyHeaders: false,
 });
 
-app.use('/api', limiter);
+// Strict Auth Rate Limiting — 10 req/15min per IP (brute force protection)
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    message: { success: false, message: 'Too many login attempts. Please try again after 15 minutes.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
+app.use('/api', globalLimiter);
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/register', authLimiter);
+app.use('/api/auth/forgot-password', authLimiter);
 
 // Public health routes (no API key required)
 app.get('/api/health', (req, res) => {
@@ -125,6 +164,21 @@ app.use('/api/live-classes', liveClassRoutes);
 app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/comments', lessonCommentRoutes);
+
+// --- Phase 2-5 Routes ---
+app.use('/api/batches', batchRoutes);
+app.use('/api/leaves', leaveRoutes);
+app.use('/api/calendar', calendarRoutes);
+app.use('/api/certificates', certificateRoutes);
+app.use('/api/cms', cmsRoutes);
+app.use('/api/crm', crmRoutes);
+app.use('/api/facilities', facilityRoutes);
+app.use('/api/payments', paymentRoutes);
+app.use('/api/superadmin', superadminRoutes);
+app.use('/api/zoom-config', zoomConfigRoutes);
+app.use('/api/attendance', attendanceRoutes);
+app.use('/api/assignments', assignmentRoutes);
+app.use('/api/institutes', instituteRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

@@ -74,6 +74,7 @@ export const createLiveClass = async (req, res) => {
             title,
             description,
             courseId,
+            instituteId: req.tenant?._id || null,
             dateTime,
             duration,
             meetingLink: meetingLink || 'pending', // Fallback if creation failed but we continued (though we return above)
@@ -132,6 +133,8 @@ export const getLiveClasses = async (req, res) => {
         if (req.query.courseId) {
             query.courseId = req.query.courseId;
         }
+
+        if (req.tenant) query.instituteId = req.tenant._id;
 
         // Sort by dateTime ascending (nearest first)
         const classes = await LiveClass.find(query)

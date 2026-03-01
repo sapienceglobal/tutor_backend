@@ -208,6 +208,9 @@ export const getTutorStudents = async (req, res) => {
 
       if (!studentIds.has(e.studentId._id.toString())) {
         studentIds.add(e.studentId._id.toString());
+        const isBlockedByTutor = tutor.blockedStudents?.some(
+          bId => bId.toString() === e.studentId._id.toString()
+        ) || false;
         uniqueStudents.push({
           _id: e.studentId._id,
           studentId: e.studentId._id,
@@ -215,8 +218,9 @@ export const getTutorStudents = async (req, res) => {
           email: e.studentId.email,
           phone: e.studentId.phone,
           profileImage: e.studentId.profileImage,
-          joinedAt: e.studentId.createdAt, // Added joinedAt finding it useful for frontend "Joined" column
-          enrolledCourses: enrollments.filter( // Renamed to enrolledCourses to match frontend
+          isBlockedByTutor,
+          joinedAt: e.studentId.createdAt,
+          enrolledCourses: enrollments.filter(
             en => en.studentId && en.studentId._id.toString() === e.studentId._id.toString()
           ).map(en => ({
             courseId: en.courseId._id,
@@ -471,5 +475,55 @@ export const getStudentPerformance = async (req, res) => {
       success: false,
       message: 'Internal server error'
     });
+  }
+};
+
+// @desc    Block a student (tutor-level)
+// @route   POST /api/tutor/dashboard/students/:studentId/block
+export const blockStudent = async (req, res) => {
+  try {
+    const tutor = await Tutor.findOne({ userId: req.user.id });
+    if (!tutor) {
+      return res.status(403).json({ success: false, message: 'Only tutors can access this endpoint' });
+    }
+
+    const { studentId } = req.params;
+
+    // Check if already blocked
+    if (tutor.blockedStudents?.includes(studentId)) {
+      return res.status(400).json({ success: false, message: 'Student is already blocked' });
+    }
+
+    tutor.blockedStudents = tutor.blockedStudents || [];
+    tutor.blockedStudents.push(studentId);
+    await tutor.save();
+
+    res.status(200).json({ success: true, message: 'Student blocked successfully' });
+  } catch (error) {
+    console.error('Block student error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+// @desc    Unblock a student (tutor-level)
+// @route   POST /api/tutor/dashboard/students/:studentId/unblock
+export const unblockStudent = async (req, res) => {
+  try {
+    const tutor = await Tutor.findOne({ userId: req.user.id });
+    if (!tutor) {
+      return res.status(403).json({ success: false, message: 'Only tutors can access this endpoint' });
+    }
+
+    const { studentId } = req.params;
+
+    tutor.blockedStudents = (tutor.blockedStudents || []).filter(
+      id => id.toString() !== studentId
+    );
+    await tutor.save();
+
+    res.status(200).json({ success: true, message: 'Student unblocked successfully' });
+  } catch (error) {
+    console.error('Unblock student error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };

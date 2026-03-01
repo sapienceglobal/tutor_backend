@@ -1,0 +1,8 @@
+file:///C:/Users/adars/OneDrive/Desktop/TutorApp/tutor-backend/src/routes/cmsRoutes.js:15
+import { getInstituteSettings } from '../middleware/tenant.js';
+         ^^^^^^^^^^^^^^^^^^^^
+SyntaxError: The requested module '../middleware/tenant.js' does not provide an export named 'getInstituteSettings'
+    at ModuleJob._instantiate (node:internal/modules/esm/module_job:180:21)
+    at async ModuleJob.run (node:internal/modules/esm/module_job:263:5)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:547:26)
+    at async importModuleDynamicallyWrapper (node:internal/vm/module:436:15)

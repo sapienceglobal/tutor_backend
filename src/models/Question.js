@@ -8,7 +8,7 @@ const questionSchema = new mongoose.Schema({
     },
     type: {
         type: String,
-        enum: ['mcq', 'true_false', 'fill_blank'], // Extensible
+        enum: ['mcq', 'true_false', 'fill_blank', 'subjective'], // Added subjective
         default: 'mcq'
     },
     question: {
@@ -16,9 +16,12 @@ const questionSchema = new mongoose.Schema({
         required: true
     },
     options: [{
-        text: { type: String, required: true },
+        text: { type: String, required: function () { return this.type === 'mcq' || this.type === 'true_false'; } },
         isCorrect: { type: Boolean, default: false }
     }],
+    idealAnswer: {
+        type: String, // Expected answer or rubric for subjective questions
+    },
     explanation: String,
     points: { type: Number, default: 1 },
     difficulty: {

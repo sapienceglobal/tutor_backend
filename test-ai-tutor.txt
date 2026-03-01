@@ -1,0 +1,42 @@
+[dotenv@17.2.3] injecting env (19) from .env -- tip: 🔄 add secrets lifecycle management: https://dotenvx.com/ops
+Connecting to database...
+Connected.
+Testing with student: Adarsh Sharma
+
+--- Testing AI Analytics ---
+Calling Groq LLM (this usually takes 5-10 seconds)...
+
+Analytics Result:
+{
+  "success": true,
+  "analytics": {
+    "weakTopics": [
+      "Algebra",
+      "Geometry",
+      "Trigonometry"
+    ],
+    "strongTopics": [
+      "Arithmetic Progressions",
+      "Quadratic Equations",
+      "Statistics"
+    ],
+    "successProbability": 85,
+    "dropoutRisk": "Low",
+    "studyPlan": [
+      {
+        "step": "Review Fundamentals",
+        "description": "Focus on revising algebraic expressions, geometric formulas, and trigonometric identities to strengthen weak areas"
+      },
+      {
+        "step": "Practice Mixed Questions",
+        "description": "Solve a mix of questions from different topics to improve overall problem-solving skills and build confidence"
+      },
+      {
+        "step": "Take Mock Tests",
+        "description": "Regularly take mock tests to assess knowledge, identify areas of improvement, and develop time management skills"
+      }
+    ]
+  }
+}
+
+✅ AI Analytics Test Passed!

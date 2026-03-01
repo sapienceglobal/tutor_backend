@@ -19,10 +19,10 @@ export const enrollInCourse = async (req, res) => {
 
     // Check if course exists and its availability
     const course = await Course.findById(courseId).populate({
-        path: 'tutorId',
-        populate: { path: 'userId' },
+      path: 'tutorId',
+      populate: { path: 'userId' },
     });
-    
+
     if (!course) {
       return res.status(404).json({
         success: false,
@@ -54,10 +54,27 @@ export const enrollInCourse = async (req, res) => {
       });
     }
 
-    // For paid courses, check payment (implement payment logic here)
+    // For paid courses, check payment
     if (!course.isFree) {
-      // TODO: Implement payment verification
-      // For now, we'll allow enrollment
+      const { paymentId } = req.body;
+      if (!paymentId) {
+        return res.status(402).json({
+          success: false,
+          message: 'Payment required for this course',
+          requiresPayment: true,
+          price: course.price,
+        });
+      }
+      // Payment verification happens in paymentController.verifyPayment
+      // which auto-enrolls. If we reach here directly, verify the payment exists.
+      const Payment = (await import('../models/Payment.js')).default;
+      const payment = await Payment.findById(paymentId);
+      if (!payment || payment.status !== 'paid' || payment.courseId.toString() !== courseId) {
+        return res.status(402).json({
+          success: false,
+          message: 'Valid payment required for this course',
+        });
+      }
     }
 
     // Create enrollment
@@ -338,27 +355,27 @@ export const removeStudentFromCourse = async (req, res) => {
 
     // Verify Tutor Ownership
     // enrollment.courseId is the populated Course object.
-    
+
     const course = await Course.findById(enrollment.courseId._id).populate({
-        path: 'tutorId',
-        select: 'userId'
+      path: 'tutorId',
+      select: 'userId'
     });
 
     if (!course) {
-        return res.status(404).json({ success: false, message: 'Course not found' });
+      return res.status(404).json({ success: false, message: 'Course not found' });
     }
 
     // Check ownership
     // tutorId is populated, so we check tutorId.userId._id (or string) vs req.user.id
     // But wait, the population above selects userId from Tutor.
     // So course.tutorId is the Tutor document. course.tutorId.userId is the User ID (or object).
-    
+
     // Let's rely on string comparison
     if (course.tutorId?.userId?.toString() !== req.user.id) {
-        return res.status(403).json({
-            success: false,
-            message: 'Not authorized to remove student from this course'
-        });
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to remove student from this course'
+      });
     }
 
     // Update course count

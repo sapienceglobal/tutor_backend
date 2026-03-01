@@ -50,6 +50,51 @@ const settingsSchema = new mongoose.Schema({
     type: String,
     default: '',
   },
+  primaryColor: {
+    type: String,
+    default: '#4f46e5', // indigo-600
+  },
+  footerText: {
+    type: String,
+    default: '© 2024 Sapience LMS. All rights reserved.',
+  },
+  contactEmail: {
+    type: String,
+    default: 'hello@sapience.com',
+  },
+  contactAddress: {
+    type: String,
+    default: '',
+  },
+
+  // --- Tracking & SEO ---
+  favicon: {
+    type: String,
+    default: '',
+  },
+  googleAnalyticsId: {
+    type: String,
+    default: '',
+  },
+  metaPixelId: {
+    type: String,
+    default: '',
+  },
+
+  // --- Extended Social Links ---
+  instagramLink: {
+    type: String,
+    default: '',
+  },
+  linkedinLink: {
+    type: String,
+    default: '',
+  },
+  youtubeLink: {
+    type: String,
+    default: '',
+  },
+
   updatedAt: {
     type: Date,
     default: Date.now,

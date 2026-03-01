@@ -23,6 +23,11 @@ export const getAllTutors = async (req, res) => {
       filter.hourlyRate = { $lte: parseFloat(maxRate) };
     }
 
+    // If an authenticated student is making this request, exclude tutors who blocked them
+    if (req.user && req.user.role === 'student') {
+      filter.blockedStudents = { $ne: req.user._id };
+    }
+
     const tutors = await Tutor.find(filter)
       .populate('userId', 'name email phone profileImage')
       .populate('categoryId', 'name icon')
@@ -65,6 +70,19 @@ export const getTutorById = async (req, res) => {
         success: false,
         message: 'Tutor not found'
       });
+    }
+
+    // DB-level check: If authenticated student is blocked by this tutor, deny access
+    if (req.user && req.user.role === 'student') {
+      const isBlocked = tutor.blockedStudents?.some(
+        bId => bId.toString() === req.user._id.toString()
+      );
+      if (isBlocked) {
+        return res.status(403).json({
+          success: false,
+          message: 'You do not have access to view this tutor'
+        });
+      }
     }
 
     res.status(200).json({

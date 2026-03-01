@@ -3,6 +3,8 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
 import crypto from 'crypto';
+import speakeasy from 'speakeasy';
+import QRCode from 'qrcode';
 import Tutor from '../models/Tutor.js';
 import Settings from '../models/Settings.js';
 
@@ -11,6 +13,13 @@ import Settings from '../models/Settings.js';
 // Generate JWT Token
 const generateToken = (id, role) => {
   return jwt.sign({ id, role }, process.env.JWT_SECRET, {
+    expiresIn: '30d'
+  });
+};
+
+// Generate refresh token (long-lived)
+const generateRefreshToken = (id) => {
+  return jwt.sign({ id, type: 'refresh' }, process.env.JWT_SECRET, {
     expiresIn: '30d'
   });
 };
@@ -96,7 +105,7 @@ export const registerUser = async (req, res) => {
     // Auto-create Tutor profile if role is 'tutor'
     if (assignedRole === 'tutor') {
       const settings = (await Settings.findOne()) || {};
-      await Tutor.create({ 
+      await Tutor.create({
         userId: user._id,
         isVerified: settings.autoApproveTutors || false
       });
@@ -241,6 +250,8 @@ export const getMe = async (req, res) => {
 
     res.status(200).json({
       success: true,
+      instituteSuspended: req.instituteSuspended || false,
+      userBlocked: req.userBlocked || false,
       user: {
         _id: user._id,
         name: user.name,
@@ -973,5 +984,300 @@ export const setRole = async (req, res) => {
       success: false,
       message: 'Internal server error'
     });
+  }
+};
+
+// ==========================================
+// 2FA & SESSION MANAGEMENT
+// ==========================================
+
+// @desc    Enable 2FA - generate secret and QR code
+// @route   POST /api/auth/enable-2fa
+// @access  Private
+export const enable2FA = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('+twoFactorSecret');
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    if (user.twoFactorEnabled) {
+      return res.status(400).json({ success: false, message: '2FA is already enabled' });
+    }
+
+    const secret = speakeasy.generateSecret({
+      name: `Sapience (${user.email})`,
+      issuer: 'Sapience LMS',
+    });
+
+    user.twoFactorSecret = secret.base32;
+    await user.save();
+
+    const qrCodeUrl = await QRCode.toDataURL(secret.otpauth_url);
+
+    res.status(200).json({
+      success: true,
+      secret: secret.base32,
+      qrCode: qrCodeUrl,
+      message: 'Scan the QR code with your authenticator app, then verify with a code.',
+    });
+  } catch (error) {
+    console.error('Enable 2FA error:', error);
+    res.status(500).json({ success: false, message: 'Failed to enable 2FA' });
+  }
+};
+
+// @desc    Verify 2FA setup
+// @route   POST /api/auth/verify-2fa
+// @access  Private
+export const verify2FA = async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ success: false, message: 'Verification code is required' });
+
+    const user = await User.findById(req.user.id).select('+twoFactorSecret');
+    if (!user || !user.twoFactorSecret) {
+      return res.status(400).json({ success: false, message: 'Please initiate 2FA setup first' });
+    }
+
+    const verified = speakeasy.totp.verify({
+      secret: user.twoFactorSecret,
+      encoding: 'base32',
+      token,
+      window: 2,
+    });
+
+    if (!verified) {
+      return res.status(400).json({ success: false, message: 'Invalid verification code' });
+    }
+
+    user.twoFactorEnabled = true;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: '2FA has been enabled successfully!',
+    });
+  } catch (error) {
+    console.error('Verify 2FA error:', error);
+    res.status(500).json({ success: false, message: 'Failed to verify 2FA' });
+  }
+};
+
+// @desc    Disable 2FA
+// @route   POST /api/auth/disable-2fa
+// @access  Private
+export const disable2FA = async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ success: false, message: 'Verification code is required' });
+
+    const user = await User.findById(req.user.id).select('+twoFactorSecret');
+    if (!user || !user.twoFactorEnabled) {
+      return res.status(400).json({ success: false, message: '2FA is not enabled' });
+    }
+
+    const verified = speakeasy.totp.verify({
+      secret: user.twoFactorSecret,
+      encoding: 'base32',
+      token,
+      window: 2,
+    });
+
+    if (!verified) {
+      return res.status(400).json({ success: false, message: 'Invalid verification code' });
+    }
+
+    user.twoFactorEnabled = false;
+    user.twoFactorSecret = null;
+    await user.save();
+
+    res.status(200).json({ success: true, message: '2FA has been disabled' });
+  } catch (error) {
+    console.error('Disable 2FA error:', error);
+    res.status(500).json({ success: false, message: 'Failed to disable 2FA' });
+  }
+};
+
+// @desc    Verify 2FA code during login
+// @route   POST /api/auth/verify-2fa-login
+// @access  Public (requires tempToken)
+export const verify2FALogin = async (req, res) => {
+  try {
+    const { tempToken, token: totpCode } = req.body;
+
+    if (!tempToken || !totpCode) {
+      return res.status(400).json({ success: false, message: 'Temporary token and 2FA code are required' });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(tempToken, process.env.JWT_SECRET);
+    } catch (e) {
+      return res.status(401).json({ success: false, message: '2FA session expired. Please login again.' });
+    }
+
+    if (!decoded.pending2FA) {
+      return res.status(400).json({ success: false, message: 'Invalid token' });
+    }
+
+    const user = await User.findById(decoded.id).select('+twoFactorSecret');
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    const verified = speakeasy.totp.verify({
+      secret: user.twoFactorSecret,
+      encoding: 'base32',
+      token: totpCode,
+      window: 2,
+    });
+
+    if (!verified) {
+      return res.status(401).json({ success: false, message: 'Invalid 2FA code' });
+    }
+
+    const authToken = generateToken(user._id, user.role);
+
+    const device = req.headers['user-agent'] || 'Unknown';
+    const ip = req.ip || req.headers['x-forwarded-for'] || '';
+    const browserMatch = device.match(/(Chrome|Firefox|Safari|Edge|Opera)/i);
+    const browser = browserMatch ? browserMatch[1] : 'Unknown';
+
+    if (user.activeSessions && user.activeSessions.length >= 3) {
+      user.activeSessions.sort((a, b) => new Date(a.lastActive) - new Date(b.lastActive));
+      user.activeSessions.shift();
+    }
+    if (!user.activeSessions) user.activeSessions = [];
+    user.activeSessions.push({ token: authToken, device: device.substring(0, 200), ip, browser });
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Login successful',
+      token: authToken,
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        profileImage: user.profileImage,
+        language: user.language,
+        notificationSettings: user.notificationSettings,
+        bio: user.bio,
+        address: user.address,
+        authProvider: user.authProvider,
+        hasPassword: true,
+      },
+    });
+  } catch (error) {
+    console.error('Verify 2FA login error:', error);
+    res.status(500).json({ success: false, message: 'Failed to verify 2FA' });
+  }
+};
+
+// @desc    Get active sessions
+// @route   GET /api/auth/sessions
+// @access  Private
+export const getActiveSessions = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    const currentToken = req.headers.authorization?.split(' ')[1];
+
+    const sessions = (user.activeSessions || []).map(session => ({
+      _id: session._id,
+      device: session.device?.substring(0, 100),
+      browser: session.browser,
+      ip: session.ip,
+      lastActive: session.lastActive,
+      createdAt: session.createdAt,
+      isCurrent: session.token === currentToken,
+    }));
+
+    res.status(200).json({
+      success: true,
+      sessions,
+      maxSessions: 3,
+    });
+  } catch (error) {
+    console.error('Get sessions error:', error);
+    res.status(500).json({ success: false, message: 'Failed to get sessions' });
+  }
+};
+
+// @desc    Revoke a session
+// @route   DELETE /api/auth/sessions/:sessionId
+// @access  Private
+export const revokeSession = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    const sessionIndex = user.activeSessions.findIndex(s => s._id.toString() === sessionId);
+    if (sessionIndex === -1) {
+      return res.status(404).json({ success: false, message: 'Session not found' });
+    }
+
+    user.activeSessions.splice(sessionIndex, 1);
+    await user.save();
+
+    res.status(200).json({ success: true, message: 'Session revoked' });
+  } catch (error) {
+    console.error('Revoke session error:', error);
+    res.status(500).json({ success: false, message: 'Failed to revoke session' });
+  }
+};
+
+// @desc    Refresh access token using refresh token
+// @route   POST /api/auth/refresh-token
+// @access  Public
+export const refreshAccessToken = async (req, res) => {
+  try {
+    const { refreshToken: incomingRefreshToken } = req.body;
+
+    if (!incomingRefreshToken) {
+      return res.status(400).json({ success: false, message: 'Refresh token is required' });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(incomingRefreshToken, process.env.JWT_SECRET);
+    } catch (err) {
+      return res.status(401).json({ success: false, message: 'Invalid or expired refresh token. Please login again.' });
+    }
+
+    if (decoded.type !== 'refresh') {
+      return res.status(401).json({ success: false, message: 'Invalid token type' });
+    }
+
+    const user = await User.findById(decoded.id).select('+refreshToken');
+    if (!user) {
+      return res.status(401).json({ success: false, message: 'User not found' });
+    }
+
+    if (user.refreshToken !== incomingRefreshToken) {
+      user.refreshToken = null;
+      user.activeSessions = [];
+      await user.save();
+      return res.status(401).json({
+        success: false,
+        message: 'Refresh token reuse detected. All sessions revoked. Please login again.',
+      });
+    }
+
+    const newAccessToken = generateToken(user._id, user.role);
+    const newRefreshToken = generateRefreshToken(user._id);
+
+    user.refreshToken = newRefreshToken;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      token: newAccessToken,
+      refreshToken: newRefreshToken,
+    });
+  } catch (error) {
+    console.error('Refresh token error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
