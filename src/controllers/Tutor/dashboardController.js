@@ -4,6 +4,8 @@ import Appointment from '../../models/Appointment.js';
 import Enrollment from '../../models/Enrollment.js';
 import { Exam } from '../../models/Exam.js';
 import { QuestionSet } from '../../models/QuestionSet.js';
+import LearningEvent from '../../models/LearningEvent.js';
+import LearningEventDailyAggregate from '../../models/LearningEventDailyAggregate.js';
 
 // @desc    Get tutor dashboard statistics
 // @route   GET /api/dashboard/stats
@@ -403,64 +405,135 @@ export const getStudentPerformance = async (req, res) => {
       });
     }
 
-    // Performance Data for the last 7 days (or any range)
-    // We want to show "Student Engagement" -> Daily Active Students, or Quiz Submissions per day
-
-    const today = new Date();
-    const last7Days = [];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date(today);
-      d.setDate(today.getDate() - i);
-      last7Days.push({
-        date: d,
-        label: d.toLocaleString('default', { weekday: 'short' }) // Mon, Tue...
+    const courses = await Course.find({ tutorId: tutor._id }).select('_id').lean();
+    const courseIds = courses.map((course) => course._id);
+    if (courseIds.length === 0) {
+      return res.status(200).json({
+        success: true,
+        performance: [],
       });
     }
 
-    // We can use Enrollment "lastAccessed" if it exists, or Quiz "submittedAt"
-    // Since we don't track daily logins explicitly in this schema, let's use Quiz Submissions + New Enrollments as a proxy for engagement.
+    const trackedEventTypes = ['exam_submitted', 'assignment_submitted', 'live_class_joined', 'attendance_marked'];
 
-    // 1. Get courses
-    const courses = await Course.find({ tutorId: tutor._id });
-    const courseIds = courses.map(c => c._id);
+    const now = new Date();
+    now.setHours(23, 59, 59, 999);
+    const startDate = new Date(now);
+    startDate.setDate(now.getDate() - 6);
+    startDate.setHours(0, 0, 0, 0);
 
-    // 2. Aggregate Enrollments per day
-    const enrollmentStats = await Enrollment.aggregate([
+    const todayUtcKey = now.toISOString().split('T')[0];
+    const todayUtcStart = new Date(`${todayUtcKey}T00:00:00.000Z`);
+
+    const historicalDailyRows = await LearningEventDailyAggregate.find({
+      courseId: { $in: courseIds },
+      eventType: { $in: trackedEventTypes },
+      date: {
+        $gte: new Date(startDate.toISOString().split('T')[0] + 'T00:00:00.000Z'),
+        $lt: todayUtcStart,
+      },
+    }).select('date eventType count').lean();
+
+    const todayRows = await LearningEvent.aggregate([
       {
         $match: {
           courseId: { $in: courseIds },
-          enrolledAt: { $gte: last7Days[0].date } // From 7 days ago
-        }
+          createdAt: { $gte: todayUtcStart, $lte: now },
+          eventType: { $in: trackedEventTypes },
+        },
       },
       {
         $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$enrolledAt" } },
-          count: { $sum: 1 }
-        }
-      }
+          _id: {
+            day: {
+              $dateToString: {
+                format: '%Y-%m-%d',
+                date: '$createdAt',
+                timezone: 'UTC',
+              },
+            },
+            eventType: '$eventType',
+          },
+          count: { $sum: 1 },
+        },
+      },
     ]);
 
-    // 3. Aggregate Quiz Submissions (if we had a submissions model easily accessible linked to tutor)
-    // Assuming we can find exams by tutor, then find submissions for those exams.
-    // For now, let's just use Enrollments + a random multiplier or placeholder logic if real submission data is hard to reach without deep aggregation
-    // BETTER: Let's assume we have `Attempt` or similar. If not imported, we'll stick to Enrollments or mock random "Activity" to show the graph works until detailed analytics are built.
+    const uniqueStudentRows = await LearningEvent.aggregate([
+      {
+        $match: {
+          courseId: { $in: courseIds },
+          createdAt: { $gte: startDate, $lte: now },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            day: {
+              $dateToString: {
+                format: '%Y-%m-%d',
+                date: '$createdAt',
+                timezone: 'UTC',
+              },
+            },
+          },
+          uniqueStudents: { $addToSet: '$userId' },
+        },
+      },
+    ]);
 
-    // MOCKING "Activity" based on real enrollments to ensure graph isn't empty for demo:
-    // In a real app, you'd aggregate `Submission` model.
+    const dayMap = new Map();
+    for (let i = 6; i >= 0; i -= 1) {
+      const d = new Date(now);
+      d.setDate(now.getDate() - i);
+      const dayKey = d.toISOString().split('T')[0];
+      dayMap.set(dayKey, {
+        name: d.toLocaleString('default', { weekday: 'short' }),
+        students: 0,
+        quizzes: 0,
+        assignments: 0,
+        liveClasses: 0,
+        attendance: 0,
+      });
+    }
 
-    const performanceData = last7Days.map(day => {
-      const dateStr = day.date.toISOString().split('T')[0];
-      const enrollCount = enrollmentStats.find(s => s._id === dateStr)?.count || 0;
+    historicalDailyRows.forEach((row) => {
+      const dayKey = new Date(row.date).toISOString().split('T')[0];
+      const dayEntry = dayMap.get(dayKey);
+      if (!dayEntry) return;
 
-      // Simulating "Active Students" based on enrollments (e.g., more enrollments = more activity)
-      // plus a base line of activity from existing students.
-      // This is a heuristic for the chart.
-      const activeStudents = Math.floor(Math.random() * 5) + enrollCount * 2 + 5;
+      if (row.eventType === 'exam_submitted') dayEntry.quizzes += row.count;
+      if (row.eventType === 'assignment_submitted') dayEntry.assignments += row.count;
+      if (row.eventType === 'live_class_joined') dayEntry.liveClasses += row.count;
+      if (row.eventType === 'attendance_marked') dayEntry.attendance += row.count;
+    });
 
+    todayRows.forEach((row) => {
+      const dayKey = row._id.day;
+      const dayEntry = dayMap.get(dayKey);
+      if (!dayEntry) return;
+
+      if (row._id.eventType === 'exam_submitted') dayEntry.quizzes += row.count;
+      if (row._id.eventType === 'assignment_submitted') dayEntry.assignments += row.count;
+      if (row._id.eventType === 'live_class_joined') dayEntry.liveClasses += row.count;
+      if (row._id.eventType === 'attendance_marked') dayEntry.attendance += row.count;
+    });
+
+    const uniqueByDay = new Map();
+    uniqueStudentRows.forEach((row) => {
+      const daySet = new Set(
+        (row.uniqueStudents || [])
+          .filter(Boolean)
+          .map((studentId) => studentId.toString())
+      );
+      uniqueByDay.set(row._id.day, daySet);
+    });
+
+    const performanceData = Array.from(dayMap.entries()).map(([dayKey, data]) => {
+      const uniqueStudents = uniqueByDay.get(dayKey);
       return {
-        name: day.label,
-        students: activeStudents, // The metric we show on the chart
-        quizzes: Math.floor(activeStudents / 2)
+        ...data,
+        students: uniqueStudents ? uniqueStudents.size : 0,
       };
     });
 

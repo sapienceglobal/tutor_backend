@@ -6,7 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import upload from '../utils/cloudinary.js';
 import { protect, authorize } from '../middleware/auth.js';
 import { processVideoForHLS } from '../services/hlsService.js';
-import { secureFeatureCheck } from '../middleware/subscriptionSecurity.js';
+import { secureFeatureCheck, secureSubscriptionCheck } from '../middleware/subscriptionSecurity.js';
 
 const router = express.Router();
 
@@ -27,7 +27,17 @@ const localVideoStorage = multer.diskStorage({
     cb(null, `${uniqueId}${path.extname(file.originalname)}`);
   }
 });
-const localVideoUpload = multer({ storage: localVideoStorage });
+const MAX_VIDEO_UPLOAD_MB = Number(process.env.MAX_VIDEO_UPLOAD_MB || 500);
+const localVideoUpload = multer({
+  storage: localVideoStorage,
+  limits: { fileSize: MAX_VIDEO_UPLOAD_MB * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!file?.mimetype?.startsWith('video/')) {
+      return cb(new Error('Only video files are allowed'));
+    }
+    return cb(null, true);
+  },
+});
 
 // @route   POST /api/upload/image
 // @desc    Upload an image
@@ -70,6 +80,7 @@ router.post(
   '/video-hls',
   protect,
   authorize('tutor'),
+  secureSubscriptionCheck,
   secureFeatureCheck('hlsStreaming'), // SECURE: Only tenants with HLS plan can use this
   localVideoUpload.single('video'),
   async (req, res) => {

@@ -5,6 +5,7 @@ import LiveClass from '../models/LiveClass.js';
 import Enrollment from '../models/Enrollment.js';
 import User from '../models/User.js';
 import Tutor from '../models/Tutor.js';
+import { emitLearningEvent } from '../services/learningEventService.js';
 
 // Helper to check ownership
 const isTutorOwner = async (userId, classTutorId) => {
@@ -147,6 +148,18 @@ export const markAttendance = async (req, res) => {
                 records
             });
         }
+
+        await emitLearningEvent('attendance_marked', req.user, {
+            instituteId: batch.instituteId || req.tenant?._id || null,
+            courseId: batch.courseId || null,
+            batchId: batch._id,
+            resourceId: attendance._id,
+            resourceType: 'batch_attendance',
+            meta: {
+                date: targetDate,
+                recordsCount: Array.isArray(records) ? records.length : 0,
+            },
+        });
 
         res.status(200).json({
             success: true,

@@ -1,5 +1,11 @@
 
 import mongoose from 'mongoose';
+import {
+    AUDIENCE_SCOPES,
+    normalizeAudienceInput,
+    syncLegacyAudience,
+    validateAudience,
+} from '../utils/audience.js';
 
 const liveClassSchema = new mongoose.Schema({
     title: {
@@ -35,6 +41,30 @@ const liveClassSchema = new mongoose.Schema({
         enum: ['public', 'institute'],
         default: 'institute',
         index: true
+    },
+    audience: {
+        scope: {
+            type: String,
+            enum: Object.values(AUDIENCE_SCOPES),
+            default: function () {
+                if (this.batchId) return AUDIENCE_SCOPES.BATCH;
+                return this.instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.GLOBAL;
+            },
+            index: true,
+        },
+        instituteId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Institute',
+            default: null,
+        },
+        batchIds: [{
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Batch',
+        }],
+        studentIds: [{
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User',
+        }],
     },
     dateTime: {
         type: Date,
@@ -80,6 +110,28 @@ const liveClassSchema = new mongoose.Schema({
         type: Date,
         default: Date.now
     }
+});
+
+liveClassSchema.pre('save', function () {
+    const normalizedAudience = normalizeAudienceInput({
+        audience: this.audience,
+        visibility: this.visibility,
+        instituteId: this.instituteId,
+        batchId: this.batchId,
+        batchIds: this.batchId ? [this.batchId] : [],
+    }, {
+        defaultScope: this.batchId
+            ? AUDIENCE_SCOPES.BATCH
+            : (this.instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.GLOBAL),
+        defaultInstituteId: this.instituteId,
+    });
+
+    const validatedAudience = validateAudience(normalizedAudience, {
+        requireInstituteId: false,
+        allowEmptyPrivate: true,
+    });
+
+    syncLegacyAudience(this, validatedAudience);
 });
 
 export default mongoose.model('LiveClass', liveClassSchema);

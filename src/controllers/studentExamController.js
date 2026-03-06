@@ -6,6 +6,10 @@ import {
     buildAttemptQuestionResults,
     evaluatePass,
 } from '../utils/examScoring.js';
+import { featureFlags } from '../config/featureFlags.js';
+import { getForUser as getEntitlementsForUser } from '../services/entitlementService.js';
+import { evaluateAccess } from '../services/accessPolicy.js';
+import { emitLearningEvent } from '../services/learningEventService.js';
 
 // @desc    Get all exam attempts for analytics
 // @route   GET /api/student/exams/history-all
@@ -96,6 +100,9 @@ export const getAllExams = async (req, res) => {
 
         // Get student's attempts to show status
         const myAttempts = await ExamAttempt.find({ studentId });
+        const entitlements = (featureFlags.audienceEnforceV2 || featureFlags.audienceReadV2Shadow)
+            ? await getEntitlementsForUser(req.user)
+            : null;
 
         const processedExams = exams.map(exam => {
             if (!exam.courseId) return null; // Skip if course deleted
@@ -106,6 +113,23 @@ export const getAllExams = async (req, res) => {
 
             // If no enrollments, don't show any exams (student needs to enroll first)
             if (enrolledCourseIds.length === 0) return null;
+
+            if (entitlements) {
+                const accessDecision = evaluateAccess({
+                    resource: exam,
+                    entitlements,
+                    requireEnrollment: !exam.isFree,
+                    requirePayment: !exam.isFree,
+                    isFree: exam.isFree,
+                    courseId: exam.courseId?._id,
+                    legacyAllowed: true,
+                    shadowContext: {
+                        route: 'GET /api/student/exams/all',
+                        resourceType: 'exam',
+                    },
+                });
+                if (featureFlags.audienceEnforceV2 && !accessDecision.allowed) return null;
+            }
 
             const attempts = myAttempts.filter(a => a.examId.toString() === exam._id.toString());
             const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
@@ -156,6 +180,24 @@ export const getExamById = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Exam not found or not available' });
         }
 
+        if (featureFlags.audienceEnforceV2) {
+            const entitlements = await getEntitlementsForUser(req.user);
+            const accessDecision = evaluateAccess({
+                resource: exam,
+                entitlements,
+                requireEnrollment: !exam.isFree,
+                requirePayment: !exam.isFree,
+                isFree: exam.isFree,
+                courseId: exam.courseId,
+            });
+            if (!accessDecision.allowed) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Exam is not available in your current audience scope',
+                });
+            }
+        }
+
         // Security: Remove correct answers
         const secureQuestions = exam.questions.map(q => ({
             _id: q._id,
@@ -198,6 +240,47 @@ export const submitExam = async (req, res) => {
 
         const exam = await Exam.findById(id);
         if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
+
+        let enrollment = null;
+        if (!exam.isFree) {
+            enrollment = await Enrollment.findOne({
+                studentId,
+                courseId: exam.courseId,
+                status: 'active',
+            });
+
+            if (!enrollment) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'You must be enrolled in the course to take this exam',
+                });
+            }
+
+            if (exam.batchId && enrollment.batchId?.toString() !== exam.batchId.toString()) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'This exam is not available for your batch',
+                });
+            }
+        }
+
+        if (featureFlags.audienceEnforceV2) {
+            const entitlements = await getEntitlementsForUser(req.user);
+            const accessDecision = evaluateAccess({
+                resource: exam,
+                entitlements,
+                requireEnrollment: !exam.isFree,
+                requirePayment: !exam.isFree,
+                isFree: exam.isFree,
+                courseId: exam.courseId,
+            });
+            if (!accessDecision.allowed) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Exam is not available in your current audience scope',
+                });
+            }
+        }
 
         let score = 0;
         const attemptCount = await ExamAttempt.countDocuments({ examId: id, studentId });
@@ -278,6 +361,20 @@ export const submitExam = async (req, res) => {
         const percentile = Math.round((rank / allScores.length) * 100);
         attempt.percentile = percentile;
         await attempt.save();
+
+        await emitLearningEvent('exam_submitted', req.user, {
+            instituteId: exam.instituteId || req.tenant?._id || null,
+            courseId: exam.courseId,
+            batchId: exam.batchId || enrollment?.batchId || null,
+            resourceId: exam._id,
+            resourceType: 'exam',
+            meta: {
+                score,
+                percentage,
+                isPassed,
+                attemptNumber: attempt.attemptNumber,
+            },
+        });
 
         res.status(200).json({
             success: true,

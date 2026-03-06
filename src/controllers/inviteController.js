@@ -570,7 +570,7 @@ export const revokeInvite = async (req, res) => {
         await invite.revokeInvite();
 
         res.status(200).json({
-            success: false,
+            success: true,
             message: 'Invite revoked successfully'
         });
 

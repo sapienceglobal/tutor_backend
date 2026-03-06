@@ -19,6 +19,8 @@ router.route('/')
     .get(getLiveClasses) // Students also need to fetch live classes
     .post(authorize('tutor', 'admin'), createLiveClass);
 
+router.get('/student', authorize('student'), getLiveClasses);
+
 router.route('/:id')
     .patch(authorize('tutor', 'admin'), updateLiveClass)
     .delete(authorize('tutor', 'admin'), deleteLiveClass);

@@ -2,6 +2,7 @@ import Batch from '../models/Batch.js';
 import User from '../models/User.js';
 import Tutor from '../models/Tutor.js';
 import { ExamAttempt } from '../models/Exam.js';
+import Enrollment from '../models/Enrollment.js';
 import mongoose from 'mongoose';
 
 // @desc    Create a new batch

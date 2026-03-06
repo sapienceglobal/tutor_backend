@@ -1,4 +1,10 @@
 import mongoose from 'mongoose';
+import {
+  AUDIENCE_SCOPES,
+  normalizeAudienceInput,
+  syncLegacyAudience,
+  validateAudience,
+} from '../utils/audience.js';
 
 const examQuestionSchema = new mongoose.Schema({
   question: {
@@ -71,6 +77,30 @@ const examSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Institute',
     default: null,
+  },
+  audience: {
+    scope: {
+      type: String,
+      enum: Object.values(AUDIENCE_SCOPES),
+      default: function () {
+        if (this.batchId) return AUDIENCE_SCOPES.BATCH;
+        return this.instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.GLOBAL;
+      },
+      index: true,
+    },
+    instituteId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Institute',
+      default: null,
+    },
+    batchIds: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Batch',
+    }],
+    studentIds: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    }],
   },
   title: {
     type: String,
@@ -240,6 +270,25 @@ examSchema.pre('save', function () {
       this.passingPercentage = Number(((safeMarks / this.totalMarks) * 100).toFixed(2));
     }
   }
+
+  const normalizedAudience = normalizeAudienceInput({
+    audience: this.audience,
+    instituteId: this.instituteId,
+    batchId: this.batchId,
+    batchIds: this.batchId ? [this.batchId] : [],
+  }, {
+    defaultScope: this.batchId
+      ? AUDIENCE_SCOPES.BATCH
+      : (this.instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.GLOBAL),
+    defaultInstituteId: this.instituteId,
+  });
+
+  const validatedAudience = validateAudience(normalizedAudience, {
+    requireInstituteId: false,
+    allowEmptyPrivate: true,
+  });
+
+  syncLegacyAudience(this, validatedAudience);
 
 });
 

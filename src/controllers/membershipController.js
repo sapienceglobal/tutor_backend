@@ -355,6 +355,13 @@ export const getMyInstitutes = async (req, res) => {
     const userId = req.user.id;
     
     const memberships = await InstituteMembership.findActiveMemberships(userId);
+    const latestMembership = memberships.length > 0
+      ? memberships.reduce((latest, membership) => {
+          const latestTime = latest?.lastActiveAt ? new Date(latest.lastActiveAt).getTime() : 0;
+          const currentTime = membership?.lastActiveAt ? new Date(membership.lastActiveAt).getTime() : 0;
+          return currentTime > latestTime ? membership : latest;
+        }, memberships[0])
+      : null;
     
     const institutes = memberships.map(membership => ({
       id: membership.instituteId._id,
@@ -363,7 +370,10 @@ export const getMyInstitutes = async (req, res) => {
       logo: membership.instituteId.logo,
       role: membership.roleInInstitute,
       permissions: membership.permissions,
-      isCurrent: membership.lastActiveAt === Math.max(...memberships.map(m => m.lastActiveAt)),
+      isCurrent: Boolean(
+        latestMembership
+        && membership._id.toString() === latestMembership._id.toString()
+      ),
       joinedAt: membership.joinedAt
     }));
 
@@ -442,10 +452,7 @@ export const getInstituteMembers = async (req, res) => {
       });
     }
 
-    const members = await InstituteMembership.getInstituteMembers(instituteId, {
-      status,
-      role
-    });
+    const members = await InstituteMembership.getInstituteMembers(instituteId, { status, role });
 
     res.status(200).json({
       success: true,

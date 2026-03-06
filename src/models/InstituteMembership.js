@@ -98,6 +98,17 @@ instituteMembershipSchema.statics = {
      .populate('approvedBy', 'name');
   },
 
+  async getInstituteMembers(instituteId, options = {}) {
+    const { status = 'active', role } = options;
+    const query = { instituteId, status };
+    if (role) {
+      query.roleInInstitute = role;
+    }
+    return this.find(query)
+      .populate('userId', 'name email avatar profileImage role')
+      .populate('approvedBy', 'name');
+  },
+
   async findByInviteToken(token) {
     return this.findOne({ 
       inviteToken: token, 

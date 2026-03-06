@@ -38,7 +38,8 @@ const instituteSchema = new mongoose.Schema({
         maxStudents: { type: Number, default: 50 },
         customDomain: { type: Boolean, default: false },
         advancedAnalytics: { type: Boolean, default: false },
-        apiAccess: { type: Boolean, default: false }
+        apiAccess: { type: Boolean, default: false },
+        allowGlobalPublishingByInstituteTutors: { type: Boolean, default: false }
     },
     isActive: {
         type: Boolean,

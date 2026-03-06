@@ -2,7 +2,39 @@
 import LiveClass from '../models/LiveClass.js';
 import Tutor from '../models/Tutor.js';
 import Enrollment from '../models/Enrollment.js';
+import Attendance from '../models/Attendance.js';
 // import { createZoomMeeting } from '../services/zoomService.js'; // Zoom removed
+import { featureFlags } from '../config/featureFlags.js';
+import { getForUser as getEntitlementsForUser } from '../services/entitlementService.js';
+import { evaluateAccess } from '../services/accessPolicy.js';
+import { emitLearningEvent } from '../services/learningEventService.js';
+import {
+    AUDIENCE_SCOPES,
+    normalizeAudienceInput,
+    validateAudience,
+} from '../utils/audience.js';
+
+const resolveLiveClassAudience = ({ body, instituteId }) => {
+    const normalizedAudience = normalizeAudienceInput({
+        audience: body.audience,
+        scope: body.scope,
+        visibility: body.visibility,
+        instituteId: body.instituteId || instituteId || null,
+        batchId: body.batchId || null,
+        batchIds: body.batchIds || [],
+        studentIds: body.studentIds || [],
+    }, {
+        defaultScope: (body.batchId || (Array.isArray(body.batchIds) && body.batchIds.length > 0))
+            ? AUDIENCE_SCOPES.BATCH
+            : (body.instituteId || instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.GLOBAL),
+        defaultInstituteId: body.instituteId || instituteId || null,
+    });
+
+    return validateAudience(normalizedAudience, {
+        requireInstituteId: false,
+        allowEmptyPrivate: false,
+    });
+};
 
 // @desc    Create a new live class
 // @route   POST /api/live-classes
@@ -69,13 +101,39 @@ export const createLiveClass = async (req, res) => {
             });
         }
 
+        let audience;
+        try {
+            audience = resolveLiveClassAudience({
+                body: req.body,
+                instituteId: req.tenant?._id || tutor.instituteId || null,
+            });
+        } catch (audienceError) {
+            return res.status(400).json({
+                success: false,
+                message: audienceError.message,
+            });
+        }
+
+        if (
+            (req.tenant?._id || tutor.instituteId)
+            && audience.scope === AUDIENCE_SCOPES.GLOBAL
+            && req.tenant?.features?.allowGlobalPublishingByInstituteTutors !== true
+        ) {
+            return res.status(403).json({
+                success: false,
+                message: 'Institute policy blocks global publishing for institute tutors',
+            });
+        }
+
         const liveClass = await LiveClass.create({
             tutorId: tutor._id,
             title,
             description,
             courseId,
-            batchId,
-            instituteId: req.tenant?._id || null,
+            batchId: audience.scope === AUDIENCE_SCOPES.BATCH ? (audience.batchIds[0] || null) : null,
+            instituteId: audience.scope === AUDIENCE_SCOPES.GLOBAL ? null : (audience.instituteId || req.tenant?._id || tutor.instituteId || null),
+            visibility: audience.scope === AUDIENCE_SCOPES.GLOBAL ? 'public' : 'institute',
+            audience,
             dateTime,
             duration,
             meetingLink: meetingLink || 'pending', // Fallback if creation failed but we continued (though we return above)
@@ -192,10 +250,46 @@ export const getLiveClasses = async (req, res) => {
             }
         }));
 
+        let visibleClasses = classes;
+        if ((featureFlags.audienceEnforceV2 || featureFlags.audienceReadV2Shadow) && req.user.role === 'student') {
+            const entitlements = await getEntitlementsForUser(req.user);
+            if (featureFlags.audienceEnforceV2) {
+                visibleClasses = classes.filter((cls) => evaluateAccess({
+                    resource: cls,
+                    entitlements,
+                    requireEnrollment: !!cls.courseId,
+                    requirePayment: false,
+                    isFree: true,
+                    courseId: cls.courseId?._id || cls.courseId,
+                    legacyAllowed: true,
+                    shadowContext: {
+                        route: 'GET /api/live-classes',
+                        resourceType: 'live_class',
+                    },
+                }).allowed);
+            } else {
+                classes.forEach((cls) => {
+                    evaluateAccess({
+                        resource: cls,
+                        entitlements,
+                        requireEnrollment: !!cls.courseId,
+                        requirePayment: false,
+                        isFree: true,
+                        courseId: cls.courseId?._id || cls.courseId,
+                        legacyAllowed: true,
+                        shadowContext: {
+                            route: 'GET /api/live-classes',
+                            resourceType: 'live_class',
+                        },
+                    });
+                });
+            }
+        }
+
         res.status(200).json({
             success: true,
-            count: classes.length,
-            liveClasses: classes
+            count: visibleClasses.length,
+            liveClasses: visibleClasses
         });
     } catch (error) {
         console.error('Get live classes error details:', error);
@@ -249,7 +343,18 @@ export const deleteLiveClass = async (req, res) => {
 export const updateLiveClass = async (req, res) => {
     try {
         const { id } = req.params;
-        const { title, description, courseId, dateTime, duration, meetingLink, recordingLink, materialLink, platform } = req.body;
+        const {
+            title,
+            description,
+            courseId,
+            batchId,
+            dateTime,
+            duration,
+            meetingLink,
+            recordingLink,
+            materialLink,
+            platform,
+        } = req.body;
 
         const liveClass = await LiveClass.findById(id);
 
@@ -316,6 +421,51 @@ export const updateLiveClass = async (req, res) => {
         if (req.body.meetingId) liveClass.meetingId = req.body.meetingId;
         if (req.body.passcode) liveClass.passcode = req.body.passcode;
 
+        if (
+            req.body.audience !== undefined
+            || req.body.scope !== undefined
+            || req.body.visibility !== undefined
+            || req.body.batchId !== undefined
+            || req.body.batchIds !== undefined
+            || req.body.studentIds !== undefined
+            || req.body.instituteId !== undefined
+        ) {
+            let audience;
+            try {
+                audience = resolveLiveClassAudience({
+                    body: req.body,
+                    instituteId: liveClass.instituteId || req.tenant?._id || tutor.instituteId || null,
+                });
+            } catch (audienceError) {
+                return res.status(400).json({
+                    success: false,
+                    message: audienceError.message,
+                });
+            }
+
+            if (
+                (liveClass.instituteId || req.tenant?._id || tutor.instituteId)
+                && audience.scope === AUDIENCE_SCOPES.GLOBAL
+                && req.tenant?.features?.allowGlobalPublishingByInstituteTutors !== true
+            ) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Institute policy blocks global publishing for institute tutors',
+                });
+            }
+
+            liveClass.audience = audience;
+            liveClass.visibility = audience.scope === AUDIENCE_SCOPES.GLOBAL ? 'public' : 'institute';
+            liveClass.instituteId = audience.scope === AUDIENCE_SCOPES.GLOBAL
+                ? null
+                : (audience.instituteId || liveClass.instituteId || req.tenant?._id || tutor.instituteId || null);
+            liveClass.batchId = audience.scope === AUDIENCE_SCOPES.BATCH
+                ? (audience.batchIds[0] || null)
+                : null;
+        } else if (batchId !== undefined) {
+            liveClass.batchId = batchId;
+        }
+
         await liveClass.save();
 
         res.status(200).json({
@@ -344,12 +494,60 @@ export const getJoinConfig = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Class not found' });
         }
 
-        // Security: Verify user is enrolled (if student) or is the tutor
-        // In a real app, you should check enrollments here. 
-        // For this Jitsi implementation, we'll keep it open for enrolled students/tutors.
-        // The frontend handles the token/auth for the app itself.
+        let isTutorOwner = false;
+        if (req.user.role === 'tutor') {
+            const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id');
+            isTutorOwner = Boolean(tutor && liveClass.tutorId.toString() === tutor._id.toString());
+            if (!isTutorOwner) {
+                return res.status(403).json({ success: false, message: 'Not authorized to join this class as tutor' });
+            }
+        }
 
-        const isTutor = liveClass.tutorId.toString() === req.user._id?.toString();
+        if (req.user.role === 'student') {
+            const enrollment = await Enrollment.findOne({
+                studentId: req.user._id,
+                courseId: liveClass.courseId,
+                status: 'active',
+            }).select('batchId');
+
+            if (!enrollment && liveClass.courseId) {
+                return res.status(403).json({ success: false, message: 'Enroll in the linked course to join this class' });
+            }
+            if (liveClass.batchId && enrollment?.batchId?.toString() !== liveClass.batchId.toString()) {
+                return res.status(403).json({ success: false, message: 'This class is not available for your batch' });
+            }
+
+            if (featureFlags.audienceEnforceV2) {
+                const entitlements = await getEntitlementsForUser(req.user);
+                const accessDecision = evaluateAccess({
+                    resource: liveClass,
+                    entitlements,
+                    requireEnrollment: !!liveClass.courseId,
+                    requirePayment: false,
+                    isFree: true,
+                    courseId: liveClass.courseId,
+                });
+                if (!accessDecision.allowed) {
+                    return res.status(403).json({
+                        success: false,
+                        message: 'This class is not available in your current audience scope',
+                    });
+                }
+            }
+        }
+
+        if (req.user.role === 'admin' && liveClass.instituteId && req.tenant?._id?.toString() !== liveClass.instituteId.toString()) {
+            return res.status(403).json({ success: false, message: 'Not authorized to access this class' });
+        }
+
+        await emitLearningEvent('live_class_joined', req.user, {
+            instituteId: liveClass.instituteId || req.tenant?._id || null,
+            courseId: liveClass.courseId || null,
+            batchId: liveClass.batchId || null,
+            resourceId: liveClass._id,
+            resourceType: 'live_class',
+            meta: { via: 'join_config' },
+        });
 
         res.status(200).json({
             success: true,
@@ -357,7 +555,7 @@ export const getJoinConfig = async (req, res) => {
                 meetingNumber: liveClass.meetingId, // This is the Room Name
                 userName: req.user.name,
                 userEmail: req.user.email,
-                role: isTutor ? 'moderator' : 'participant',
+                role: isTutorOwner || req.user.role === 'admin' ? 'moderator' : 'participant',
                 platform: 'jitsi'
             }
         });
@@ -371,8 +569,6 @@ export const getJoinConfig = async (req, res) => {
 // @desc    Mark Attendance
 // @route   POST /api/live-classes/:id/attendance
 // @access  Private (Student)
-import Attendance from '../models/Attendance.js';
-
 export const markAttendance = async (req, res) => {
     try {
         const { id } = req.params;
@@ -381,6 +577,35 @@ export const markAttendance = async (req, res) => {
         const liveClass = await LiveClass.findById(id);
         if (!liveClass) {
             return res.status(404).json({ success: false, message: 'Class not found' });
+        }
+
+        const enrollment = await Enrollment.findOne({
+            studentId,
+            courseId: liveClass.courseId,
+            status: 'active',
+        }).select('batchId');
+
+        if (!enrollment && liveClass.courseId) {
+            return res.status(403).json({ success: false, message: 'Enroll in the linked course to mark attendance' });
+        }
+
+        if (liveClass.batchId && enrollment?.batchId?.toString() !== liveClass.batchId.toString()) {
+            return res.status(403).json({ success: false, message: 'This class is not available for your batch' });
+        }
+
+        if (featureFlags.audienceEnforceV2) {
+            const entitlements = await getEntitlementsForUser(req.user);
+            const accessDecision = evaluateAccess({
+                resource: liveClass,
+                entitlements,
+                requireEnrollment: !!liveClass.courseId,
+                requirePayment: false,
+                isFree: true,
+                courseId: liveClass.courseId,
+            });
+            if (!accessDecision.allowed) {
+                return res.status(403).json({ success: false, message: 'This class is not available in your current audience scope' });
+            }
         }
 
         // Check if attendance already marked
@@ -394,6 +619,15 @@ export const markAttendance = async (req, res) => {
             liveClassId: id,
             studentId,
             courseId: liveClass.courseId
+        });
+
+        await emitLearningEvent('attendance_marked', req.user, {
+            instituteId: liveClass.instituteId || req.tenant?._id || null,
+            courseId: liveClass.courseId || null,
+            batchId: liveClass.batchId || enrollment?.batchId || null,
+            resourceId: liveClass._id,
+            resourceType: 'live_class',
+            meta: { source: 'live_class_attendance' },
         });
 
         res.status(201).json({ success: true, message: 'Attendance marked successfully' });

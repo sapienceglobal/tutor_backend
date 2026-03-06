@@ -1,5 +1,4 @@
-import jwt from 'jsonwebtoken';
-import Institute from '../models/Institute.js';
+import crypto from 'crypto';
 
 /**
  * Security middleware to prevent frontend subscription manipulation
@@ -18,6 +17,19 @@ export const secureSubscriptionCheck = (req, res, next) => {
         // Get institute from database (not from frontend)
         const institute = req.tenant;
         if (!institute) {
+            // Independent/global accounts have no institute subscription to validate.
+            if (!req.user?.instituteId) {
+                req.secureSubscription = {
+                    plan: 'independent',
+                    features: {},
+                    expiresAt: null,
+                    isActive: true,
+                    checksum: null,
+                    isIndependent: true,
+                };
+                return next();
+            }
+
             return res.status(403).json({
                 success: false,
                 message: 'Institute context required'
@@ -49,7 +61,7 @@ export const secureSubscriptionCheck = (req, res, next) => {
  */
 const generateSubscriptionChecksum = (institute) => {
     const data = `${institute._id}-${institute.subscriptionPlan}-${JSON.stringify(institute.features)}-${institute.isActive}`;
-    return require('crypto')
+    return crypto
         .createHash('sha256')
         .update(data + process.env.SUBSCRIPTION_SECRET_KEY)
         .digest('hex');
@@ -108,12 +120,30 @@ export const secureFeatureCheck = (featureKey) => {
             }
 
             // Use secure subscription data (not from frontend)
-            const secureSubscription = req.secureSubscription;
+            let secureSubscription = req.secureSubscription;
+            if (!secureSubscription && req.tenant) {
+                secureSubscription = {
+                    plan: req.tenant.subscriptionPlan,
+                    features: req.tenant.features,
+                    expiresAt: req.tenant.subscriptionExpiresAt,
+                    isActive: req.tenant.isActive,
+                    checksum: null,
+                };
+            }
+
             if (!secureSubscription) {
+                if (!req.user?.instituteId) {
+                    // Independent users are not constrained by institute subscription plans.
+                    return next();
+                }
                 return res.status(403).json({
                     success: false,
                     message: 'Secure subscription context required'
                 });
+            }
+
+            if (secureSubscription.isIndependent) {
+                return next();
             }
 
             // Check if institute is active

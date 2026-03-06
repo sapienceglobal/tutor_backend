@@ -3,6 +3,36 @@ import Submission from '../models/Submission.js';
 import Course from '../models/Course.js';
 import Enrollment from '../models/Enrollment.js';
 import { createNotification } from './notificationController.js';
+import { featureFlags } from '../config/featureFlags.js';
+import { getForUser as getEntitlementsForUser } from '../services/entitlementService.js';
+import { evaluateAccess } from '../services/accessPolicy.js';
+import { emitLearningEvent } from '../services/learningEventService.js';
+import {
+    AUDIENCE_SCOPES,
+    normalizeAudienceInput,
+    validateAudience,
+} from '../utils/audience.js';
+
+const resolveAssignmentAudience = ({ body, instituteId }) => {
+    const normalizedAudience = normalizeAudienceInput({
+        audience: body.audience,
+        scope: body.scope,
+        instituteId: body.instituteId || instituteId || null,
+        batchId: body.batchId || null,
+        batchIds: body.batchIds || [],
+        studentIds: body.studentIds || [],
+    }, {
+        defaultScope: (body.batchId || (Array.isArray(body.batchIds) && body.batchIds.length > 0))
+            ? AUDIENCE_SCOPES.BATCH
+            : (body.instituteId || instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.GLOBAL),
+        defaultInstituteId: body.instituteId || instituteId || null,
+    });
+
+    return validateAudience(normalizedAudience, {
+        requireInstituteId: false,
+        allowEmptyPrivate: false,
+    });
+};
 
 // @desc    Create a new assignment
 // @route   POST /api/assignments
@@ -31,10 +61,28 @@ export const createAssignment = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Course not found' });
         }
 
+        let audience;
+        try {
+            audience = resolveAssignmentAudience({ body: req.body, instituteId });
+        } catch (audienceError) {
+            return res.status(400).json({ success: false, message: audienceError.message });
+        }
+
+        if (
+            instituteId
+            && audience.scope === AUDIENCE_SCOPES.GLOBAL
+            && req.tenant?.features?.allowGlobalPublishingByInstituteTutors !== true
+        ) {
+            return res.status(403).json({
+                success: false,
+                message: 'Institute policy blocks global publishing for institute tutors',
+            });
+        }
+
         const assignment = new Assignment({
-            instituteId,
+            instituteId: audience.scope === AUDIENCE_SCOPES.GLOBAL ? null : (audience.instituteId || instituteId || null),
             courseId,
-            batchId,
+            batchId: audience.scope === AUDIENCE_SCOPES.BATCH ? (audience.batchIds[0] || null) : null,
             moduleId,
             title,
             description,
@@ -42,7 +90,8 @@ export const createAssignment = async (req, res) => {
             totalMarks,
             rubric: rubric || [],
             attachments: attachments || [],
-            status
+            status,
+            audience,
         });
 
         await assignment.save();
@@ -81,7 +130,12 @@ export const getCourseAssignments = async (req, res) => {
         const instituteId = req.tenant ? req.tenant._id : null;
 
         // Check enrollment if student
-        const query = { courseId, instituteId };
+        const query = { courseId };
+        if (instituteId) {
+            query.$or = [{ instituteId }, { instituteId: null }];
+        } else {
+            query.instituteId = null;
+        }
 
         // If student, only show assignments for their specific batch OR course-wide assignments
         if (req.user.role === 'student') {
@@ -97,7 +151,42 @@ export const getCourseAssignments = async (req, res) => {
             query.status = 'published';
         }
 
-        const assignments = await Assignment.find(query).sort({ createdAt: -1 });
+        let assignments = await Assignment.find(query).sort({ createdAt: -1 });
+
+        if ((featureFlags.audienceEnforceV2 || featureFlags.audienceReadV2Shadow) && req.user.role === 'student') {
+            const entitlements = await getEntitlementsForUser(req.user);
+            if (featureFlags.audienceEnforceV2) {
+                assignments = assignments.filter((assignment) => evaluateAccess({
+                    resource: assignment,
+                    entitlements,
+                    requireEnrollment: true,
+                    requirePayment: false,
+                    isFree: true,
+                    courseId,
+                    legacyAllowed: true,
+                    shadowContext: {
+                        route: 'GET /api/assignments/course/:courseId',
+                        resourceType: 'assignment',
+                    },
+                }).allowed);
+            } else {
+                assignments.forEach((assignment) => {
+                    evaluateAccess({
+                        resource: assignment,
+                        entitlements,
+                        requireEnrollment: true,
+                        requirePayment: false,
+                        isFree: true,
+                        courseId,
+                        legacyAllowed: true,
+                        shadowContext: {
+                            route: 'GET /api/assignments/course/:courseId',
+                            resourceType: 'assignment',
+                        },
+                    });
+                });
+            }
+        }
 
         // If student, attach their submission status
         if (req.user.role === 'student') {
@@ -133,7 +222,9 @@ export const getAssignment = async (req, res) => {
     try {
         const assignment = await Assignment.findOne({
             _id: req.params.id,
-            instituteId: req.tenant ? req.tenant._id : null
+            ...(req.tenant
+                ? { $or: [{ instituteId: req.tenant._id }, { instituteId: null }] }
+                : { instituteId: null }),
         });
 
         if (!assignment) {
@@ -142,6 +233,21 @@ export const getAssignment = async (req, res) => {
 
         if (req.user.role === 'student' && assignment.status !== 'published') {
             return res.status(403).json({ success: false, message: 'Assignment is not published' });
+        }
+
+        if (featureFlags.audienceEnforceV2 && req.user.role === 'student') {
+            const entitlements = await getEntitlementsForUser(req.user);
+            const accessDecision = evaluateAccess({
+                resource: assignment,
+                entitlements,
+                requireEnrollment: true,
+                requirePayment: false,
+                isFree: true,
+                courseId: assignment.courseId,
+            });
+            if (!accessDecision.allowed) {
+                return res.status(403).json({ success: false, message: 'Assignment is not available in your current audience scope' });
+            }
         }
 
         let responseData = { success: true, assignment };
@@ -166,15 +272,64 @@ export const getAssignment = async (req, res) => {
 // @access  Private (Tutor, Admin)
 export const updateAssignment = async (req, res) => {
     try {
-        const assignment = await Assignment.findOneAndUpdate(
-            { _id: req.params.id, instituteId: req.tenant ? req.tenant._id : null },
-            { $set: req.body },
-            { new: true, runValidators: true }
-        );
+        const instituteId = req.tenant ? req.tenant._id : null;
+        const assignment = await Assignment.findOne({
+            _id: req.params.id,
+            ...(instituteId
+                ? { $or: [{ instituteId }, { instituteId: null }] }
+                : { instituteId: null }),
+        });
 
         if (!assignment) {
             return res.status(404).json({ success: false, message: 'Assignment not found' });
         }
+
+        if (
+            req.body.audience !== undefined
+            || req.body.scope !== undefined
+            || req.body.batchId !== undefined
+            || req.body.batchIds !== undefined
+            || req.body.studentIds !== undefined
+            || req.body.instituteId !== undefined
+        ) {
+            let audience;
+            try {
+                audience = resolveAssignmentAudience({ body: req.body, instituteId: instituteId || assignment.instituteId });
+            } catch (audienceError) {
+                return res.status(400).json({ success: false, message: audienceError.message });
+            }
+
+            if (
+                instituteId
+                && audience.scope === AUDIENCE_SCOPES.GLOBAL
+                && req.tenant?.features?.allowGlobalPublishingByInstituteTutors !== true
+            ) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Institute policy blocks global publishing for institute tutors',
+                });
+            }
+
+            assignment.audience = audience;
+            assignment.instituteId = audience.scope === AUDIENCE_SCOPES.GLOBAL
+                ? null
+                : (audience.instituteId || instituteId || assignment.instituteId || null);
+            assignment.batchId = audience.scope === AUDIENCE_SCOPES.BATCH
+                ? (audience.batchIds[0] || null)
+                : null;
+        }
+
+        const allowedUpdates = [
+            'title', 'description', 'dueDate', 'totalMarks', 'rubric', 'attachments',
+            'status', 'moduleId',
+        ];
+        allowedUpdates.forEach((field) => {
+            if (req.body[field] !== undefined) {
+                assignment[field] = req.body[field];
+            }
+        });
+
+        await assignment.save();
 
         res.json({ success: true, assignment });
     } catch (error) {
@@ -190,7 +345,9 @@ export const deleteAssignment = async (req, res) => {
     try {
         const assignment = await Assignment.findOneAndDelete({
             _id: req.params.id,
-            instituteId: req.tenant ? req.tenant._id : null
+            ...(req.tenant
+                ? { $or: [{ instituteId: req.tenant._id }, { instituteId: null }] }
+                : { instituteId: null }),
         });
 
         if (!assignment) {
@@ -219,9 +376,30 @@ export const submitAssignment = async (req, res) => {
         const instituteId = req.tenant ? req.tenant._id : null;
         const studentId = req.user._id;
 
-        const assignment = await Assignment.findOne({ _id: assignmentId, instituteId, status: 'published' });
+        const assignment = await Assignment.findOne({
+            _id: assignmentId,
+            status: 'published',
+            ...(instituteId
+                ? { $or: [{ instituteId }, { instituteId: null }] }
+                : { instituteId: null }),
+        });
         if (!assignment) {
             return res.status(404).json({ success: false, message: 'Assignment not found or not published' });
+        }
+
+        if (featureFlags.audienceEnforceV2) {
+            const entitlements = await getEntitlementsForUser(req.user);
+            const accessDecision = evaluateAccess({
+                resource: assignment,
+                entitlements,
+                requireEnrollment: true,
+                requirePayment: false,
+                isFree: true,
+                courseId: assignment.courseId,
+            });
+            if (!accessDecision.allowed) {
+                return res.status(403).json({ success: false, message: 'Assignment is not available in your current audience scope' });
+            }
         }
 
         // Check dueDate if strict (optional feature)
@@ -254,6 +432,18 @@ export const submitAssignment = async (req, res) => {
             await submission.save();
         }
 
+        await emitLearningEvent('assignment_submitted', req.user, {
+            instituteId: assignment.instituteId || req.tenant?._id || null,
+            courseId: assignment.courseId,
+            batchId: assignment.batchId || null,
+            resourceId: assignment._id,
+            resourceType: 'assignment',
+            meta: {
+                submissionId: submission._id,
+                status: submission.status,
+            },
+        });
+
         res.json({ success: true, submission });
     } catch (error) {
         console.error(error);
@@ -271,7 +461,9 @@ export const getAssignmentSubmissions = async (req, res) => {
     try {
         const submissions = await Submission.find({
             assignmentId: req.params.id,
-            instituteId: req.tenant ? req.tenant._id : null
+            ...(req.tenant
+                ? { $or: [{ instituteId: req.tenant._id }, { instituteId: null }] }
+                : { instituteId: null }),
         })
             .populate('studentId', 'name email avatar')
             .sort({ submittedAt: -1 });
@@ -292,7 +484,9 @@ export const gradeSubmission = async (req, res) => {
 
         const submission = await Submission.findOne({
             _id: req.params.submissionId,
-            instituteId: req.tenant ? req.tenant._id : null
+            ...(req.tenant
+                ? { $or: [{ instituteId: req.tenant._id }, { instituteId: null }] }
+                : { instituteId: null }),
         });
 
         if (!submission) {

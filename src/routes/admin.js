@@ -20,8 +20,6 @@ import {
     getSettings,
     updateSettings,
     verifyTutor,
-    createInstitute,
-    getAllInstitutes,
     removeUserFromInstitute
 } from '../controllers/adminController.js';
 import { getAllPayouts, updatePayoutStatus } from '../controllers/payoutController.js';
@@ -36,10 +34,6 @@ router.get('/stats', getAdminStats);
 router.get('/tutors', getAllTutors);
 router.get('/students', getAllStudents);
 router.get('/courses', getAllCourses);
-
-// Institute Management Routes (Super Admin)
-router.post('/institutes', createInstitute);
-router.get('/institutes', getAllInstitutes);
 
 router.post('/users', createUser);
 router.put('/users/:id', updateUser);

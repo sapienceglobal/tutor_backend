@@ -70,7 +70,7 @@ export const updateUserInstitute = async (req, res) => {
             });
         }
 
-        const { name, contactEmail, logo, brandColors } = req.body;
+        const { name, contactEmail, logo, brandColors, allowGlobalPublishingByInstituteTutors } = req.body;
 
         // Get user with institute info
         const user = await User.findById(req.user.id);
@@ -88,6 +88,9 @@ export const updateUserInstitute = async (req, res) => {
         if (contactEmail) updateData.contactEmail = contactEmail;
         if (logo) updateData.logo = logo;
         if (brandColors) updateData.brandColors = brandColors;
+        if (typeof allowGlobalPublishingByInstituteTutors === 'boolean') {
+            updateData['features.allowGlobalPublishingByInstituteTutors'] = allowGlobalPublishingByInstituteTutors;
+        }
 
         const institute = await Institute.findByIdAndUpdate(
             user.instituteId,

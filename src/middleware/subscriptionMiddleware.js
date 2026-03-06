@@ -1,4 +1,6 @@
 import Institute from '../models/Institute.js';
+import Tutor from '../models/Tutor.js';
+import User from '../models/User.js';
 
 /**
  * Plan-based feature access middleware
@@ -120,7 +122,7 @@ export const checkFeatureAccess = (featureKey) => {
 
             // Check specific limits for resources
             if (featureKey === 'manageTutors') {
-                const tutorCount = await require('../models/Tutor').default.countDocuments({ 
+                const tutorCount = await Tutor.countDocuments({
                     'instituteId': institute._id 
                 });
                 
@@ -136,7 +138,7 @@ export const checkFeatureAccess = (featureKey) => {
             }
 
             if (featureKey === 'manageStudents') {
-                const studentCount = await require('../models/User').default.countDocuments({ 
+                const studentCount = await User.countDocuments({
                     'instituteId': institute._id,
                     'role': 'student'
                 });

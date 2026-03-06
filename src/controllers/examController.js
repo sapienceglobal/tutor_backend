@@ -7,6 +7,36 @@ import {
   evaluatePass,
   normalizePassingConfig,
 } from '../utils/examScoring.js';
+import { featureFlags } from '../config/featureFlags.js';
+import { getForUser as getEntitlementsForUser } from '../services/entitlementService.js';
+import { evaluateAccess } from '../services/accessPolicy.js';
+import { emitLearningEvent } from '../services/learningEventService.js';
+import {
+  AUDIENCE_SCOPES,
+  normalizeAudienceInput,
+  validateAudience,
+} from '../utils/audience.js';
+
+const resolveExamAudience = ({ body, tenant, fallbackBatchId = null, fallbackInstituteId = null }) => {
+  const normalizedAudience = normalizeAudienceInput({
+    audience: body.audience,
+    scope: body.scope,
+    instituteId: body.instituteId || fallbackInstituteId || tenant?._id || null,
+    batchId: body.batchId || fallbackBatchId || null,
+    batchIds: body.batchIds || [],
+    studentIds: body.studentIds || [],
+  }, {
+    defaultScope: (body.batchId || fallbackBatchId)
+      ? AUDIENCE_SCOPES.BATCH
+      : ((body.instituteId || fallbackInstituteId || tenant?._id) ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.GLOBAL),
+    defaultInstituteId: body.instituteId || fallbackInstituteId || tenant?._id || null,
+  });
+
+  return validateAudience(normalizedAudience, {
+    requireInstituteId: false,
+    allowEmptyPrivate: false,
+  });
+};
 
 // @desc    Get all exams for a course (Tutor)
 // @route   GET /api/exams/course/:courseId
@@ -35,7 +65,7 @@ export const getExamsByCourse = async (req, res) => {
     }
     if (req.tenant) matchQuery.instituteId = new mongoose.Types.ObjectId(req.tenant._id);
 
-    const exams = await Exam.aggregate([
+    let exams = await Exam.aggregate([
       {
         $match: matchQuery
       },
@@ -81,9 +111,22 @@ export const getExamsByCourse = async (req, res) => {
       }
     ]);
 
+    let visibleExams = exams;
+    if (featureFlags.audienceEnforceV2 && req.user.role === 'student') {
+      const entitlements = await getEntitlementsForUser(req.user);
+      visibleExams = exams.filter((exam) => evaluateAccess({
+        resource: exam,
+        entitlements,
+        requireEnrollment: true,
+        requirePayment: !exam.isFree,
+        isFree: exam.isFree,
+        courseId: exam.courseId,
+      }).allowed);
+    }
+
     res.status(200).json({
       success: true,
-      exams: exams,
+      exams: visibleExams,
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -141,6 +184,24 @@ export const getExamById = async (req, res) => {
         return res.status(403).json({
           success: false,
           message: 'Enroll in the course to access this exam',
+        });
+      }
+    }
+
+    if (!isOwner && featureFlags.audienceEnforceV2) {
+      const entitlements = await getEntitlementsForUser(req.user);
+      const accessDecision = evaluateAccess({
+        resource: exam,
+        entitlements,
+        requireEnrollment: !exam.isFree,
+        requirePayment: !exam.isFree,
+        isFree: exam.isFree,
+        courseId: exam.courseId._id,
+      });
+      if (!accessDecision.allowed) {
+        return res.status(403).json({
+          success: false,
+          message: 'Exam is not available in your current audience scope',
         });
       }
     }
@@ -293,12 +354,39 @@ export const createExam = async (req, res) => {
       { passingPercentage, passingMarks },
       totalMarksFromQuestions
     );
+    let audience;
+    try {
+      audience = resolveExamAudience({
+        body: req.body,
+        tenant: req.tenant,
+        fallbackBatchId: batchId || null,
+        fallbackInstituteId: course.instituteId || req.tenant?._id || null,
+      });
+    } catch (audienceError) {
+      return res.status(400).json({
+        success: false,
+        message: audienceError.message,
+      });
+    }
+
+    if (
+      course.instituteId
+      && audience.scope === AUDIENCE_SCOPES.GLOBAL
+      && req.tenant?.features?.allowGlobalPublishingByInstituteTutors !== true
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: 'Institute policy blocks global publishing for institute tutors',
+      });
+    }
 
     const exam = await Exam.create({
       courseId,
-      batchId,
+      batchId: audience.scope === AUDIENCE_SCOPES.BATCH ? (audience.batchIds[0] || null) : null,
       tutorId: course.tutorId._id,
-      instituteId: req.tenant?._id || null,
+      instituteId: audience.scope === AUDIENCE_SCOPES.GLOBAL
+        ? null
+        : (audience.instituteId || course.instituteId || req.tenant?._id || null),
       title,
       description,
       type: type || 'assessment',
@@ -323,6 +411,7 @@ export const createExam = async (req, res) => {
       isFree: isFree || false,
       sections: sections || [],
       isAdaptive: isAdaptive || false,
+      audience,
     });
 
     res.status(201).json({
@@ -372,6 +461,7 @@ export const updateExam = async (req, res) => {
       'showResultImmediately', 'showCorrectAnswers', 'hideSolutions', 'allowRetake',
       'maxAttempts', 'startDate', 'endDate', 'isScheduled', 'status', 'isPublished',
       'negativeMarking', 'passingPercentage', 'isFree', 'sections', 'isAdaptive',
+      'batchId', 'audience',
     ];
 
     allowedUpdates.forEach(field => {
@@ -387,6 +477,47 @@ export const updateExam = async (req, res) => {
         }
       }
     });
+
+    if (
+      req.body.audience !== undefined
+      || req.body.scope !== undefined
+      || req.body.batchId !== undefined
+      || req.body.batchIds !== undefined
+      || req.body.studentIds !== undefined
+      || req.body.instituteId !== undefined
+    ) {
+      let audience;
+      try {
+        audience = resolveExamAudience({
+          body: req.body,
+          tenant: req.tenant,
+          fallbackBatchId: exam.batchId || null,
+          fallbackInstituteId: exam.instituteId || exam.courseId?.instituteId || req.tenant?._id || null,
+        });
+      } catch (audienceError) {
+        return res.status(400).json({
+          success: false,
+          message: audienceError.message,
+        });
+      }
+
+      if (
+        (exam.instituteId || exam.courseId?.instituteId)
+        && audience.scope === AUDIENCE_SCOPES.GLOBAL
+        && req.tenant?.features?.allowGlobalPublishingByInstituteTutors !== true
+      ) {
+        return res.status(403).json({
+          success: false,
+          message: 'Institute policy blocks global publishing for institute tutors',
+        });
+      }
+
+      exam.audience = audience;
+      exam.batchId = audience.scope === AUDIENCE_SCOPES.BATCH ? (audience.batchIds[0] || null) : null;
+      exam.instituteId = audience.scope === AUDIENCE_SCOPES.GLOBAL
+        ? null
+        : (audience.instituteId || exam.instituteId || req.tenant?._id || null);
+    }
 
     // Sync isPublished with status if status was updated
     if (req.body.status) {
@@ -498,8 +629,9 @@ export const submitExam = async (req, res) => {
     }
 
     // Check enrollment (skip if free)
+    let enrollment = null;
     if (!exam.isFree) {
-      const enrollment = await Enrollment.findOne({
+      enrollment = await Enrollment.findOne({
         studentId: req.user.id,
         courseId: exam.courseId,
         status: 'active'
@@ -517,6 +649,24 @@ export const submitExam = async (req, res) => {
         return res.status(403).json({
           success: false,
           message: 'This exam is not available for your batch.'
+        });
+      }
+    }
+
+    if (featureFlags.audienceEnforceV2) {
+      const entitlements = await getEntitlementsForUser(req.user);
+      const accessDecision = evaluateAccess({
+        resource: exam,
+        entitlements,
+        requireEnrollment: !exam.isFree,
+        requirePayment: !exam.isFree,
+        isFree: exam.isFree,
+        courseId: exam.courseId,
+      });
+      if (!accessDecision.allowed) {
+        return res.status(403).json({
+          success: false,
+          message: 'Exam is not available in your current audience scope',
         });
       }
     }
@@ -688,6 +838,20 @@ export const submitExam = async (req, res) => {
     const percentile = Math.round((rank / allScores.length) * 100);
     attempt.percentile = percentile;
     await attempt.save();
+
+    await emitLearningEvent('exam_submitted', req.user, {
+      instituteId: exam.instituteId || req.tenant?._id || null,
+      courseId: exam.courseId,
+      batchId: exam.batchId || enrollment?.batchId || null,
+      resourceId: exam._id,
+      resourceType: 'exam',
+      meta: {
+        score,
+        percentage,
+        isPassed,
+        attemptNumber: attempt.attemptNumber,
+      },
+    });
 
     // ✅ NEW: Check if results should be shown immediately
     if (!exam.showResultImmediately) {
@@ -1116,7 +1280,7 @@ export const getExamsByTutor = async (req, res) => {
     const userId = req.user.id;
 
     // Use aggregate to lookup course, then match course.tutorId.userId == req.user.id
-    const exams = await Exam.aggregate([
+    let exams = await Exam.aggregate([
       {
         $lookup: {
           from: 'courses',
@@ -1157,9 +1321,22 @@ export const getExamsByTutor = async (req, res) => {
       { $sort: { createdAt: -1 } }
     ]);
 
+    let visibleExams = exams;
+    if (featureFlags.audienceEnforceV2) {
+      const entitlements = await getEntitlementsForUser(req.user);
+      visibleExams = exams.filter((exam) => evaluateAccess({
+        resource: exam,
+        entitlements,
+        requireEnrollment: !exam.isFree,
+        requirePayment: !exam.isFree,
+        isFree: exam.isFree,
+        courseId: exam.courseId,
+      }).allowed);
+    }
+
     res.status(200).json({
       success: true,
-      exams
+      exams: visibleExams
     });
   } catch (error) {
     console.error('Get tutor exams error:', error);
@@ -1172,6 +1349,17 @@ export const getExamsByTutor = async (req, res) => {
 export const getStudentExams = async (req, res) => {
   try {
     const userId = req.user.id;
+    const scope = req.query.scope;
+    const shouldResolveEntitlements = scope === 'institute' || featureFlags.audienceEnforceV2 || featureFlags.audienceReadV2Shadow;
+    const entitlements = shouldResolveEntitlements ? await getEntitlementsForUser(req.user) : null;
+    const allowedInstituteObjectIds = scope === 'institute'
+      ? (entitlements?.membershipInstituteIds || [])
+        .concat(entitlements?.activeInstituteId ? [entitlements.activeInstituteId] : [])
+        .filter(Boolean)
+        .filter((id, index, arr) => arr.indexOf(id) === index)
+        .filter((id) => mongoose.Types.ObjectId.isValid(id))
+        .map((id) => new mongoose.Types.ObjectId(id))
+      : [];
 
     // 1. Get Student's Enrollments
     const enrollments = await Enrollment.find({ studentId: userId, status: 'active' });
@@ -1180,7 +1368,7 @@ export const getStudentExams = async (req, res) => {
     // 2. Find Exams
     // - Belong to enrolled courses AND are published AND (quiz/midterm/final)
     // - OR are Public Practice Sets
-    const exams = await Exam.aggregate([
+    let exams = await Exam.aggregate([
       {
         $match: {
           status: 'published',
@@ -1202,8 +1390,15 @@ export const getStudentExams = async (req, res) => {
         }
       },
       { $unwind: '$course' },
-      ...(req.query.scope === 'global' ? [{ $match: { 'course.visibility': 'public' } }] : []),
-      ...(req.query.scope === 'institute' ? [{ $match: { 'course.visibility': 'institute' } }] : []),
+      ...(scope === 'global' ? [{ $match: { 'course.visibility': 'public' } }] : []),
+      ...(scope === 'institute'
+        ? [
+          { $match: { 'course.visibility': 'institute' } },
+          ...(allowedInstituteObjectIds.length > 0
+            ? [{ $match: { 'course.instituteId': { $in: allowedInstituteObjectIds } } }]
+            : [{ $match: { _id: null } }]),
+        ]
+        : []),
       // Lookup Student's attempts for each exam
       {
         $lookup: {
@@ -1248,6 +1443,10 @@ export const getStudentExams = async (req, res) => {
           isFree: 1,
           courseTitle: 1,
           courseId: 1,
+          audience: 1,
+          instituteId: 1,
+          batchId: 1,
+          visibility: '$course.visibility',
           myAttemptCount: 1,
           lastAttempt: 1,
           lastAttemptId: 1,
@@ -1257,6 +1456,40 @@ export const getStudentExams = async (req, res) => {
       },
       { $sort: { createdAt: -1 } }
     ]);
+
+    if (featureFlags.audienceEnforceV2 || featureFlags.audienceReadV2Shadow) {
+      if (featureFlags.audienceEnforceV2) {
+        exams = exams.filter((exam) => evaluateAccess({
+          resource: exam,
+          entitlements,
+          requireEnrollment: !exam.isFree,
+          requirePayment: !exam.isFree,
+          isFree: exam.isFree,
+          courseId: exam.courseId,
+          legacyAllowed: true,
+          shadowContext: {
+            route: 'GET /api/exams/student/all',
+            resourceType: 'exam',
+          },
+        }).allowed);
+      } else {
+        exams.forEach((exam) => {
+          evaluateAccess({
+            resource: exam,
+            entitlements,
+            requireEnrollment: !exam.isFree,
+            requirePayment: !exam.isFree,
+            isFree: exam.isFree,
+            courseId: exam.courseId,
+            legacyAllowed: true,
+            shadowContext: {
+              route: 'GET /api/exams/student/all',
+              resourceType: 'exam',
+            },
+          });
+        });
+      }
+    }
 
     res.status(200).json({
       success: true,

@@ -7,6 +7,37 @@ import Category from '../models/Category.js';
 import User from '../models/User.js';
 import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
+import { featureFlags } from '../config/featureFlags.js';
+import { getForUser as getEntitlementsForUser } from '../services/entitlementService.js';
+import { evaluateAccess } from '../services/accessPolicy.js';
+import {
+  AUDIENCE_SCOPES,
+  normalizeAudienceInput,
+  validateAudience,
+} from '../utils/audience.js';
+
+const resolveCourseAudience = ({ body, tutor, tenant }) => {
+  const normalizedAudience = normalizeAudienceInput({
+    audience: body.audience,
+    scope: body.scope,
+    visibility: body.visibility,
+    visibilityScope: body.visibilityScope,
+    instituteId: body.instituteId || tutor?.instituteId || tenant?._id || null,
+    studentIds: body.studentIds,
+  }, {
+    defaultScope: tutor?.instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.GLOBAL,
+    defaultInstituteId: tutor?.instituteId || tenant?._id || null,
+  });
+
+  if (normalizedAudience.scope === AUDIENCE_SCOPES.BATCH) {
+    throw new Error('Batch scope is not supported for courses');
+  }
+
+  return validateAudience(normalizedAudience, {
+    requireInstituteId: false,
+    allowEmptyPrivate: false,
+  });
+};
 
 // @desc    Get all published courses
 // @route   GET /api/courses
@@ -112,6 +143,49 @@ export const getAllCourses = async (req, res) => {
       );
     }
 
+    if (featureFlags.audienceEnforceV2 || (featureFlags.audienceReadV2Shadow && req.user)) {
+      if (!req.user) {
+        if (featureFlags.audienceEnforceV2) {
+          courses = courses.filter((course) => (
+            course?.audience?.scope === AUDIENCE_SCOPES.GLOBAL || course.visibility === 'public'
+          ));
+        }
+      } else {
+        const entitlements = await getEntitlementsForUser(req.user);
+        if (featureFlags.audienceEnforceV2) {
+          courses = courses.filter((course) => evaluateAccess({
+            resource: course,
+            entitlements,
+            ownerId: course?.createdBy || course?.tutorId?.userId?._id || null,
+            requireEnrollment: false,
+            requirePayment: false,
+            isFree: true,
+            legacyAllowed: true,
+            shadowContext: {
+              route: 'GET /api/courses',
+              resourceType: 'course',
+            },
+          }).allowed);
+        } else {
+          courses.forEach((course) => {
+            evaluateAccess({
+              resource: course,
+              entitlements,
+              ownerId: course?.createdBy || course?.tutorId?.userId?._id || null,
+              requireEnrollment: false,
+              requirePayment: false,
+              isFree: true,
+              legacyAllowed: true,
+              shadowContext: {
+                route: 'GET /api/courses',
+                resourceType: 'course',
+              },
+            });
+          });
+        }
+      }
+    }
+
     res.status(200).json({
       success: true,
       count: courses.length,
@@ -163,6 +237,46 @@ export const getCourseById = async (req, res) => {
 
       if (req.user.role === 'tutor' && course.tutorId?.userId?._id?.toString() === req.user.id) {
         isInstructor = true;
+      }
+
+      if (featureFlags.audienceEnforceV2 && !isInstructor && req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+        const entitlements = await getEntitlementsForUser(req.user);
+        const audienceDecision = evaluateAccess({
+          resource: course,
+          entitlements,
+          ownerId: course?.createdBy || course?.tutorId?.userId?._id || null,
+          requireEnrollment: false,
+          requirePayment: false,
+          isFree: true,
+          legacyAllowed: true,
+          shadowContext: {
+            route: 'GET /api/courses/:id',
+            resourceType: 'course',
+            resourceId: course?._id,
+          },
+        });
+        if (!audienceDecision.allowed && !isEnrolled) {
+          return res.status(403).json({
+            success: false,
+            message: 'You do not have access to this course in your current scope',
+          });
+        }
+      } else if (featureFlags.audienceReadV2Shadow && !isInstructor && req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+        const entitlements = await getEntitlementsForUser(req.user);
+        evaluateAccess({
+          resource: course,
+          entitlements,
+          ownerId: course?.createdBy || course?.tutorId?.userId?._id || null,
+          requireEnrollment: false,
+          requirePayment: false,
+          isFree: true,
+          legacyAllowed: true,
+          shadowContext: {
+            route: 'GET /api/courses/:id',
+            resourceType: 'course',
+            resourceId: course?._id,
+          },
+        });
       }
     }
 
@@ -260,13 +374,38 @@ export const createCourse = async (req, res) => {
       });
     }
 
+    let audience;
+    try {
+      audience = resolveCourseAudience({
+        body: req.body,
+        tutor,
+        tenant: req.tenant,
+      });
+    } catch (audienceError) {
+      return res.status(400).json({
+        success: false,
+        message: audienceError.message,
+      });
+    }
+
+    if (
+      tutor.instituteId
+      && audience.scope === AUDIENCE_SCOPES.GLOBAL
+      && req.tenant?.features?.allowGlobalPublishingByInstituteTutors !== true
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: 'Institute policy blocks global publishing for institute tutors',
+      });
+    }
+
     const course = await Course.create({
       title,
       description,
       thumbnail,
       categoryId,
       tutorId: tutor._id,
-      instituteId: tutor.instituteId,
+      instituteId: audience.scope === AUDIENCE_SCOPES.GLOBAL ? null : (audience.instituteId || tutor.instituteId || null),
       createdBy: req.user.id,
       price: price || 0,
       level: level || 'beginner',
@@ -275,7 +414,8 @@ export const createCourse = async (req, res) => {
       modules: modules || [],
       requirements: requirements || [],
       whatYouWillLearn: whatYouWillLearn || [],
-      visibility: tutor.instituteId ? (visibility || 'institute') : 'public',
+      visibility: audience.scope === AUDIENCE_SCOPES.GLOBAL ? 'public' : 'institute',
+      audience,
     });
 
     const populatedCourse = await Course.findById(course._id)
@@ -329,6 +469,7 @@ export const updateCourse = async (req, res) => {
       'title', 'description', 'thumbnail', 'categoryId',
       'price', 'level', 'duration', 'language', 'modules',
       'requirements', 'whatYouWillLearn', 'status', 'visibility',
+      'audience',
     ];
 
     // Intercept Publish Request based on Admin Auto-Approve Setting
@@ -345,6 +486,47 @@ export const updateCourse = async (req, res) => {
         course[field] = req.body[field];
       }
     });
+
+    if (
+      req.body.audience !== undefined
+      || req.body.scope !== undefined
+      || req.body.visibility !== undefined
+      || req.body.visibilityScope !== undefined
+      || req.body.studentIds !== undefined
+    ) {
+      let audience;
+      try {
+        audience = resolveCourseAudience({
+          body: req.body,
+          tutor: course.tutorId,
+          tenant: req.tenant,
+        });
+      } catch (audienceError) {
+        return res.status(400).json({
+          success: false,
+          message: audienceError.message,
+        });
+      }
+
+      if (
+        course.tutorId?.instituteId
+        && audience.scope === AUDIENCE_SCOPES.GLOBAL
+        && req.tenant?.features?.allowGlobalPublishingByInstituteTutors !== true
+      ) {
+        return res.status(403).json({
+          success: false,
+          message: 'Institute policy blocks global publishing for institute tutors',
+        });
+      }
+
+      course.audience = audience;
+      course.visibility = audience.scope === AUDIENCE_SCOPES.GLOBAL ? 'public' : 'institute';
+      if (audience.scope !== AUDIENCE_SCOPES.GLOBAL) {
+        course.instituteId = audience.instituteId || course.tutorId?.instituteId || req.tenant?._id || null;
+      } else {
+        course.instituteId = null;
+      }
+    }
 
     // Safety Fallbacks & Concept Sync for legacy courses/plugins
     if (req.body.visibility) {

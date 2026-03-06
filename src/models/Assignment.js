@@ -1,10 +1,17 @@
 import mongoose from 'mongoose';
+import {
+    AUDIENCE_SCOPES,
+    normalizeAudienceInput,
+    syncLegacyAudience,
+    validateAudience,
+} from '../utils/audience.js';
 
 const assignmentSchema = new mongoose.Schema({
     instituteId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Institute',
-        required: true,
+        required: false,
+        default: null,
         index: true
     },
     courseId: {
@@ -16,6 +23,30 @@ const assignmentSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Batch',
         default: null
+    },
+    audience: {
+        scope: {
+            type: String,
+            enum: Object.values(AUDIENCE_SCOPES),
+            default: function () {
+                if (this.batchId) return AUDIENCE_SCOPES.BATCH;
+                return this.instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.GLOBAL;
+            },
+            index: true,
+        },
+        instituteId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Institute',
+            default: null,
+        },
+        batchIds: [{
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Batch',
+        }],
+        studentIds: [{
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User',
+        }],
     },
     moduleId: {
         type: mongoose.Schema.Types.ObjectId
@@ -51,5 +82,26 @@ const assignmentSchema = new mongoose.Schema({
         default: 'published'
     }
 }, { timestamps: true });
+
+assignmentSchema.pre('save', function () {
+    const normalizedAudience = normalizeAudienceInput({
+        audience: this.audience,
+        instituteId: this.instituteId,
+        batchId: this.batchId,
+        batchIds: this.batchId ? [this.batchId] : [],
+    }, {
+        defaultScope: this.batchId
+            ? AUDIENCE_SCOPES.BATCH
+            : (this.instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.GLOBAL),
+        defaultInstituteId: this.instituteId,
+    });
+
+    const validatedAudience = validateAudience(normalizedAudience, {
+        requireInstituteId: false,
+        allowEmptyPrivate: true,
+    });
+
+    syncLegacyAudience(this, validatedAudience);
+});
 
 export default mongoose.models.Assignment || mongoose.model('Assignment', assignmentSchema);

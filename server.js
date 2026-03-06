@@ -54,6 +54,7 @@ import hybridAccessRoutes from './src/routes/hybridAccessRoutes.js';
 import vectorRoutes from './src/routes/vectorRoutes.js';
 import userInstituteRoutes from './src/routes/userInstitute.js';
 import aiStudyPlanRoutes from './src/routes/aiStudyPlanRoutes.js';
+import entitlementRoutes from './src/routes/entitlements.js';
 
 import { verifyApiKey } from './src/middleware/apiKey.js';
 import { auditMiddleware } from './src/middleware/auditMiddleware.js';
@@ -190,6 +191,7 @@ app.use('/api/attendance', attendanceRoutes);
 app.use('/api/assignments', assignmentRoutes);
 app.use('/api/institutes', instituteRoutes);
 app.use('/api/membership', membershipRoutes);
+app.use('/api/entitlements', entitlementRoutes);
 app.use('/api/vector', vectorRoutes);
 app.use('/api/user-institute', userInstituteRoutes);
 app.use('/api/ai', aiStudyPlanRoutes);

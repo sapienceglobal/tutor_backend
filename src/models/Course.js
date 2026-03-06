@@ -1,5 +1,11 @@
 import mongoose from 'mongoose';
 import { visibilityScopePlugin } from './VisibilityScope.js';
+import {
+  AUDIENCE_SCOPES,
+  normalizeAudienceInput,
+  syncLegacyAudience,
+  validateAudience,
+} from '../utils/audience.js';
 
 const moduleSchema = new mongoose.Schema({
   _id: { type: mongoose.Schema.Types.ObjectId, auto: true },
@@ -53,6 +59,29 @@ const courseSchema = new mongoose.Schema({
     enum: ['public', 'institute'],
     default: 'institute',
     index: true
+  },
+  audience: {
+    scope: {
+      type: String,
+      enum: Object.values(AUDIENCE_SCOPES),
+      default: function () {
+        return this.instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.GLOBAL;
+      },
+      index: true,
+    },
+    instituteId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Institute',
+      default: null,
+    },
+    batchIds: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Batch',
+    }],
+    studentIds: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    }],
   },
   price: {
     type: Number,
@@ -152,6 +181,23 @@ const courseSchema = new mongoose.Schema({
 // Update timestamp on save
 courseSchema.pre('save', function () {
   this.updatedAt = Date.now();
+
+  const normalizedAudience = normalizeAudienceInput({
+    audience: this.audience,
+    visibility: this.visibility,
+    visibilityScope: this.visibilityScope,
+    instituteId: this.instituteId,
+  }, {
+    defaultScope: this.instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.GLOBAL,
+    defaultInstituteId: this.instituteId,
+  });
+
+  const validatedAudience = validateAudience(normalizedAudience, {
+    requireInstituteId: false,
+    allowEmptyPrivate: true,
+  });
+
+  syncLegacyAudience(this, validatedAudience);
 });
 
 // Apply visibility scope plugin
