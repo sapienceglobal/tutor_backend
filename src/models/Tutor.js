@@ -6,6 +6,11 @@ const tutorSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
+  instituteId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Institute',
+    required: false
+  },
   categoryId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Category' // Made optional for auto-creation during registration

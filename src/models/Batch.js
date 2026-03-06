@@ -46,20 +46,7 @@ const batchSchema = new mongoose.Schema({
     },
     endDate: {
         type: Date,
-    },
-    createdAt: {
-        type: Date,
-        default: Date.now,
-    },
-    updatedAt: {
-        type: Date,
-        default: Date.now,
-    },
-});
-
-batchSchema.pre('save', function (next) {
-    this.updatedAt = Date.now();
-    next();
-});
+    }
+}, { timestamps: true });
 
 export default mongoose.model('Batch', batchSchema);

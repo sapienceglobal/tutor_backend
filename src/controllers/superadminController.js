@@ -1,5 +1,6 @@
 import Institute from '../models/Institute.js';
 import User from '../models/User.js';
+import InstituteMembership from '../models/InstituteMembership.js';
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
@@ -73,6 +74,23 @@ export const createInstitute = async (req, res) => {
 
         await newAdmin.save({ session });
 
+        // Create InstituteMembership for admin
+        await InstituteMembership.create([{
+            userId: newAdmin._id,
+            instituteId: newInstitute._id,
+            roleInInstitute: 'admin',
+            status: 'active',
+            joinedVia: 'system_created',
+            approvedBy: newAdmin._id,
+            approvedAt: new Date(),
+            permissions: {
+                canCreateCourses: true,
+                canCreateExams: true,
+                canViewAnalytics: true,
+                canManageStudents: true
+            }
+        }], { session });
+
         await session.commitTransaction();
         session.endSession();
 
@@ -82,7 +100,7 @@ export const createInstitute = async (req, res) => {
                 service: 'gmail',
                 auth: {
                     user: process.env.EMAIL_USER,
-                    pass: process.env.EMAIL_PASS,
+                    pass: process.env.EMAIL_APP_PASSWORD || process.env.EMAIL_PASS,
                 },
             });
 

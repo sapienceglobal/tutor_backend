@@ -8,13 +8,14 @@ import {
   getCoursesByTutor,
   getMyCourses,
   getCourseStudentsDetailed,
+  addCourseAnnouncement,
 } from '../controllers/courseController.js';
-import { protect, authorize } from '../middleware/auth.js';
+import { protect, authorize, optionalAuth } from '../middleware/auth.js';
 
 const router = express.Router();
 
 // Public routes
-router.get('/', getAllCourses);
+router.get('/', optionalAuth, getAllCourses);
 router.get('/tutor/:tutorId', getCoursesByTutor);
 
 // Protected routes
@@ -24,5 +25,6 @@ router.post('/', protect, authorize('tutor', 'admin'), createCourse);
 router.patch('/:id', protect, authorize('tutor', 'admin'), updateCourse);
 router.delete('/:id', protect, authorize('tutor', 'admin'), deleteCourse);
 router.get('/:id/students', protect, authorize('tutor', 'admin'), getCourseStudentsDetailed);
+router.post('/:id/announcements', protect, authorize('tutor', 'admin'), addCourseAnnouncement);
 
 export default router;

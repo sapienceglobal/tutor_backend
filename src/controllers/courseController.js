@@ -6,13 +6,14 @@ import Settings from '../models/Settings.js';
 import Category from '../models/Category.js';
 import User from '../models/User.js';
 import jwt from 'jsonwebtoken';
+import mongoose from 'mongoose';
 
 // @desc    Get all published courses
 // @route   GET /api/courses
 export const getAllCourses = async (req, res) => {
   try {
 
-    const { categoryId, level, isFree, search, tutorId } = req.query;
+    const { categoryId, level, isFree, search, tutorId, scope } = req.query;
 
     // Check Guest Browsing Settings
     const settings = await Settings.findOne();
@@ -46,8 +47,45 @@ export const getAllCourses = async (req, res) => {
     if (isFree !== undefined) filter.isFree = isFree === 'true';
     if (tutorId) filter.tutorId = tutorId;
 
-    // Tenant Isolation
-    if (req.tenant) filter.instituteId = req.tenant._id;
+    // Multi-tenancy Scope Logic (Global vs Institute)
+    if (scope === 'global') {
+      // Show courses that are explicitly public OR courses without an institute (inherently global)
+      filter.$or = [
+        { visibility: 'public' },
+        { instituteId: null },
+        { instituteId: { $exists: false } }
+      ];
+    } else if (scope === 'institute' && req.user) {
+      filter.visibility = 'institute';
+
+      // Get User's institute
+      const user = await User.findById(req.user.id);
+      if (user && user.instituteId) {
+        filter.instituteId = user.instituteId;
+      } else {
+        // If scope is institute but user doesn't belong to one, fail safely
+        return res.status(400).json({
+          success: false,
+          message: 'You are not enrolled in any institute.',
+          courses: []
+        });
+      }
+    } else {
+      // Default behavior if no scope provided: Show Global + User's Institute Courses
+      if (req.user) {
+        const user = await User.findById(req.user.id);
+        if (user && user.instituteId) {
+          filter.$or = [
+            { visibility: 'public' },
+            { visibility: 'institute', instituteId: user.instituteId }
+          ];
+        } else {
+          filter.visibility = 'public';
+        }
+      } else {
+        filter.visibility = 'public'; // Guests only see public
+      }
+    }
 
     let courses = await Course.find(filter)
       .populate('categoryId', 'name icon')
@@ -55,7 +93,7 @@ export const getAllCourses = async (req, res) => {
         path: 'tutorId',
         populate: {
           path: 'userId',
-          select: 'name profileImage isBlocked',
+          select: 'name profileImage isBlocked instituteId',
         },
       })
       .sort({ createdAt: -1 });
@@ -114,12 +152,13 @@ export const getCourseById = async (req, res) => {
     // Check if user is enrolled (if authenticated)
     let isEnrolled = false;
     let isInstructor = false;
+    let enrollment = null;
 
     if (req.user) {
-      const enrollment = await Enrollment.findOne({
+      enrollment = await Enrollment.findOne({
         studentId: req.user.id,
         courseId: id,
-      });
+      }).populate('batchId');
       isEnrolled = !!enrollment;
 
       if (req.user.role === 'tutor' && course.tutorId?.userId?._id?.toString() === req.user.id) {
@@ -175,6 +214,7 @@ export const getCourseById = async (req, res) => {
       lessons,
       isEnrolled,
       isInstructor,
+      enrollment,
     });
   } catch (error) {
     console.error('Get course error:', error);
@@ -201,6 +241,7 @@ export const createCourse = async (req, res) => {
       modules,
       requirements,
       whatYouWillLearn,
+      visibility,
     } = req.body;
 
     if (!title || !description || !categoryId) {
@@ -225,7 +266,8 @@ export const createCourse = async (req, res) => {
       thumbnail,
       categoryId,
       tutorId: tutor._id,
-      instituteId: req.tenant?._id || null,
+      instituteId: tutor.instituteId,
+      createdBy: req.user.id,
       price: price || 0,
       level: level || 'beginner',
       duration: duration || 0,
@@ -233,6 +275,7 @@ export const createCourse = async (req, res) => {
       modules: modules || [],
       requirements: requirements || [],
       whatYouWillLearn: whatYouWillLearn || [],
+      visibility: tutor.instituteId ? (visibility || 'institute') : 'public',
     });
 
     const populatedCourse = await Course.findById(course._id)
@@ -285,7 +328,7 @@ export const updateCourse = async (req, res) => {
     const allowedUpdates = [
       'title', 'description', 'thumbnail', 'categoryId',
       'price', 'level', 'duration', 'language', 'modules',
-      'requirements', 'whatYouWillLearn', 'status',
+      'requirements', 'whatYouWillLearn', 'status', 'visibility',
     ];
 
     // Intercept Publish Request based on Admin Auto-Approve Setting
@@ -302,6 +345,24 @@ export const updateCourse = async (req, res) => {
         course[field] = req.body[field];
       }
     });
+
+    // Safety Fallbacks & Concept Sync for legacy courses/plugins
+    if (req.body.visibility) {
+      // Sync Course.visibility with visibilityScopePlugin's visibilityScope
+      course.visibilityScope = req.body.visibility === 'public' ? 'global' : 'institute';
+    } else if (!course.visibilityScope) {
+      // Default fallback for legacy records
+      course.visibilityScope = course.visibility === 'public' ? 'global' : 'institute';
+    }
+
+    if (!course.createdBy && req.user) {
+      course.createdBy = req.user.id;
+    }
+
+    // Ensure instituteId is present if scope is institute
+    if (course.visibilityScope === 'institute' && !course.instituteId) {
+      course.instituteId = req.tenant?._id || course.tutorId?.instituteId || null;
+    }
 
     await course.save();
 
@@ -386,7 +447,8 @@ export const getCoursesByTutor = async (req, res) => {
     const { tutorId } = req.params;
 
     const filter = { tutorId, status: 'published' };
-    if (req.tenant) filter.instituteId = req.tenant._id;
+    // Show all published courses for this tutor (no institute restriction)
+    // This endpoint is used for public tutor profiles
 
     const courses = await Course.find(filter)
       .populate('categoryId', 'name icon')
@@ -420,7 +482,9 @@ export const getMyCourses = async (req, res) => {
     }
 
     const filter = { tutorId: tutor._id };
-    if (req.tenant) filter.instituteId = req.tenant._id;
+    if (tutor.instituteId) {
+      filter.instituteId = tutor.instituteId;
+    }
 
     const courses = await Course.find(filter)
       .populate('categoryId', 'name icon')
@@ -505,5 +569,43 @@ export const getCourseStudentsDetailed = async (req, res) => {
       success: false,
       message: 'Internal server error',
     });
+  }
+};
+
+// @desc    Add announcement to course
+// @route   POST /api/courses/:id/announcements
+// @access  Private (Admin or Tutor)
+export const addCourseAnnouncement = async (req, res) => {
+  try {
+    const { title, message } = req.body;
+
+    if (!title || !message) {
+      return res.status(400).json({ success: false, message: 'Title and message are required' });
+    }
+
+    const course = await Course.findById(req.params.id);
+    if (!course) {
+      return res.status(404).json({ success: false, message: 'Course not found' });
+    }
+
+    // Verify tutor ownership
+    if (req.user.role === 'tutor') {
+      const tutor = await mongoose.model('Tutor').findOne({ userId: req.user._id });
+      if (!tutor || course.tutorId.toString() !== tutor._id.toString()) {
+        return res.status(403).json({ success: false, message: 'Not authorized to add announcement to this course' });
+      }
+    }
+
+    course.announcements.push({ title, message, createdAt: new Date() });
+    await course.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Announcement posted successfully',
+      announcements: course.announcements,
+    });
+  } catch (error) {
+    console.error('Add course announcement error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
   }
 };

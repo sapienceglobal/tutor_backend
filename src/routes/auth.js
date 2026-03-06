@@ -24,22 +24,36 @@ import {
   getActiveSessions,
   revokeSession,
   refreshAccessToken,
+  registerUserWithInvite,
+  listPublicInstitutes,
+  checkUserExists,
 } from '../controllers/authController.js';
+import {
+  sendOTP,
+  verifyOTPAndRegister,
+} from '../controllers/otpController.js';
 import { protect } from '../middleware/auth.js';
 
 const router = express.Router();
 
 // Public routes
 router.post('/register', registerUser);
+router.post('/register-with-invite', registerUserWithInvite);
+router.post('/check-user-exists', checkUserExists);
 router.post('/login', loginUser);
 router.post('/forgot-password', forgotPassword);
 router.post('/reset-password/:token', resetPassword);
+
+// OTP routes (public)
+router.post('/send-otp', sendOTP);
+router.post('/verify-otp-and-register', verifyOTPAndRegister);
 
 // 2FA login verification (public — uses tempToken)
 router.post('/verify-2fa-login', verify2FALogin);
 
 // Refresh token (public)
 router.post('/refresh-token', refreshAccessToken);
+router.get('/institutes', listPublicInstitutes);
 
 // OAuth routes (public)
 router.get('/google', googleAuth);

@@ -2,6 +2,71 @@ import { Exam, ExamAttempt } from '../models/Exam.js';
 import Course from '../models/Course.js';
 import Enrollment from '../models/Enrollment.js';
 import mongoose from 'mongoose';
+import {
+    buildAttemptQuestionResults,
+    evaluatePass,
+} from '../utils/examScoring.js';
+
+// @desc    Get all exam attempts for analytics
+// @route   GET /api/student/exams/history-all
+export const getExamHistory = async (req, res) => {
+    try {
+        const studentId = req.user.id;
+
+        // Get student's enrollments to filter attempts
+        const enrollments = await Enrollment.find({ studentId });
+        const enrolledCourseIds = enrollments.map(e => e.courseId.toString());
+
+        // Get all exam attempts with exam details
+        const attempts = await ExamAttempt.find({ studentId })
+            .populate({
+                path: 'examId',
+                select: 'title courseId totalQuestions duration',
+                populate: {
+                    path: 'courseId',
+                    select: 'title'
+                }
+            })
+            .sort({ submittedAt: -1 });
+
+        // Filter attempts to only include exams from enrolled courses
+        // But allow attempts even if no enrollments exist (for students who took exams before enrollment)
+        let filteredAttempts;
+        if (enrolledCourseIds.length > 0) {
+            filteredAttempts = attempts.filter(attempt =>
+                attempt.examId?.courseId &&
+                enrolledCourseIds.includes(attempt.examId.courseId._id.toString())
+            );
+        } else {
+            // If no enrollments, return all attempts (student might have taken exams before enrollment)
+            filteredAttempts = attempts.filter(attempt =>
+                attempt.examId?.courseId
+            );
+        }
+
+        // Format attempts for frontend
+        const formattedAttempts = filteredAttempts.map(attempt => ({
+            _id: attempt._id,
+            examId: attempt.examId._id,
+            examTitle: attempt.examId.title,
+            courseTitle: attempt.examId.courseId?.title || 'Unknown Course',
+            score: attempt.score,
+            totalMarks: attempt.totalMarks || attempt.examId?.totalQuestions || 0,
+            submittedAt: attempt.submittedAt,
+            date: attempt.submittedAt,
+            isPassed: attempt.isPassed
+        }));
+
+        res.status(200).json({
+            success: true,
+            attempts: formattedAttempts
+        });
+
+    } catch (error) {
+        console.error('Get exam history error:', error);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
 
 // @desc    Get all published exams (Student Portal)
 // @route   GET /api/student/exams/all
@@ -25,11 +90,22 @@ export const getAllExams = async (req, res) => {
             })
             .sort({ createdAt: -1 });
 
+        // Get student's enrollments to filter exams
+        const enrollments = await Enrollment.find({ studentId });
+        const enrolledCourseIds = enrollments.map(e => e.courseId.toString());
+
         // Get student's attempts to show status
         const myAttempts = await ExamAttempt.find({ studentId });
 
         const processedExams = exams.map(exam => {
             if (!exam.courseId) return null; // Skip if course deleted
+
+            // Only include exams from enrolled courses
+            // But if no enrollments, show no exams (better UX than showing all exams they can't access)
+            if (enrolledCourseIds.length > 0 && !enrolledCourseIds.includes(exam.courseId._id.toString())) return null;
+
+            // If no enrollments, don't show any exams (student needs to enroll first)
+            if (enrolledCourseIds.length === 0) return null;
 
             const attempts = myAttempts.filter(a => a.examId.toString() === exam._id.toString());
             const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
@@ -117,31 +193,47 @@ export const getExamById = async (req, res) => {
 export const submitExam = async (req, res) => {
     try {
         const { id } = req.params;
-        const { answers, timeSpent } = req.body;
+        const { answers, timeSpent, startedAt } = req.body;
         const studentId = req.user.id;
 
         const exam = await Exam.findById(id);
         if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
 
         let score = 0;
-        let correctCount = 0;
+        const attemptCount = await ExamAttempt.countDocuments({ examId: id, studentId });
 
         const processedAnswers = answers.map(ans => {
             const question = exam.questions.id(ans.questionId);
             if (!question) return null;
 
-            // Find selected option text
-            // Note: Frontend should send selectedOption index or ID. 
-            // Assuming index for now to match hackathon style simple UI, or ID if robust.
-            // Let's stick to existing logic pattern: expecting `selectedOption` (index) or `selectedOptionId`.
+            const isSubjective = !question.options || question.options.length === 0;
 
-            // Adaptation for "Hackathon UI" which usually sends index 0-3
-            const selectedOptIndex = ans.selectedOption;
-            const isCorrect = question.options[selectedOptIndex]?.isCorrect || false;
+            if (isSubjective) {
+                // Subjective question — store textAnswer, mark for manual review
+                return {
+                    questionId: question._id,
+                    selectedOption: -1,
+                    textAnswer: ans.textAnswer || '',
+                    isCorrect: false,
+                    pendingReview: true,
+                    pointsEarned: 0
+                };
+            }
+
+            // MCQ / option-based auto-grading
+            const selectedOptIndex = Number.isInteger(ans.selectedOption) ? ans.selectedOption : -1;
+            const selectedOptionText = (typeof ans.selectedOptionText === 'string' && ans.selectedOptionText.trim())
+                ? ans.selectedOptionText.trim()
+                : (selectedOptIndex >= 0 ? question.options[selectedOptIndex]?.text || null : null);
+            const optionByText = selectedOptionText
+                ? question.options.find(opt => opt.text === selectedOptionText)
+                : null;
+            const isCorrect = optionByText
+                ? optionByText.isCorrect || false
+                : (selectedOptIndex >= 0 ? question.options[selectedOptIndex]?.isCorrect || false : false);
 
             if (isCorrect) {
                 score += question.points || 1;
-                correctCount++;
             } else if (exam.negativeMarking && selectedOptIndex !== -1 && selectedOptIndex !== null) {
                 score -= (question.points || 1) * 0.25;
             }
@@ -149,26 +241,33 @@ export const submitExam = async (req, res) => {
             return {
                 questionId: question._id,
                 selectedOption: selectedOptIndex,
+                selectedOptionText,
                 isCorrect,
                 pointsEarned: isCorrect ? (question.points || 1) : 0
             };
         }).filter(Boolean);
 
         score = Math.max(0, score);
-        const percentage = (score / exam.totalMarks) * 100;
-        const isPassed = percentage >= (exam.passingPercentage || 33);
+        const passEvaluation = evaluatePass({
+            score,
+            totalMarks: exam.totalMarks,
+            passingPercentage: exam.passingPercentage,
+            passingMarks: exam.passingMarks,
+        });
+        const percentage = passEvaluation.displayPercentage;
+        const isPassed = passEvaluation.isPassed;
 
         const attempt = await ExamAttempt.create({
             examId: id,
             studentId,
             courseId: exam.courseId,
-            attemptNumber: 1,
+            attemptNumber: attemptCount + 1,
             answers: processedAnswers,
             score,
             percentage,
             isPassed,
             timeSpent,
-            startedAt: new Date(),
+            startedAt: startedAt ? new Date(startedAt) : new Date(),
             submittedAt: new Date()
         });
 
@@ -203,45 +302,46 @@ export const getAttemptDetails = async (req, res) => {
         const studentId = req.user.id;
 
         const attempt = await ExamAttempt.findOne({ _id: id, studentId })
-            .populate('examId', 'title totalMarks passingPercentage duration totalQuestions questions');
+            .populate('examId', 'title totalMarks passingPercentage passingMarks duration totalQuestions questions showCorrectAnswers hideSolutions');
 
         if (!attempt) {
             return res.status(404).json({ success: false, message: 'Result not found' });
         }
 
-        // Create a map of answers for easy lookup
-        const answerMap = {};
-        attempt.answers.forEach(ans => {
-            answerMap[ans.questionId.toString()] = ans;
-        });
-
-        // Enhance questions with attempt data
-        // We need to fetch the exam with questions populated if not already (ExamAttempt populate usually doesn't deep populate questions unless specified in schema, 
-        // but typically questions are embedded in Exam. Let's assume Exam has questions embedded).
-        // Actually, ExamAttempt has `answers` which has `questionId`. 
-        // We need the ACTUAL question text and options from the Exam model.
-        // The `populate('examId')` above fetches the Exam document. 
-
-        const detailedAnalysis = attempt.examId.questions.map(q => {
-            const studentAns = answerMap[q._id.toString()];
-            return {
-                _id: q._id,
-                question: q.question,
-                options: q.options,
-                points: q.points,
-                userSelectedOption: studentAns ? studentAns.selectedOption : -1,
-                isCorrect: studentAns ? studentAns.isCorrect : false,
-                correctOption: q.options.findIndex(opt => opt.isCorrect) // Result page CAN show correct answer
-            };
-        });
+        const detailedAnalysis = buildAttemptQuestionResults({
+            exam: attempt.examId,
+            attempt,
+        }).map((item) => ({
+            _id: item.questionId,
+            questionNumber: item.questionNumber,
+            question: item.question,
+            options: item.options,
+            points: item.pointsPossible,
+            userSelectedOption: item.selectedIndex,
+            selectedAnswerText: item.selectedAnswerText,
+            isCorrect: item.isCorrect,
+            status: item.status,
+            correctOption: item.correctIndex,
+            correctAnswerText: item.correctAnswerText,
+            canViewCorrectAnswer: item.canViewCorrectAnswer,
+            canViewSolution: item.canViewSolution,
+            solutionText: item.solutionText,
+            pointsEarned: item.pointsEarned,
+            pointsPossible: item.pointsPossible,
+        }));
+        const correctCount = detailedAnalysis.filter(item => item.status === 'correct').length;
+        const incorrectCount = detailedAnalysis.filter(item => item.status === 'incorrect').length;
+        const unansweredCount = detailedAnalysis.filter(item => item.status === 'unanswered').length;
 
         res.status(200).json({
             success: true,
             attempt: {
                 _id: attempt._id,
+                examId: attempt.examId._id,
                 examTitle: attempt.examId.title,
                 totalMarks: attempt.examId.totalMarks,
                 passingPercentage: attempt.examId.passingPercentage,
+                passingMarks: attempt.examId.passingMarks,
                 score: attempt.score,
                 percentage: attempt.percentage,
                 isPassed: attempt.isPassed,
@@ -249,9 +349,11 @@ export const getAttemptDetails = async (req, res) => {
                 submittedAt: attempt.submittedAt,
                 percentile: attempt.percentile,
                 totalQuestions: attempt.examId.totalQuestions,
-                correctCount: attempt.answers.filter(a => a.isCorrect).length,
-                incorrectCount: attempt.answers.filter(a => !a.isCorrect && a.selectedOption !== -1).length,
-                unansweredCount: attempt.answers.filter(a => a.selectedOption === -1).length,
+                showCorrectAnswers: attempt.examId.showCorrectAnswers,
+                hideSolutions: attempt.examId.hideSolutions,
+                correctCount,
+                incorrectCount,
+                unansweredCount,
                 analysis: detailedAnalysis
             }
         });

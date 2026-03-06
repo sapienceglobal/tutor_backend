@@ -6,10 +6,43 @@ import Category from '../models/Category.js';
 // @route   GET /api/tutors
 export const getAllTutors = async (req, res) => {
   try {
-    const { categoryId, minRating, maxRate, search } = req.query;
+    const { categoryId, minRating, maxRate, search, scope } = req.query;
 
     // Build filter object - Only show approved/verified tutors to students
     let filter = { isVerified: true };
+
+    // Multi-tenancy Scope Logic (Global vs Institute)
+    if (scope === 'global') {
+      // Global tutors are those who are not affiliated with any institute
+      filter.instituteId = { $exists: false };
+    } else if (scope === 'institute' && req.user) {
+      // Institute tutors are those affiliated with the user's institute
+      const user = await User.findById(req.user.id);
+      if (user && user.instituteId) {
+        filter.instituteId = user.instituteId;
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: 'You are not enrolled in any institute.',
+          tutors: []
+        });
+      }
+    } else if (!req.user || req.user.role === 'student') {
+      // Default student/guest view: see global tutors OR their own institute tutors
+      if (req.user) {
+        const user = await User.findById(req.user.id);
+        if (user && user.instituteId) {
+          filter.$or = [
+            { instituteId: { $exists: false } },
+            { instituteId: user.instituteId }
+          ];
+        } else {
+          filter.instituteId = { $exists: false };
+        }
+      } else {
+        filter.instituteId = { $exists: false };
+      }
+    }
 
     if (categoryId) {
       filter.categoryId = categoryId;
@@ -27,10 +60,10 @@ export const getAllTutors = async (req, res) => {
     if (req.user && req.user.role === 'student') {
       filter.blockedStudents = { $ne: req.user._id };
     }
-
     const tutors = await Tutor.find(filter)
       .populate('userId', 'name email phone profileImage')
       .populate('categoryId', 'name icon')
+      .populate('instituteId', 'name')
       .sort({ rating: -1, studentsCount: -1 });
 
     // Search by name if provided
@@ -60,10 +93,10 @@ export const getAllTutors = async (req, res) => {
 export const getTutorById = async (req, res) => {
   try {
     const { id } = req.params;
-
     const tutor = await Tutor.findById(id)
       .populate('userId', 'name email phone profileImage')
-      .populate('categoryId', 'name icon description');
+      .populate('categoryId', 'name icon description')
+      .populate('instituteId', 'name');
 
     if (!tutor) {
       return res.status(404).json({
@@ -111,10 +144,10 @@ export const getTutorsByCategory = async (req, res) => {
         message: 'Category not found'
       });
     }
-
     const tutors = await Tutor.find({ categoryId, isVerified: true })
       .populate('userId', 'name email phone profileImage')
       .populate('categoryId', 'name icon')
+      .populate('instituteId', 'name')
       .sort({ rating: -1 });
 
     res.status(200).json({
@@ -170,6 +203,10 @@ export const createTutor = async (req, res) => {
       });
     }
 
+    // Get institute from user context
+    const user = await User.findById(req.user.id);
+    const instituteId = user?.instituteId || null;
+
     const tutor = await Tutor.create({
       userId: req.user.id,
       categoryId,
@@ -180,7 +217,8 @@ export const createTutor = async (req, res) => {
       bio: bio || '',
       title: req.body.title || '',
       website: req.body.website || '',
-      location: req.body.location || ''
+      location: req.body.location || '',
+      instituteId
     });
 
     // Update user role to tutor
@@ -595,6 +633,46 @@ export const getTutorStudentDetails = async (req, res) => {
 
   } catch (error) {
     console.error('Get tutor student details error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+// @desc    Get all students enrolled in a tutor's courses
+// @route   GET /api/tutors/students
+export const getAllTutorStudents = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    // 1. Get Tutor Profile
+    const tutor = await Tutor.findOne({ userId });
+    if (!tutor) return res.status(404).json({ success: false, message: 'Tutor profile not found' });
+
+    // 2. Get Courses taught by tutor
+    const Course = (await import('../models/Course.js')).default;
+    const courses = await Course.find({ tutorId: tutor._id });
+    const courseIds = courses.map(c => c._id);
+
+    // 3. Get unique students from Enrollments
+    const Enrollment = (await import('../models/Enrollment.js')).default;
+    const enrollments = await Enrollment.find({ courseId: { $in: courseIds } })
+      .populate('studentId', 'name email profileImage');
+
+    // Deduplicate students
+    const uniqueStudentsMap = new Map();
+    enrollments.forEach(enr => {
+      if (enr.studentId && !uniqueStudentsMap.has(enr.studentId._id.toString())) {
+        uniqueStudentsMap.set(enr.studentId._id.toString(), enr.studentId);
+      }
+    });
+
+    const studentList = Array.from(uniqueStudentsMap.values());
+
+    res.status(200).json({
+      success: true,
+      data: studentList
+    });
+  } catch (error) {
+    console.error('Get all tutor students error:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };

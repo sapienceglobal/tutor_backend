@@ -1,6 +1,7 @@
 import Progress from '../models/Progress.js';
 import Enrollment from '../models/Enrollment.js';
 import Lesson from '../models/Lesson.js';
+import Course from '../models/Course.js';
 import { createNotification } from './notificationController.js';
 
 // @desc    Update lesson progress
@@ -14,13 +15,34 @@ export const updateProgress = async (req, res) => {
     }
 
     // 1. Check Enrollment
-    const enrollment = await Enrollment.findOne({
+    let enrollment = await Enrollment.findOne({
       studentId: req.user.id,
       courseId,
     });
 
+    // 2. Auto-enroll if not enrolled (for better UX)
     if (!enrollment) {
-      return res.status(403).json({ success: false, message: 'Not enrolled' });
+      try {
+        const course = await Course.findById(courseId);
+        
+        if (!course) {
+          return res.status(404).json({ success: false, message: 'Course not found' });
+        }
+
+        // Auto-enroll student
+        enrollment = await Enrollment.create({
+          studentId: req.user.id,
+          courseId,
+          enrolledAt: new Date(),
+          status: 'active',
+          paymentStatus: 'pending'
+        });
+
+        console.log(`Auto-enrolled student ${req.user.id} in course ${courseId}`);
+      } catch (enrollError) {
+        console.error('Auto-enrollment failed:', enrollError);
+        return res.status(500).json({ success: false, message: 'Failed to enroll in course' });
+      }
     }
 
     // 2. Find or Create Progress

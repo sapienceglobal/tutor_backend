@@ -2,14 +2,28 @@ import Assignment from '../models/Assignment.js';
 import Submission from '../models/Submission.js';
 import Course from '../models/Course.js';
 import Enrollment from '../models/Enrollment.js';
+import { createNotification } from './notificationController.js';
 
 // @desc    Create a new assignment
 // @route   POST /api/assignments
 // @access  Private (Tutor, Admin)
 export const createAssignment = async (req, res) => {
     try {
-        const { courseId, moduleId, title, description, dueDate, totalMarks, rubric, attachments, status } = req.body;
-        const instituteId = req.tenant.instituteId;
+        let { courseId, batchId, moduleId, title, description, dueDate, totalMarks, rubric, attachments, status } = req.body;
+        const instituteId = req.tenant ? req.tenant._id : null;
+
+        // Next.js FormData sometimes stringifies arrays/objects
+        if (typeof attachments === 'string') {
+            try { attachments = JSON.parse(attachments); } catch (e) { attachments = []; }
+        } else if (Array.isArray(attachments) && typeof attachments[0] === 'string' && attachments[0].startsWith('[')) {
+            try { attachments = JSON.parse(attachments[0]); } catch (e) { attachments = []; }
+        }
+
+        if (typeof rubric === 'string') {
+            try { rubric = JSON.parse(rubric); } catch (e) { rubric = []; }
+        } else if (Array.isArray(rubric) && typeof rubric[0] === 'string' && rubric[0].startsWith('[')) {
+            try { rubric = JSON.parse(rubric[0]); } catch (e) { rubric = []; }
+        }
 
         // Verify course exists and belongs to tenant
         const course = await Course.findOne({ _id: courseId, instituteId });
@@ -20,6 +34,7 @@ export const createAssignment = async (req, res) => {
         const assignment = new Assignment({
             instituteId,
             courseId,
+            batchId,
             moduleId,
             title,
             description,
@@ -31,6 +46,25 @@ export const createAssignment = async (req, res) => {
         });
 
         await assignment.save();
+
+        // Notify enrolled students
+        try {
+            const enrollments = await Enrollment.find({ courseId, status: 'active' }).select('studentId');
+            if (enrollments.length > 0) {
+                const notifications = enrollments.map(enr => ({
+                    userId: enr.studentId,
+                    type: 'assignment_created',
+                    title: 'New Assignment Posted',
+                    message: `A new assignment "${title}" has been added to your course.`,
+                    data: { courseId, assignmentId: assignment._id }
+                }));
+                // Fire and forget
+                Promise.all(notifications.map(n => createNotification(n))).catch(err => console.error("Notification trigger failed", err));
+            }
+        } catch (notifErr) {
+            console.error('Error sending assignment creation notifications:', notifErr);
+        }
+
         res.status(201).json({ success: true, assignment });
     } catch (error) {
         console.error(error);
@@ -44,20 +78,22 @@ export const createAssignment = async (req, res) => {
 export const getCourseAssignments = async (req, res) => {
     try {
         const { courseId } = req.params;
-        const instituteId = req.tenant.instituteId;
+        const instituteId = req.tenant ? req.tenant._id : null;
 
         // Check enrollment if student
-        if (req.user.role === 'student') {
-            const isEnrolled = await Enrollment.findOne({ studentId: req.user._id, courseId, status: 'active' });
-            if (!isEnrolled) {
-                return res.status(403).json({ success: false, message: 'Not enrolled in this course' });
-            }
-        }
-
         const query = { courseId, instituteId };
 
-        // Students only see published assignments
+        // If student, only show assignments for their specific batch OR course-wide assignments
         if (req.user.role === 'student') {
+            const enrollment = await Enrollment.findOne({ studentId: req.user._id, courseId, status: 'active' });
+            if (enrollment && enrollment.batchId) {
+                query.$or = [
+                    { batchId: enrollment.batchId },
+                    { batchId: null }
+                ];
+            } else {
+                query.batchId = null; // Only show course-wide if not in a specific batch
+            }
             query.status = 'published';
         }
 
@@ -97,7 +133,7 @@ export const getAssignment = async (req, res) => {
     try {
         const assignment = await Assignment.findOne({
             _id: req.params.id,
-            instituteId: req.tenant.instituteId
+            instituteId: req.tenant ? req.tenant._id : null
         });
 
         if (!assignment) {
@@ -131,7 +167,7 @@ export const getAssignment = async (req, res) => {
 export const updateAssignment = async (req, res) => {
     try {
         const assignment = await Assignment.findOneAndUpdate(
-            { _id: req.params.id, instituteId: req.tenant.instituteId },
+            { _id: req.params.id, instituteId: req.tenant ? req.tenant._id : null },
             { $set: req.body },
             { new: true, runValidators: true }
         );
@@ -154,7 +190,7 @@ export const deleteAssignment = async (req, res) => {
     try {
         const assignment = await Assignment.findOneAndDelete({
             _id: req.params.id,
-            instituteId: req.tenant.instituteId
+            instituteId: req.tenant ? req.tenant._id : null
         });
 
         if (!assignment) {
@@ -180,7 +216,7 @@ export const submitAssignment = async (req, res) => {
     try {
         const { content, attachments } = req.body;
         const assignmentId = req.params.id;
-        const instituteId = req.tenant.instituteId;
+        const instituteId = req.tenant ? req.tenant._id : null;
         const studentId = req.user._id;
 
         const assignment = await Assignment.findOne({ _id: assignmentId, instituteId, status: 'published' });
@@ -235,7 +271,7 @@ export const getAssignmentSubmissions = async (req, res) => {
     try {
         const submissions = await Submission.find({
             assignmentId: req.params.id,
-            instituteId: req.tenant.instituteId
+            instituteId: req.tenant ? req.tenant._id : null
         })
             .populate('studentId', 'name email avatar')
             .sort({ submittedAt: -1 });
@@ -256,7 +292,7 @@ export const gradeSubmission = async (req, res) => {
 
         const submission = await Submission.findOne({
             _id: req.params.submissionId,
-            instituteId: req.tenant.instituteId
+            instituteId: req.tenant ? req.tenant._id : null
         });
 
         if (!submission) {
@@ -271,6 +307,19 @@ export const gradeSubmission = async (req, res) => {
         submission.gradedBy = req.user._id;
 
         await submission.save();
+
+        // Notify the student about the grade
+        try {
+            await createNotification({
+                userId: submission.studentId,
+                type: 'assignment_graded',
+                title: 'Assignment Graded',
+                message: `Your assignment has been graded. You scored ${grade} marks.`,
+                data: { courseId: submission.courseId, assignmentId: submission.assignmentId }
+            });
+        } catch (notifErr) {
+            console.error('Error sending grade notification:', notifErr);
+        }
 
         res.json({ success: true, submission });
     } catch (error) {

@@ -1,12 +1,16 @@
 import User from '../models/User.js';
+import InstituteMembership from '../models/InstituteMembership.js';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
 import crypto from 'crypto';
 import speakeasy from 'speakeasy';
 import QRCode from 'qrcode';
+import mongoose from 'mongoose';
 import Tutor from '../models/Tutor.js';
 import Settings from '../models/Settings.js';
+import Institute from '../models/Institute.js';
+import Invite from '../models/Invite.js';
 
 // Setup JWT Generator from 'crypto';
 
@@ -35,11 +39,39 @@ const createEmailTransporter = () => {
   });
 };
 
+// @desc    Check if user exists
+// @route   POST /api/auth/check-user-exists
+export const checkUserExists = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+    }
+
+    const user = await User.findOne({ email: email.toLowerCase() });
+    
+    res.status(200).json({
+      success: true,
+      exists: !!user
+    });
+  } catch (error) {
+    console.error('Check user exists error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to check user existence'
+    });
+  }
+};
+
 // @desc    Register user
 // @route   POST /api/auth/register
 export const registerUser = async (req, res) => {
   try {
-    const { name, email, password, phone, role } = req.body;
+    const { name, email, password, phone, role, instituteId, registrationType, inviteToken } = req.body;
 
     if (!name || !email || !password || !phone) {
       return res.status(400).json({
@@ -47,6 +79,9 @@ export const registerUser = async (req, res) => {
         message: 'All fields are required'
       });
     }
+
+    // Initialize assignedInstituteId
+    let assignedInstituteId = null;
 
     // Check if Registration is globally allowed by Admin
     const settings = await Settings.findOne();
@@ -90,6 +125,50 @@ export const registerUser = async (req, res) => {
       assignedRole = 'student'; // Force down to student
     }
 
+    if (!['student', 'tutor'].includes(assignedRole)) {
+      assignedRole = 'student';
+    }
+
+    // Handle different registration types
+    if (registrationType === 'independent') {
+      // Independent registration - no invite required
+      // Users can register without institute
+      // No instituteId assignment
+      assignedInstituteId = null;
+    } else if (registrationType === 'invite') {
+      // Invite-based registration - invite token required
+      if (!inviteToken) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invite token is required for invite-based registration'
+        });
+      }
+
+      // Validate token exists and is valid
+      const invite = await Invite.findValidInvite(inviteToken);
+      
+      if (!invite) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid or expired invite token. Please contact your institute admin.'
+        });
+      }
+
+      // Verify email matches invite email
+      if (req.body.email.toLowerCase() !== invite.email.toLowerCase()) {
+        return res.status(400).json({
+          success: false,
+          message: 'Email does not match the invite email. Please use the email from your invite.'
+        });
+      }
+
+      // Set institute from invite
+      assignedInstituteId = invite.instituteId;
+    } else {
+      // Default to independent if no registration type specified
+      assignedInstituteId = null;
+    }
+
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
@@ -99,7 +178,8 @@ export const registerUser = async (req, res) => {
       email,
       password: hashedPassword,
       phone,
-      role: assignedRole
+      role: assignedRole,
+      instituteId: assignedInstituteId
     });
 
     // Auto-create Tutor profile if role is 'tutor'
@@ -109,6 +189,28 @@ export const registerUser = async (req, res) => {
         userId: user._id,
         isVerified: settings.autoApproveTutors || false
       });
+    }
+
+    // Create InstituteMembership if instituteId is provided
+    if (assignedInstituteId) {
+      await InstituteMembership.create({
+        userId: user._id,
+        instituteId: assignedInstituteId,
+        roleInInstitute: assignedRole,
+        status: 'active',
+        joinedVia: registrationType === 'invite' ? 'invite' : 'self_request',
+        approvedBy: user._id, // Self-approved for direct registration
+        approvedAt: new Date(),
+        permissions: getDefaultPermissions(assignedRole)
+      });
+    }
+
+    // Update invite status to 'accepted' if invite token was used
+    if (registrationType === 'invite' && inviteToken) {
+      const invite = await Invite.findValidInvite(inviteToken);
+      if (invite) {
+        await invite.acceptInvite(user._id);
+      }
     }
 
     // Generate token
@@ -124,6 +226,7 @@ export const registerUser = async (req, res) => {
         email: user.email,
         phone: user.phone,
         role: user.role,
+        instituteId: user.instituteId || null,
         profileImage: user.profileImage,
         language: user.language,
         notificationSettings: user.notificationSettings,
@@ -133,6 +236,132 @@ export const registerUser = async (req, res) => {
     });
   } catch (error) {
     console.error('Register error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Helper function to get default permissions for role
+function getDefaultPermissions(role) {
+  const permissions = {
+    student: {
+      canCreateCourses: false,
+      canCreateExams: false,
+      canViewAnalytics: false,
+      canManageStudents: false
+    },
+    tutor: {
+      canCreateCourses: true,
+      canCreateExams: true,
+      canViewAnalytics: true,
+      canManageStudents: false
+    },
+    admin: {
+      canCreateCourses: true,
+      canCreateExams: true,
+      canViewAnalytics: true,
+      canManageStudents: true
+    }
+  };
+
+  return permissions[role] || permissions.student;
+}
+
+// @desc    Register user with invite
+// @route   POST /api/auth/register-with-invite
+export const registerUserWithInvite = async (req, res) => {
+  try {
+    const { name, email, password, phone, inviteToken } = req.body;
+
+    if (!name || !email || !password || !phone || !inviteToken) {
+      return res.status(400).json({
+        success: false,
+        message: 'All fields and invite token are required'
+      });
+    }
+
+    // Validate invite token
+    const membership = await InstituteMembership.findByInviteToken(inviteToken);
+    
+    if (!membership) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired invite'
+      });
+    }
+
+    // Check if user exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: 'User already exists'
+      });
+    }
+
+    // Validate password strength
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 6 characters'
+      });
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create user
+    const user = await User.create({
+      name,
+      email,
+      password: hashedPassword,
+      phone,
+      role: membership.roleInInstitute,
+      instituteId: membership.instituteId._id
+    });
+
+    // Auto-create Tutor profile if role is 'tutor'
+    if (membership.roleInInstitute === 'tutor') {
+      const settings = (await Settings.findOne()) || {};
+      await Tutor.create({
+        userId: user._id,
+        isVerified: settings.autoApproveTutors || false
+      });
+    }
+
+    // Update membership with user details
+    membership.userId = user._id;
+    membership.status = 'active';
+    membership.approvedAt = new Date();
+    membership.approvedBy = membership.invitedBy;
+    
+    await membership.save();
+
+    // Generate token
+    const token = generateToken(user._id, membership.roleInInstitute);
+
+    res.status(201).json({
+      success: true,
+      message: 'User registered successfully with invite',
+      token,
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        instituteId: user.instituteId || null,
+        profileImage: user.profileImage,
+        language: user.language,
+        notificationSettings: user.notificationSettings,
+        authProvider: user.authProvider,
+        hasPassword: true
+      }
+    });
+  } catch (error) {
+    console.error('Register with invite error:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error'
@@ -217,6 +446,7 @@ export const loginUser = async (req, res) => {
         email: user.email,
         phone: user.phone,
         role: user.role,
+        instituteId: user.instituteId || null,
         profileImage: user.profileImage,
         language: user.language,
         notificationSettings: user.notificationSettings,
@@ -239,7 +469,9 @@ export const loginUser = async (req, res) => {
 // @route   GET /api/auth/me
 export const getMe = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).select('+password');
+    const user = await User.findById(req.user.id)
+      .populate('instituteId', 'name subdomain isActive subscriptionPlan')
+      .select('+password');
 
     if (!user) {
       return res.status(404).json({
@@ -258,6 +490,14 @@ export const getMe = async (req, res) => {
         email: user.email,
         phone: user.phone,
         role: user.role,
+        instituteId: user.instituteId?._id || user.instituteId || null,
+        institute: user.instituteId && typeof user.instituteId === 'object' ? {
+          _id: user.instituteId._id,
+          name: user.instituteId.name,
+          subdomain: user.instituteId.subdomain,
+          isActive: user.instituteId.isActive,
+          subscriptionPlan: user.instituteId.subscriptionPlan,
+        } : null,
         profileImage: user.profileImage,
         language: user.language,
         notificationSettings: user.notificationSettings,
@@ -705,6 +945,28 @@ export const updateLanguage = async (req, res) => {
   }
 };
 
+// @desc    List active institutes for public registration
+// @route   GET /api/auth/institutes
+export const listPublicInstitutes = async (_req, res) => {
+  try {
+    const institutes = await Institute.find({ isActive: true })
+      .select('name subdomain')
+      .sort({ name: 1 })
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      institutes
+    });
+  } catch (error) {
+    console.error('List institutes error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to load institutes'
+    });
+  }
+};
+
 // ==========================================
 // OAUTH LOGIN HANDLERS
 // ==========================================
@@ -719,6 +981,7 @@ const buildUserResponse = (user) => ({
   email: user.email,
   phone: user.phone,
   role: user.role,
+  instituteId: user.instituteId || null,
   profileImage: user.profileImage,
   language: user.language,
   notificationSettings: user.notificationSettings,
@@ -969,6 +1232,17 @@ export const setRole = async (req, res) => {
 
     user.role = role;
     await user.save();
+
+    if (role === 'tutor') {
+      const existingTutorProfile = await Tutor.findOne({ userId: user._id });
+      if (!existingTutorProfile) {
+        const settings = (await Settings.findOne()) || {};
+        await Tutor.create({
+          userId: user._id,
+          isVerified: settings.autoApproveTutors || false
+        });
+      }
+    }
 
     const token = generateToken(user._id, user.role);
 

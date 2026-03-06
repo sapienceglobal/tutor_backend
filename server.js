@@ -48,6 +48,12 @@ import zoomConfigRoutes from './src/routes/zoomConfigRoutes.js';
 import attendanceRoutes from './src/routes/attendance.js';
 import assignmentRoutes from './src/routes/assignments.js';
 import instituteRoutes from './src/routes/institute.js';
+import membershipRoutes from './src/routes/membershipRoutes.js';
+import inviteRoutes from './src/routes/inviteRoutes.js';
+import hybridAccessRoutes from './src/routes/hybridAccessRoutes.js';
+import vectorRoutes from './src/routes/vectorRoutes.js';
+import userInstituteRoutes from './src/routes/userInstitute.js';
+import aiStudyPlanRoutes from './src/routes/aiStudyPlanRoutes.js';
 
 import { verifyApiKey } from './src/middleware/apiKey.js';
 import { auditMiddleware } from './src/middleware/auditMiddleware.js';
@@ -155,6 +161,8 @@ app.use('/api/admin', adminRoutes);
 
 app.use('/api/exams', examRoutes);
 app.use('/api/student/exams', studentExamRoutes);
+app.use('/api/invite', inviteRoutes);
+app.use('/api/access', hybridAccessRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/question-sets', questionSetRoutes);
@@ -181,6 +189,17 @@ app.use('/api/zoom-config', zoomConfigRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/assignments', assignmentRoutes);
 app.use('/api/institutes', instituteRoutes);
+app.use('/api/membership', membershipRoutes);
+app.use('/api/vector', vectorRoutes);
+app.use('/api/user-institute', userInstituteRoutes);
+app.use('/api/ai', aiStudyPlanRoutes);
+
+// Proxy routes for frontend compatibility
+app.use('/api/proxy/admin/invites', inviteRoutes);
+app.use('/api/proxy/invite', inviteRoutes);
+
+// Direct admin routes (for proxy requests)
+app.use('/api/admin/invites', inviteRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

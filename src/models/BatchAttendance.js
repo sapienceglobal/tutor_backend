@@ -31,28 +31,18 @@ const attendanceSchema = new mongoose.Schema({
             trim: true,
         }
     }],
-    createdAt: {
-        type: Date,
-        default: Date.now,
-    },
-    updatedAt: {
-        type: Date,
-        default: Date.now,
-    },
-});
+}, { timestamps: true });
 
 // Ensure a tutor can only mark attendance once per batch per date (ignoring time)
 attendanceSchema.index({ batchId: 1, date: 1 }, { unique: true });
 
-attendanceSchema.pre('save', function (next) {
+attendanceSchema.pre('save', function () {
     // Normalize date to start of day for easier querying
     if (this.isModified('date')) {
         const d = new Date(this.date);
         d.setHours(0, 0, 0, 0);
         this.date = d;
     }
-    this.updatedAt = Date.now();
-    next();
 });
 
 export default mongoose.model('BatchAttendance', attendanceSchema);

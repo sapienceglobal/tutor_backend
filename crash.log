@@ -1,0 +1,59 @@
+﻿[dotenv@17.3.1] injecting env (19) from .env -- tip: ­ƒöÉ prevent committing .env to code: https://dotenvx.com/precommit
+[dotenv@17.3.1] injecting env (0) from .env -- tip: ­ƒöÉ prevent committing .env to code: https://dotenvx.com/precommit
+­ƒÜÇ Server running on port 4000
+­ƒôí API: http://localhost:4000/api
+Ô£à MongoDB Connected Successfully
+node : Error: TypeError: Cannot 
+set property query of 
+#<IncomingMessage> which has 
+only a getter
+At line:1 char:1
++ node server.js 2>&1 | 
+Out-File -Encoding utf8 
+crash.log
++ ~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : N 
+   otSpecified: (Error: TypeEr  
+  ro...s only a getter:String   
+ ) [], RemoteException
+    + FullyQualifiedErrorId : N 
+   ativeCommandError
+ 
+    at C:\Users\adars\OneDrive\D
+esktop\TutorApp\tutor-backend\no
+de_modules\express-mongo-sanitiz
+e\index.js:113:18
+    at Array.forEach 
+(<anonymous>)
+    at C:\Users\adars\OneDrive\D
+esktop\TutorApp\tutor-backend\no
+de_modules\express-mongo-sanitiz
+e\index.js:110:44
+    at Layer.handleRequest (C:\U
+sers\adars\OneDrive\Desktop\Tuto
+rApp\tutor-backend\node_modules\
+router\lib\layer.js:152:17)
+    at trimPrefix (C:\Users\adar
+s\OneDrive\Desktop\TutorApp\tuto
+r-backend\node_modules\router\in
+dex.js:342:13)
+    at C:\Users\adars\OneDrive\D
+esktop\TutorApp\tutor-backend\no
+de_modules\router\index.js:297:9
+    at processParams (C:\Users\a
+dars\OneDrive\Desktop\TutorApp\t
+utor-backend\node_modules\router
+\index.js:582:12)
+    at next (C:\Users\adars\OneD
+rive\Desktop\TutorApp\tutor-back
+end\node_modules\router\index.js
+:291:5)
+    at read (C:\Users\adars\OneD
+rive\Desktop\TutorApp\tutor-back
+end\node_modules\body-parser\lib
+\read.js:53:5)
+    at urlencodedParser (C:\User
+s\adars\OneDrive\Desktop\TutorAp
+p\tutor-backend\node_modules\bod
+y-parser\lib\types\urlencoded.js
+:57:5)

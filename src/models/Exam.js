@@ -62,6 +62,11 @@ const examSchema = new mongoose.Schema({
     ref: 'Tutor',
     required: true,
   },
+  batchId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Batch',
+    default: null,
+  },
   instituteId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Institute',
@@ -209,15 +214,32 @@ const examSchema = new mongoose.Schema({
 });
 
 // Update timestamp and calculated fields on save
-examSchema.pre('save', function (next) {
+examSchema.pre('save', function () {
   this.updatedAt = Date.now();
-  this.totalQuestions = this.questions.length;
-  this.totalMarks = this.questions.reduce((sum, q) => sum + (q.points || 1), 0);
+  const questionList = Array.isArray(this.questions) ? this.questions : [];
+  this.totalQuestions = questionList.length;
+  this.totalMarks = questionList.reduce((sum, q) => sum + (q.points || 1), 0);
 
-  if (this.passingMarks && this.totalMarks) {
-    this.passingPercentage = Math.round((this.passingMarks / this.totalMarks) * 100);
+  const hasPassingPercentage = this.passingPercentage !== undefined
+    && this.passingPercentage !== null
+    && Number.isFinite(Number(this.passingPercentage));
+  const hasPassingMarks = this.passingMarks !== undefined
+    && this.passingMarks !== null
+    && Number.isFinite(Number(this.passingMarks));
+
+  if (hasPassingPercentage) {
+    const safePercentage = Math.min(Math.max(Number(this.passingPercentage), 0), 100);
+    this.passingPercentage = safePercentage;
+    if (this.totalMarks > 0) {
+      this.passingMarks = Number(((safePercentage / 100) * this.totalMarks).toFixed(2));
+    }
+  } else if (hasPassingMarks) {
+    const safeMarks = Math.max(0, Number(this.passingMarks));
+    this.passingMarks = safeMarks;
+    if (this.totalMarks > 0) {
+      this.passingPercentage = Number(((safeMarks / this.totalMarks) * 100).toFixed(2));
+    }
   }
-
 
 });
 
@@ -247,6 +269,8 @@ const examAttemptSchema = new mongoose.Schema({
     questionId: mongoose.Schema.Types.ObjectId,
     selectedOption: Number, // Index from shuffled array
     selectedOptionText: String, // Actual text of selected option (fixes shuffle bug)
+    numericAnswer: Number, // ✅ NEW: For numeric questions
+    matchAnswers: mongoose.Schema.Types.Mixed, // ✅ NEW: For match-the-following questions { "left1": "right2" }
     isCorrect: Boolean,
     pointsEarned: Number,
 
@@ -258,6 +282,10 @@ const examAttemptSchema = new mongoose.Schema({
       explanation: String,
       points: Number,
       difficulty: String,
+      questionType: String,
+      numericAnswer: Number,
+      tolerance: Number,
+      pairs: [{ left: String, right: String }]
     },
   }],
   score: {

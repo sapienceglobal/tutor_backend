@@ -1,0 +1,77 @@
+{
+  "tutors": [
+    {
+      "_id": "698ad0d737e016d9c68d7034",
+      "userId": "698ad0d737e016d9c68d7032"
+    },
+    {
+      "_id": "698ad0d837e016d9c68d7039",
+      "userId": "698ad0d837e016d9c68d7037"
+    },
+    {
+      "_id": "698ad0d837e016d9c68d703e",
+      "userId": "698ad0d837e016d9c68d703c"
+    },
+    {
+      "_id": "698ad0d837e016d9c68d7043",
+      "userId": "698ad0d837e016d9c68d7041"
+    },
+    {
+      "_id": "698ad0d837e016d9c68d7048",
+      "userId": "698ad0d837e016d9c68d7046"
+    },
+    {
+      "_id": "698ad0d837e016d9c68d704d",
+      "userId": "698ad0d837e016d9c68d704b"
+    },
+    {
+      "_id": "699fd0a1f7f31f571630af4c",
+      "userId": "699fcbd281eef6aa7a2e171b"
+    },
+    {
+      "_id": "69a5a366a2086066bf0eeae0",
+      "userId": "69a5a366a2086066bf0eeadd"
+    },
+    {
+      "_id": "69a5a8a73025f2c7c050e915",
+      "userId": "69a5a4aaa2086066bf0eeccb"
+    }
+  ],
+  "users": [
+    {
+      "_id": "698ad0d737e016d9c68d7032",
+      "email": "john@example.com",
+      "role": "tutor"
+    },
+    {
+      "_id": "698ad0d837e016d9c68d7041",
+      "email": "emily@example.com",
+      "role": "tutor"
+    },
+    {
+      "_id": "698ad0d837e016d9c68d7046",
+      "email": "michael@example.com",
+      "role": "tutor"
+    },
+    {
+      "_id": "698ad0d837e016d9c68d704b",
+      "email": "sarah@example.com",
+      "role": "tutor"
+    },
+    {
+      "_id": "699fcbd281eef6aa7a2e171b",
+      "email": "gillu@example.com",
+      "role": "tutor"
+    },
+    {
+      "_id": "69a5a366a2086066bf0eeadd",
+      "email": "robert@example.com",
+      "role": "tutor"
+    },
+    {
+      "_id": "69a5a4aaa2086066bf0eeccb",
+      "email": "pillu@example.com",
+      "role": "tutor"
+    }
+  ]
+}

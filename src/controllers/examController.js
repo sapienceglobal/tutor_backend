@@ -2,6 +2,11 @@ import { Exam, ExamAttempt } from '../models/Exam.js';
 import Course from '../models/Course.js';
 import Enrollment from '../models/Enrollment.js';
 import mongoose from 'mongoose';
+import {
+  buildAttemptQuestionResults,
+  evaluatePass,
+  normalizePassingConfig,
+} from '../utils/examScoring.js';
 
 // @desc    Get all exams for a course (Tutor)
 // @route   GET /api/exams/course/:courseId
@@ -15,6 +20,19 @@ export const getExamsByCourse = async (req, res) => {
       courseId: new mongoose.Types.ObjectId(courseId),
       status: 'published' // Only show published exams to students
     };
+
+    // If student, find their batchId from enrollment
+    if (req.user.role === 'student') {
+      const enrollment = await Enrollment.findOne({ studentId: req.user.id, courseId, status: 'active' });
+      if (enrollment && enrollment.batchId) {
+        matchQuery.$or = [
+          { batchId: enrollment.batchId },
+          { batchId: null }
+        ];
+      } else {
+        matchQuery.batchId = null;
+      }
+    }
     if (req.tenant) matchQuery.instituteId = new mongoose.Types.ObjectId(req.tenant._id);
 
     const exams = await Exam.aggregate([
@@ -214,7 +232,8 @@ export const createExam = async (req, res) => {
       isFree,
       hideSolutions,
       sections,
-      isAdaptive
+      isAdaptive,
+      batchId
     } = req.body;
 
     if (!courseId) {
@@ -269,9 +288,15 @@ export const createExam = async (req, res) => {
     });
 
     const examStatus = status || 'published';
+    const totalMarksFromQuestions = cleanedQuestions.reduce((sum, question) => sum + (question.points || 1), 0);
+    const normalizedPassing = normalizePassingConfig(
+      { passingPercentage, passingMarks },
+      totalMarksFromQuestions
+    );
 
     const exam = await Exam.create({
       courseId,
+      batchId,
       tutorId: course.tutorId._id,
       instituteId: req.tenant?._id || null,
       title,
@@ -279,12 +304,12 @@ export const createExam = async (req, res) => {
       type: type || 'assessment',
       instructions,
       duration,
-      passingMarks,
+      passingMarks: normalizedPassing.passingMarks,
       questions: cleanedQuestions,
       shuffleQuestions: shuffleQuestions || false,
       shuffleOptions: shuffleOptions || false,
       showResultImmediately: showResultImmediately || false,
-      showCorrectAnswers: showCorrectAnswers || true,
+      showCorrectAnswers: showCorrectAnswers !== undefined ? showCorrectAnswers : true,
       hideSolutions: hideSolutions || false,
       allowRetake: allowRetake || false,
       maxAttempts: maxAttempts || 1,
@@ -294,7 +319,7 @@ export const createExam = async (req, res) => {
       status: examStatus,
       isPublished: examStatus === 'published',
       negativeMarking: negativeMarking || false,
-      passingPercentage: passingPercentage || 0,
+      passingPercentage: normalizedPassing.passingPercentage,
       isFree: isFree || false,
       sections: sections || [],
       isAdaptive: isAdaptive || false,
@@ -366,6 +391,29 @@ export const updateExam = async (req, res) => {
     // Sync isPublished with status if status was updated
     if (req.body.status) {
       exam.isPublished = req.body.status === 'published';
+    }
+
+    const shouldNormalizePassing = req.body.passingPercentage !== undefined
+      || req.body.passingMarks !== undefined
+      || req.body.questions !== undefined;
+    if (shouldNormalizePassing) {
+      const totalMarksFromQuestions = (exam.questions || []).reduce(
+        (sum, question) => sum + (question.points || 1),
+        0
+      );
+      const existingPercentage = Number(exam.passingPercentage) || 0;
+      const percentageInput = req.body.passingPercentage !== undefined
+        ? req.body.passingPercentage
+        : (req.body.passingMarks === undefined && existingPercentage > 0 ? exam.passingPercentage : undefined);
+      const marksInput = req.body.passingMarks !== undefined
+        ? req.body.passingMarks
+        : (req.body.passingPercentage === undefined ? exam.passingMarks : undefined);
+      const normalizedPassing = normalizePassingConfig(
+        { passingPercentage: percentageInput, passingMarks: marksInput },
+        totalMarksFromQuestions
+      );
+      exam.passingPercentage = normalizedPassing.passingPercentage;
+      exam.passingMarks = normalizedPassing.passingMarks;
     }
 
     await exam.save();
@@ -454,12 +502,21 @@ export const submitExam = async (req, res) => {
       const enrollment = await Enrollment.findOne({
         studentId: req.user.id,
         courseId: exam.courseId,
+        status: 'active'
       });
 
       if (!enrollment) {
         return res.status(403).json({
           success: false,
           message: 'You must be enrolled in the course to take this exam',
+        });
+      }
+
+      // If exam is batch-specific, verify student is in that batch
+      if (exam.batchId && enrollment.batchId?.toString() !== exam.batchId.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: 'This exam is not available for your batch.'
         });
       }
     }
@@ -500,38 +557,80 @@ export const submitExam = async (req, res) => {
         };
       }
 
-      // If we have selectedOptionText, use it to find the correct option (handles shuffled options)
       let isCorrect = false;
-      let selectedOptionIndex = ans.selectedOption;
-
-      if (ans.selectedOptionText && ans.selectedOption !== -1) {
-        // Find the option by text in the original question
-        const optionByText = question.options.find(opt => opt.text === ans.selectedOptionText);
-        if (optionByText) {
-          isCorrect = optionByText.isCorrect || false;
-        }
-      } else if (ans.selectedOption !== -1) {
-        // Fallback: use index (old behavior for backward compatibility)
-        isCorrect = question.options[ans.selectedOption]?.isCorrect || false;
-      }
-
-      // Calculate points
       let pointsEarned = 0;
-      if (isCorrect) {
-        pointsEarned = question.points || 1;
-      } else if (ans.selectedOption !== -1 && exam.negativeMarking) {
-        // Negative marking: Deduct 25% of question points
-        pointsEarned = -0.25 * (question.points || 1);
+      let selectedOptionIndex = Number.isInteger(ans.selectedOption) ? ans.selectedOption : -1;
+
+      const qType = question.questionType || 'mcq';
+
+      if (qType === 'mcq' || qType === 'passage_based') {
+        // If we have selectedOptionText, use it to find the correct option (handles shuffled options)
+        if (typeof ans.selectedOptionText === 'string' && ans.selectedOptionText.trim()) {
+          // Find the option by text in the original question
+          const optionByText = question.options.find(opt => opt.text === ans.selectedOptionText);
+          if (optionByText) {
+            isCorrect = optionByText.isCorrect || false;
+          }
+        } else if (ans.selectedOption !== -1) {
+          // Fallback: use index (old behavior for backward compatibility)
+          isCorrect = question.options[ans.selectedOption]?.isCorrect || false;
+        }
+
+        if (isCorrect) {
+          pointsEarned = question.points || 1;
+        } else if (ans.selectedOption !== -1 && exam.negativeMarking) {
+          pointsEarned = -0.25 * (question.points || 1);
+        }
+      } else if (qType === 'numeric') {
+        if (ans.numericAnswer !== undefined && ans.numericAnswer !== null && question.numericAnswer !== undefined) {
+          const studentAns = Number(ans.numericAnswer);
+          const correctAns = Number(question.numericAnswer);
+          const tolerance = Number(question.tolerance || 0);
+
+          if (Math.abs(studentAns - correctAns) <= tolerance) {
+            isCorrect = true;
+            pointsEarned = question.points || 1;
+          } else if (exam.negativeMarking) {
+            pointsEarned = -0.25 * (question.points || 1);
+          }
+        }
+      } else if (qType === 'match_the_following') {
+        if (ans.matchAnswers && typeof ans.matchAnswers === 'object' && question.pairs && question.pairs.length > 0) {
+          let correctMatches = 0;
+          const totalPairs = question.pairs.length;
+
+          question.pairs.forEach(pair => {
+            if (ans.matchAnswers[pair.left] === pair.right) {
+              correctMatches++;
+            }
+          });
+
+          if (correctMatches === totalPairs) {
+            isCorrect = true;
+            pointsEarned = question.points || 1;
+          } else if (correctMatches > 0) {
+            // Partial points for partial matches
+            pointsEarned = parseFloat(((correctMatches / totalPairs) * (question.points || 1)).toFixed(2));
+          } else if (exam.negativeMarking && Object.keys(ans.matchAnswers).length > 0) {
+            pointsEarned = -0.25 * (question.points || 1);
+          }
+        }
       }
 
       score += pointsEarned;
 
-      // Find correct option index in original question
-      const correctOptionIndex = question.options.findIndex(opt => opt.isCorrect);
+      // Find correct option index in original question (for MCQs)
+      const correctOptionIndex = (qType === 'mcq' || qType === 'passage_based') ? question.options.findIndex(opt => opt.isCorrect) : -1;
+      const selectedOptionText = (typeof ans.selectedOptionText === 'string' && ans.selectedOptionText.trim())
+        ? ans.selectedOptionText.trim()
+        : (selectedOptionIndex >= 0 ? question.options[selectedOptionIndex]?.text || null : null);
 
       return {
         questionId: ans.questionId,
         selectedOption: selectedOptionIndex,
+        selectedOptionText,
+        numericAnswer: ans.numericAnswer,
+        matchAnswers: ans.matchAnswers,
         isCorrect,
         pointsEarned,
 
@@ -543,25 +642,24 @@ export const submitExam = async (req, res) => {
           explanation: question.explanation || null,
           points: question.points,
           difficulty: question.difficulty,
+          questionType: qType,
+          numericAnswer: question.numericAnswer,
+          tolerance: question.tolerance,
+          pairs: question.pairs
         },
       };
     });
 
     // Ensure score doesn't go below 0
     score = Math.max(0, score);
-
-    const percentage = Math.round((score / exam.totalMarks) * 100);
-
-    // Determine Pass/Fail
-    // 1. If passingPercentage is set (> 0), use it
-    // 2. Else if passingMarks is set, use it
-    // 3. Fallback to default 33%
-    let isPassed = false;
-    if (exam.passingPercentage > 0) {
-      isPassed = percentage >= exam.passingPercentage;
-    } else {
-      isPassed = score >= (exam.passingMarks || (exam.totalMarks * 0.33));
-    }
+    const passEvaluation = evaluatePass({
+      score,
+      totalMarks: exam.totalMarks,
+      passingPercentage: exam.passingPercentage,
+      passingMarks: exam.passingMarks,
+    });
+    const percentage = passEvaluation.displayPercentage;
+    const isPassed = passEvaluation.isPassed;
 
     // Create attempt
     const attempt = await ExamAttempt.create({
@@ -610,6 +708,7 @@ export const submitExam = async (req, res) => {
       isPassed,
       totalMarks: exam.totalMarks,
       passingMarks: exam.passingMarks,
+      passingPercentage: exam.passingPercentage,
       attemptNumber: attemptCount + 1,
       timeSpent,
 
@@ -818,38 +917,24 @@ export const getAttemptDetails = async (req, res) => {
 
     const exam = attempt.examId;
 
-    // Build detailed results with questions
-    const detailedResults = exam.questions.map((q, index) => {
-      const studentAnswer = attempt.answers.find(
-        a => a.questionId.toString() === q._id.toString()
-      );
-      // Handle boolean or string 'true' for isCorrect (safety check)
-      const correctIndex = q.options.findIndex(opt => opt.isCorrect === true || opt.isCorrect === 'true');
-
-      return {
-        questionNumber: index + 1,
-        question: q.question,
-        options: q.options.map(opt => opt.text),
-        correctIndex,
-        selectedIndex: studentAnswer?.selectedOption ?? -1, // Fix: use selectedOption
-        isCorrect: studentAnswer?.isCorrect ?? false,
-        explanation: q.explanation,
-        pointsEarned: studentAnswer?.pointsEarned ?? 0,
-        pointsPossible: q.points || 1,
-      };
-    });
+    const detailedResults = buildAttemptQuestionResults({ exam, attempt });
 
     res.status(200).json({
       success: true,
       attempt: {
         ...attempt.toObject(),
         percentile: attempt.percentile,
+        totalMarks: exam.totalMarks,
+        passingMarks: exam.passingMarks,
+        passingPercentage: exam.passingPercentage,
       },
       exam: {
         title: exam.title,
         showCorrectAnswers: exam.showCorrectAnswers,
+        hideSolutions: exam.hideSolutions,
+        duration: exam.duration,
       },
-      detailedResults: (exam.showCorrectAnswers && !exam.hideSolutions) ? detailedResults : null,
+      detailedResults,
       hideSolutions: exam.hideSolutions // Inform frontend
     });
   } catch (error) {
@@ -1102,7 +1187,8 @@ export const getStudentExams = async (req, res) => {
           $or: [
             { courseId: { $in: enrolledCourseIds } }, // Access via enrollment
             { isPublic: true }, // Publicly accessible
-            { type: 'practice' } // All practice sets (refine if needed)
+            { isFree: true }, // Free exams accessible to all
+            { type: 'practice' } // All practice sets
           ]
         }
       },
@@ -1116,6 +1202,8 @@ export const getStudentExams = async (req, res) => {
         }
       },
       { $unwind: '$course' },
+      ...(req.query.scope === 'global' ? [{ $match: { 'course.visibility': 'public' } }] : []),
+      ...(req.query.scope === 'institute' ? [{ $match: { 'course.visibility': 'institute' } }] : []),
       // Lookup Student's attempts for each exam
       {
         $lookup: {
@@ -1141,7 +1229,9 @@ export const getStudentExams = async (req, res) => {
         $addFields: {
           myAttemptCount: { $size: '$myAttempts' },
           lastAttempt: { $last: '$myAttempts' },
-          courseTitle: '$course.title'
+          lastAttemptId: { $ifNull: [{ $getField: { field: '_id', input: { $last: '$myAttempts' } } }, null] },
+          courseTitle: '$course.title',
+          isCompleted: { $gt: [{ $size: '$myAttempts' }, 0] }
         }
       },
       {
@@ -1155,10 +1245,13 @@ export const getStudentExams = async (req, res) => {
           startDate: 1,
           endDate: 1,
           isScheduled: 1,
+          isFree: 1,
           courseTitle: 1,
           courseId: 1,
           myAttemptCount: 1,
           lastAttempt: 1,
+          lastAttemptId: 1,
+          isCompleted: 1,
           createdAt: 1
         }
       },

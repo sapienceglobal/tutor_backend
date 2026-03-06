@@ -20,7 +20,10 @@ const notificationSchema = new mongoose.Schema({
       'certificate',        // Certificate ready ho gaya
       'tutor_reply',        // Tutor ne comment/question ka reply diya
       'review_reply',
-      'new_review'
+      'new_review',
+      'study_plan_generated',
+      'assignment_created',
+      'assignment_graded'
     ],
     required: true
   },

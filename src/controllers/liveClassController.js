@@ -8,7 +8,7 @@ import Enrollment from '../models/Enrollment.js';
 // @route   POST /api/live-classes
 export const createLiveClass = async (req, res) => {
     try {
-        const { title, description, courseId, dateTime, duration, platform, autoCreate } = req.body;
+        const { title, description, courseId, batchId, dateTime, duration, platform, autoCreate } = req.body;
         let { meetingLink, meetingId, passcode, materialLink } = req.body;
 
         // Auto-Generate Jitsi Meeting Logic
@@ -74,6 +74,7 @@ export const createLiveClass = async (req, res) => {
             title,
             description,
             courseId,
+            batchId,
             instituteId: req.tenant?._id || null,
             dateTime,
             duration,
@@ -112,21 +113,33 @@ export const getLiveClasses = async (req, res) => {
         } else if (req.user.role === 'student') {
             // Industry Standard: Students only see classes for courses they are enrolled in
             const enrollments = await Enrollment.find({
-                studentId: req.user._id
+                studentId: req.user._id,
+                status: 'active'
             });
             const enrolledCourseIds = enrollments.map(e => e.courseId);
+            const batchIds = enrollments.filter(e => e.batchId).map(e => e.batchId);
 
             // If specific course requested (e.g. from course page), make sure they are enrolled
             if (req.query.courseId) {
-                const isEnrolled = enrolledCourseIds.some(id => id.toString() === req.query.courseId);
+                const enrollment = enrollments.find(e => e.courseId.toString() === req.query.courseId);
 
-                if (!isEnrolled) {
+                if (!enrollment) {
                     return res.status(403).json({ success: false, message: 'Not enrolled in this course' });
                 }
                 query.courseId = req.query.courseId;
+
+                // Filter by batch if assigned
+                if (enrollment.batchId) {
+                    query.$or = [{ batchId: enrollment.batchId }, { batchId: null }];
+                } else {
+                    query.batchId = null;
+                }
             } else {
-                // Otherwise show all their enrolled classes
-                query.courseId = { $in: enrolledCourseIds };
+                // Otherwise show all their enrolled classes (batch-specific OR course-wide)
+                query.$or = [
+                    { courseId: { $in: enrolledCourseIds }, batchId: null },
+                    { batchId: { $in: batchIds } }
+                ];
             }
         }
 
@@ -134,7 +147,13 @@ export const getLiveClasses = async (req, res) => {
             query.courseId = req.query.courseId;
         }
 
-        if (req.tenant) query.instituteId = req.tenant._id;
+        if (req.query.scope === 'global') {
+            query.instituteId = null;
+        } else if (req.query.scope === 'institute') {
+            query.instituteId = req.tenant ? req.tenant._id : { $ne: null };
+        } else {
+            if (req.tenant) query.instituteId = req.tenant._id;
+        }
 
         // Sort by dateTime ascending (nearest first)
         const classes = await LiveClass.find(query)

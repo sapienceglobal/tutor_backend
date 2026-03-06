@@ -40,6 +40,17 @@ export const protect = async (req, res, next) => {
       });
     }
 
+    // Attach tenant context when user belongs to an institute.
+    req.tenant = null;
+
+    // Admin accounts must always be tied to an institute.
+    if (req.user.role === 'admin' && !req.user.instituteId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Admin account is not linked to an institute'
+      });
+    }
+
     // Prevent blocked users from making requests
     if (req.user.isBlocked) {
       const reqUrl = req.originalUrl || req.url;
@@ -94,9 +105,17 @@ export const protect = async (req, res, next) => {
     // --- Subscription Expiry Check ---
     if (req.user.instituteId) {
       const institute = await Institute.findById(req.user.instituteId);
+      req.tenant = institute || null;
       const reqUrl = req.originalUrl || req.url; // Full URL path for reliable matching
 
-      if (institute && institute.subscriptionExpiresAt) {
+      if (!institute) {
+        return res.status(403).json({
+          success: false,
+          message: 'Institute not found for this account'
+        });
+      }
+
+      if (institute.subscriptionExpiresAt) {
         if (new Date(institute.subscriptionExpiresAt) < new Date()) {
           const readOnlyMethods = ['GET'];
           const allowedPaths = ['/api/auth/me', '/api/auth/sessions', '/api/payments'];
@@ -113,7 +132,7 @@ export const protect = async (req, res, next) => {
       }
 
       // --- Institute Suspension Check ---
-      if (institute && institute.isActive === false && req.user.role !== 'superadmin') {
+      if (institute.isActive === false && req.user.role !== 'superadmin') {
         const suspendedAllowedPaths = ['/api/auth/me', '/api/auth/logout'];
         const isSuspendedAllowed = suspendedAllowedPaths.some(p => reqUrl.startsWith(p));
 
@@ -204,12 +223,16 @@ export const authorize = (...roles) => {
 // Optional auth — populates req.user if token exists, but doesn't block if missing
 export const optionalAuth = async (req, res, next) => {
   try {
+    req.tenant = null;
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
       const token = req.headers.authorization.split(' ')[1];
       if (token) {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         if (!decoded.pending2FA) {
           req.user = await User.findById(decoded.id);
+          if (req.user?.instituteId) {
+            req.tenant = await Institute.findById(req.user.instituteId);
+          }
         }
       }
     }

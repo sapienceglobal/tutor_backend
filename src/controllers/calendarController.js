@@ -1,5 +1,6 @@
 import { Exam } from '../models/Exam.js';
 import Enrollment from '../models/Enrollment.js';
+import Tutor from '../models/Tutor.js';
 import mongoose from 'mongoose';
 
 // @desc    Get upcoming scheduled exams for the dashboard calendar widget
@@ -26,8 +27,13 @@ export const getUpcomingExams = async (req, res) => {
             // Only fetch exams for courses the student is enrolled in
             query.courseId = { $in: courseIds };
         } else if (req.user.role === 'tutor') {
-            // Tutor only sees exams they created
-            query.tutorId = req.user.tutorId;
+            const tutor = await Tutor.findOne({ userId: req.user._id });
+            if (tutor) {
+                // Tutor only sees exams they created
+                query.tutorId = tutor._id;
+            } else {
+                return res.status(403).json({ success: false, message: 'Tutor profile not found' });
+            }
         }
 
         // Fetch upcoming exams, sorted by closest start date

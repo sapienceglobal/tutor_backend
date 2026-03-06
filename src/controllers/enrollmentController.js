@@ -8,7 +8,7 @@ import { createNotification } from './notificationController.js';
 // @route   POST /api/enrollments
 export const enrollInCourse = async (req, res) => {
   try {
-    const { courseId } = req.body;
+    const { courseId, batchId } = req.body;
 
     if (!courseId) {
       return res.status(400).json({
@@ -81,6 +81,7 @@ export const enrollInCourse = async (req, res) => {
     const enrollment = await Enrollment.create({
       studentId: req.user.id,
       courseId,
+      batchId,
     });
 
     await createNotification({
@@ -119,12 +120,20 @@ export const enrollInCourse = async (req, res) => {
 // @route   GET /api/enrollments/my-enrollments
 export const getMyEnrollments = async (req, res) => {
   try {
-    const { status } = req.query;
+    console.log('🔍 DEBUG - getMyEnrollments called:', {
+      userId: req.user?.id,
+      userRole: req.user?.role,
+      query: req.query
+    });
+
+    const { status, scope } = req.query;
 
     let filter = { studentId: req.user.id };
     if (status) filter.status = status;
 
-    const enrollments = await Enrollment.find(filter)
+    console.log('🔍 DEBUG - Enrollment filter:', filter);
+
+    let enrollments = await Enrollment.find(filter)
       .populate({
         path: 'courseId',
         populate: {
@@ -136,6 +145,14 @@ export const getMyEnrollments = async (req, res) => {
         },
       })
       .sort({ enrolledAt: -1 });
+
+    if (scope === 'global') {
+      enrollments = enrollments.filter(e => e.courseId && e.courseId.visibility === 'public');
+    } else if (scope === 'institute') {
+      enrollments = enrollments.filter(e => e.courseId && e.courseId.visibility === 'institute');
+    }
+
+    console.log('🔍 DEBUG - Found enrollments:', enrollments.length);
 
     res.status(200).json({
       success: true,
@@ -401,6 +418,77 @@ export const removeStudentFromCourse = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Internal server error',
+    });
+  }
+};
+
+// @desc    Get all announcements for a student across all enrolled courses
+// @route   GET /api/enrollments/my-announcements
+// @access  Private (Student)
+export const getStudentAnnouncements = async (req, res) => {
+  try {
+    const enrollments = await Enrollment.find({ studentId: req.user.id, status: 'active' })
+      .populate({
+        path: 'courseId',
+        select: 'title announcements'
+      })
+      .populate({
+        path: 'batchId',
+        select: 'name announcements'
+      });
+
+    let allAnnouncements = [];
+
+    enrollments.forEach(enrollment => {
+      const course = enrollment.courseId;
+      const batch = enrollment.batchId;
+
+      // Add Course-level announcements
+      if (course && course.announcements && course.announcements.length > 0) {
+        course.announcements.forEach(ann => {
+          allAnnouncements.push({
+            id: ann._id,
+            type: 'course',
+            courseId: course._id,
+            courseTitle: course.title,
+            title: ann.title,
+            message: ann.message,
+            createdAt: ann.createdAt
+          });
+        });
+      }
+
+      // Add Batch-level announcements
+      if (batch && batch.announcements && batch.announcements.length > 0) {
+        batch.announcements.forEach(ann => {
+          allAnnouncements.push({
+            id: ann._id,
+            type: 'batch',
+            batchId: batch._id,
+            batchName: batch.name,
+            courseTitle: course?.title || 'Course',
+            title: ann.title,
+            message: ann.message,
+            createdAt: ann.createdAt
+          });
+        });
+      }
+    });
+
+    // Sort by most recent first
+    allAnnouncements.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    res.status(200).json({
+      success: true,
+      count: allAnnouncements.length,
+      announcements: allAnnouncements
+    });
+
+  } catch (error) {
+    console.error('Get student announcements error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };

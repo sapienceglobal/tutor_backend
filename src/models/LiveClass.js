@@ -20,10 +20,21 @@ const liveClassSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Course'
     },
+    batchId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Batch',
+        default: null
+    },
     instituteId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Institute',
         default: null
+    },
+    visibility: {
+        type: String,
+        enum: ['public', 'institute'],
+        default: 'institute',
+        index: true
     },
     dateTime: {
         type: Date,

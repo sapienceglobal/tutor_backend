@@ -1,20 +1,20 @@
 import Skill from '../models/Skill.js';
 import Topic from '../models/Topic.js';
+import Tutor from '../models/Tutor.js';
 
 // --- SKILLS ---
 
 export const createSkill = async (req, res) => {
     try {
         const { name, description } = req.body;
-        // Assuming req.user.tutorId is populated via middleware or we look it up
-        // For now, using req.user.id and finding tutor
-        // Better: Ensure protect middleware adds tutorId if possible, or lookup here
-        const tutorId = req.user.tutorId; // Needs updated auth middleware or lookup
+
+        const tutor = await Tutor.findOne({ userId: req.user.id });
+        if (!tutor) return res.status(404).json({ success: false, message: 'Tutor profile not found' });
 
         const skill = await Skill.create({
             name,
             description,
-            tutorId
+            tutorId: tutor._id
         });
 
         res.status(201).json({ success: true, skill });
@@ -25,7 +25,10 @@ export const createSkill = async (req, res) => {
 
 export const getSkills = async (req, res) => {
     try {
-        const skills = await Skill.find({ tutorId: req.user.tutorId });
+        const tutor = await Tutor.findOne({ userId: req.user.id });
+        if (!tutor) return res.status(404).json({ success: false, message: 'Tutor profile not found' });
+
+        const skills = await Skill.find({ tutorId: tutor._id });
         res.status(200).json({ success: true, skills });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -37,15 +40,21 @@ export const getSkills = async (req, res) => {
 export const createTopic = async (req, res) => {
     try {
         const { name, description, courseId } = req.body;
-        const tutorId = req.user.tutorId;
 
-        const topic = await Topic.create({
+        const tutor = await Tutor.findOne({ userId: req.user.id });
+        if (!tutor) return res.status(404).json({ success: false, message: 'Tutor profile not found' });
+
+        const topicData = {
             name,
             description,
-            courseId,
-            tutorId
-        });
+            tutorId: tutor._id
+        };
+        // courseId can be empty string from UI, which fails ObjectId casting
+        if (courseId) {
+            topicData.courseId = courseId;
+        }
 
+        const topic = await Topic.create(topicData);
         res.status(201).json({ success: true, topic });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -54,7 +63,10 @@ export const createTopic = async (req, res) => {
 
 export const getTopics = async (req, res) => {
     try {
-        const topics = await Topic.find({ tutorId: req.user.tutorId }).populate('courseId', 'title');
+        const tutor = await Tutor.findOne({ userId: req.user.id });
+        if (!tutor) return res.status(404).json({ success: false, message: 'Tutor profile not found' });
+
+        const topics = await Topic.find({ tutorId: tutor._id }).populate('courseId', 'title');
         res.status(200).json({ success: true, topics });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });

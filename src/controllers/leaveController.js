@@ -15,6 +15,22 @@ export const applyLeave = async (req, res) => {
             });
         }
 
+        // Check for overlapping pending or approved leaves
+        const existingLeave = await Leave.findOne({
+            userId: req.user.id,
+            status: { $in: ['pending', 'approved'] },
+            $or: [
+                { startDate: { $lte: endDate }, endDate: { $gte: startDate } }
+            ]
+        });
+
+        if (existingLeave) {
+            return res.status(400).json({
+                success: false,
+                message: 'You already have a pending or approved leave request during these dates.'
+            });
+        }
+
         const leave = await Leave.create({
             userId: req.user.id,
             role: req.user.role,
@@ -112,6 +128,77 @@ export const updateLeaveStatus = async (req, res) => {
         });
     } catch (error) {
         console.error('Update leave status error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+// @desc    Update own leave request (only if pending)
+// @route   PUT /api/leaves/:id
+// @access  Private (Student/Tutor - own leaves only)
+export const updateMyLeave = async (req, res) => {
+    try {
+        const leave = await Leave.findById(req.params.id);
+
+        if (!leave) {
+            return res.status(404).json({ success: false, message: 'Leave request not found' });
+        }
+
+        if (leave.userId.toString() !== req.user.id) {
+            return res.status(403).json({ success: false, message: 'Not authorized to update this leave' });
+        }
+
+        if (leave.status !== 'pending') {
+            return res.status(400).json({ success: false, message: 'Only pending leave requests can be edited' });
+        }
+
+        const { startDate, endDate, reason, documents, substituteId } = req.body;
+
+        if (startDate) leave.startDate = startDate;
+        if (endDate) leave.endDate = endDate;
+        if (reason) leave.reason = reason;
+        if (documents !== undefined) leave.documents = documents;
+        if (substituteId !== undefined) leave.substituteId = substituteId || null;
+
+        await leave.save();
+
+        res.status(200).json({
+            success: true,
+            message: 'Leave request updated successfully',
+            leave
+        });
+    } catch (error) {
+        console.error('Update my leave error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+// @desc    Delete own leave request (only if pending)
+// @route   DELETE /api/leaves/:id
+// @access  Private (Student/Tutor - own leaves only)
+export const deleteMyLeave = async (req, res) => {
+    try {
+        const leave = await Leave.findById(req.params.id);
+
+        if (!leave) {
+            return res.status(404).json({ success: false, message: 'Leave request not found' });
+        }
+
+        if (leave.userId.toString() !== req.user.id) {
+            return res.status(403).json({ success: false, message: 'Not authorized to delete this leave' });
+        }
+
+        if (leave.status !== 'pending') {
+            return res.status(400).json({ success: false, message: 'Only pending leave requests can be deleted' });
+        }
+
+        await Leave.findByIdAndDelete(req.params.id);
+
+        res.status(200).json({
+            success: true,
+            message: 'Leave request deleted successfully'
+        });
+    } catch (error) {
+        console.error('Delete my leave error:', error);
         res.status(500).json({ success: false, message: 'Server error' });
     }
 };

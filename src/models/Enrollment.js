@@ -11,6 +11,10 @@ const enrollmentSchema = new mongoose.Schema({
     ref: 'Course',
     required: true,
   },
+  batchId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Batch',
+  },
   enrolledAt: {
     type: Date,
     default: Date.now,

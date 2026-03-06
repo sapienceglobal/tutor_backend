@@ -31,7 +31,14 @@ const instituteSchema = new mongoose.Schema({
         hlsStreaming: { type: Boolean, default: false },
         customBranding: { type: Boolean, default: false },
         zoomIntegration: { type: Boolean, default: false },
-        aiFeatures: { type: Boolean, default: false }
+        aiFeatures: { type: Boolean, default: false },
+        manageTutors: { type: Boolean, default: true },
+        manageStudents: { type: Boolean, default: true },
+        maxTutors: { type: Number, default: 5 },
+        maxStudents: { type: Number, default: 50 },
+        customDomain: { type: Boolean, default: false },
+        advancedAnalytics: { type: Boolean, default: false },
+        apiAccess: { type: Boolean, default: false }
     },
     isActive: {
         type: Boolean,
@@ -73,4 +80,6 @@ const instituteSchema = new mongoose.Schema({
 });
 
 const Institute = mongoose.model('Institute', instituteSchema);
+
+export { Institute };
 export default Institute;

@@ -42,20 +42,7 @@ const leaveSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Tutor',
         default: null,
-    },
-    createdAt: {
-        type: Date,
-        default: Date.now,
-    },
-    updatedAt: {
-        type: Date,
-        default: Date.now,
-    },
-});
-
-leaveSchema.pre('save', function (next) {
-    this.updatedAt = Date.now();
-    next();
-});
+    }
+}, { timestamps: true });
 
 export default mongoose.model('Leave', leaveSchema);

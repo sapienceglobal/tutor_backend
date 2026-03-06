@@ -4,6 +4,8 @@ import Enrollment from '../models/Enrollment.js';
 import QuizAttempt from '../models/QuizAttempt.js';
 import AIUsageLog from '../models/AIUsageLog.js';
 import Institute from '../models/Institute.js';
+import VectorService from '../services/vectorService.js';
+import AIChatSession from '../models/AIChatSession.js';
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
@@ -419,6 +421,114 @@ export const chatWithTutor = async (req, res) => {
     }
 };
 
+// @desc    RAG-based AI Tutor Chat with Citations
+// @route   POST /api/ai/tutor-chat-rag
+export const tutorChatRAG = async (req, res) => {
+    try {
+        if (!GROQ_API_KEY) {
+            return res.status(500).json({
+                success: false,
+                message: 'Groq API key not configured'
+            });
+        }
+
+        const { message, courseId, lessonId } = req.body;
+
+        if (!message) {
+            return res.status(400).json({
+                success: false,
+                message: 'Message is required'
+            });
+        }
+
+        // Get user's instituteId
+        const user = await (await import('../models/User.js')).default.findById(req.user.id);
+        const instituteId = user?.instituteId;
+
+        // Perform similarity search to get relevant context
+        let context = '';
+        let citations = [];
+
+        try {
+            const searchResults = await VectorService.similaritySearch(
+                message,
+                courseId,
+                instituteId,
+                5
+            );
+
+            if (searchResults && searchResults.length > 0) {
+                context = searchResults.map((result, index) =>
+                    `[Source ${index + 1}]: ${result.content}`
+                ).join('\n\n');
+
+                citations = searchResults.map((result, index) => ({
+                    id: index + 1,
+                    lessonTitle: result.lesson.title,
+                    contentType: result.contentType,
+                    content: result.content.substring(0, 200) + '...',
+                    similarity: result.similarity,
+                    metadata: result.metadata
+                }));
+            }
+        } catch (searchError) {
+            console.error('Vector search error:', searchError);
+            // Continue without context if search fails
+        }
+
+        // Build messages array for Groq AI
+        const messages = [
+            {
+                role: 'system',
+                content: `You are an expert AI Tutor for Sapience LMS. You help students learn effectively by providing accurate, educational answers.
+
+${context ? `Context from course materials:
+${context}
+
+IMPORTANT: Use the provided context to answer the student's question. If the context doesn't contain enough information, you can supplement with your general knowledge but clearly indicate when you're doing so.
+
+CITATION FORMAT: When using information from the context, include citations like [Source 1], [Source 2] etc.` : 'Provide helpful educational answers based on your general knowledge.'}
+
+Guidelines:
+- Be educational and encouraging
+- Explain concepts clearly
+- Provide examples when helpful
+- Include citations when using context materials
+- If you don't know something, admit it honestly
+- Keep responses concise but thorough`
+            },
+            {
+                role: 'user',
+                content: message
+            }
+        ];
+
+        const responseText = await callGroqAIChat(messages);
+
+        res.status(200).json({
+            success: true,
+            reply: responseText,
+            citations,
+            contextUsed: context.length > 0
+        });
+
+        // Log usage
+        await logAIUsage(req.user.id, 'tutor_chat', {
+            courseId,
+            lessonId,
+            citationsCount: citations.length
+        });
+
+    } catch (error) {
+        console.error('RAG AI Tutor Chat error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to communicate with AI Tutor',
+            error: error.message,
+        });
+    }
+};
+
 // @desc    Generate personalized analytics for a student
 // @route   GET /api/ai/analytics/student
 export const generateStudentAnalytics = async (req, res) => {
@@ -604,6 +714,131 @@ Content: "${textContent || 'Video/multimedia content — create notes based on t
     }
 };
 
+// @desc    Contextual Chat with AI Assistant (adapts to current page context)
+// @route   POST /api/ai/contextual-chat
+export const contextualChat = async (req, res) => {
+    try {
+        if (!GROQ_API_KEY) {
+            return res.status(500).json({ success: false, message: 'Groq API key not configured' });
+        }
+
+        const { message, history = [], context = {} } = req.body;
+
+        if (!message) {
+            return res.status(400).json({ success: false, message: 'Message is required' });
+        }
+
+        let systemContext = `You are a helpful, expert AI assistant embedded directly within a student's learning platform. Your goal is to provide concise, accurate, and highly relevant guidance.
+        Keep formatting clean using Markdown (bullet points, bolding).
+        `;
+
+        // Enhance system prompt dynamically based on the provided context
+        if (context.pageType === 'assignment_upload') {
+            systemContext += `\n\nCURRENT CONTEXT: The student is currently on the "Upload Assignment" page, preparing to submit their work.`;
+            if (context.courseId) {
+                const course = await (await import('../models/Course.js')).default.findById(context.courseId).select('title');
+                if (course) systemContext += `\nThey have selected the course: "${course.title}".`;
+            }
+            if (context.assignmentId) {
+                const assignment = await (await import('../models/Assignment.js')).default.findById(context.assignmentId);
+                if (assignment) {
+                    systemContext += `\nThey are uploading a submission for the assignment titled: "${assignment.title}".`;
+                    if (assignment.description) systemContext += `\nAssignment Details: ${assignment.description}`;
+                    if (assignment.totalMarks) systemContext += `\nTotal Marks: ${assignment.totalMarks}`;
+                    systemContext += `\nProvide guidance strictly relevant to helping them complete, format, or understand this specific assignment. Do not write the assignment for them; rather, act as an academic tutor giving them hints, clarifying the requirements, or helping structure their response.`;
+                }
+            } else {
+                systemContext += `\nThey have not yet selected a specific assignment.`;
+            }
+        } else if (context.pageType === 'course_details') {
+            systemContext += `\n\nCURRENT CONTEXT: The student is viewing a Course overview/curriculum page.`;
+            if (context.courseId) {
+                const course = await (await import('../models/Course.js')).default.findById(context.courseId).populate({
+                    path: 'tutorId',
+                    populate: { path: 'userId', select: 'name bio' }
+                });
+                const Enrollment = (await import('../models/Enrollment.js')).default;
+                const Lesson = (await import('../models/Lesson.js')).default;
+
+                if (course) {
+                    const totalLessons = await Lesson.countDocuments({ courseId: course._id });
+                    const enrollment = await Enrollment.findOne({ studentId: req.user._id, courseId: course._id });
+
+                    const tutorName = course.tutorId?.userId?.name || 'Unknown Tutor';
+                    const tutorBio = course.tutorId?.bio || course.tutorId?.userId?.bio || 'No bio available';
+                    const tutorExperience = course.tutorId?.experience ? `${course.tutorId.experience} years` : 'Unknown';
+                    const tutorSubjects = course.tutorId?.subjects?.join(', ') || 'Various Subjects';
+
+                    systemContext += `\nCourse Title: "${course.title}"`;
+                    if (course.description) systemContext += `\nDescription: ${course.description}`;
+                    if (course.whatYouWillLearn?.length) systemContext += `\nWhat they will learn: ${course.whatYouWillLearn.join(', ')}`;
+
+                    systemContext += `\n\n==== COURSE METADATA (DO NOT HALLUCINATE) ====`;
+                    systemContext += `\nTotal Lessons in Course: ${totalLessons}`;
+                    systemContext += `\nTutor's Name: ${tutorName}`;
+                    systemContext += `\nTutor's Experience: ${tutorExperience}`;
+                    systemContext += `\nTutor's Subjects: ${tutorSubjects}`;
+                    systemContext += `\nTutor's Bio: ${tutorBio}`;
+
+                    if (enrollment) {
+                        const progressPercent = enrollment.progress?.percentage || 0;
+                        const completedCount = enrollment.progress?.completedLessons?.length || 0;
+                        systemContext += `\nStudent's Current Progress: ${progressPercent}% completed (${completedCount} out of ${totalLessons} lessons finished).`;
+                    } else {
+                        systemContext += `\nStudent Status: NOT ENROLLED IN THIS COURSE yet. Provide guidance on why they should enroll based on the curriculum.`;
+                    }
+                    systemContext += `\n============================================\n`;
+
+                    systemContext += `\nAct as a knowledgeable guide about this specific course. Answer questions about what topics it covers, curriculum counts, tutor profile, the prerequisites, and course objectives using the EXACT factual data provided above.`;
+                }
+            }
+        } else if (context.pageType === 'tutor_profile') {
+            systemContext += `\n\nCURRENT CONTEXT: The student is viewing a Tutor's public profile and booking page.`;
+            if (context.tutorId) {
+                const tutor = await (await import('../models/Tutor.js')).default.findById(context.tutorId).populate('userId', 'name');
+                if (tutor) {
+                    systemContext += `\nTutor Name: "${tutor.userId?.name || 'Tutor'}"`;
+                    if (tutor.bio) systemContext += `\nBio: ${tutor.bio}`;
+                    if (tutor.experience) systemContext += `\nExperience: ${tutor.experience} years`;
+                    if (tutor.subjects?.length) systemContext += `\nSpecialties: ${tutor.subjects.join(', ')}`;
+                    if (tutor.hourlyRate) systemContext += `\nHourly Rate: ₹${tutor.hourlyRate}`;
+                    systemContext += `\nHelp the student determine if this tutor is a good fit for their learning needs based on the fields above. Highlight the tutor's relevant experience and specialties.`;
+                }
+            }
+        } else {
+            systemContext += `\n\nCURRENT CONTEXT: The student is navigating the educational platform roughly. Be an encouraging academic counselor.`;
+        }
+
+        const formattedHistory = history.map(msg => ({
+            role: msg.role === 'ai' || msg.role === 'assistant' || msg.role === 'tutor' ? 'assistant' : 'user',
+            content: msg.content
+        }));
+
+        const messages = [
+            { role: 'system', content: systemContext },
+            ...formattedHistory,
+            { role: 'user', content: message }
+        ];
+
+        const responseText = await callGroqAIChat(messages);
+
+        res.status(200).json({
+            success: true,
+            reply: responseText
+        });
+
+        logAIUsage(req.user.id, 'contextual_chat', { pageType: context.pageType });
+
+    } catch (error) {
+        console.error('Contextual Chat error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to communicate with AI',
+            error: error.message,
+        });
+    }
+};
+
 // @desc    Get AI usage stats (for admin / billing)
 // @route   GET /api/ai/usage-stats
 // @access  Private/Admin
@@ -633,5 +868,248 @@ export const getAIUsageStats = async (req, res) => {
     } catch (error) {
         console.error('AI usage stats error:', error);
         res.status(500).json({ success: false, message: 'Failed to fetch AI usage stats' });
+    }
+};
+
+// ==========================================
+// CHAT SESSION CONTROLLERS (New UI Revamp)
+// ==========================================
+
+// Helper to auto-generate a title for a new chat
+async function generateChatTitle(firstMessage) {
+    try {
+        const prompt = `Generate a very short, concise title (max 5 words) summarizing this message/topic: "${firstMessage}". Return ONLY the title text.`;
+        const title = await callGroqAI(prompt);
+        return title.replace(/['"]/g, '').trim() || 'New Chat';
+    } catch (e) {
+        return 'New Chat';
+    }
+}
+
+// @desc    Get all chat sessions for the mapped user
+// @route   GET /api/ai/chat-sessions
+export const getChatSessions = async (req, res) => {
+    try {
+        const sessions = await AIChatSession.find({ userId: req.user._id })
+            .select('-messages') // Don't send entire history for list view
+            .sort('-updatedAt')
+            .populate('courseId', 'title');
+
+        res.status(200).json({ success: true, count: sessions.length, sessions });
+    } catch (error) {
+        console.error('Get chat sessions error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch chat sessions' });
+    }
+};
+
+// @desc    Create a new chat session
+// @route   POST /api/ai/chat-sessions
+export const createChatSession = async (req, res) => {
+    try {
+        const { courseId } = req.body;
+
+        const session = await AIChatSession.create({
+            userId: req.user._id,
+            courseId: courseId || null,
+            messages: []
+        });
+
+        res.status(201).json({ success: true, session });
+    } catch (error) {
+        console.error('Create chat session error:', error);
+        res.status(500).json({ success: false, message: 'Failed to create chat session' });
+    }
+};
+
+// @desc    Get a specific chat session by ID
+// @route   GET /api/ai/chat-sessions/:id
+export const getChatSessionById = async (req, res) => {
+    try {
+        const session = await AIChatSession.findOne({ _id: req.params.id, userId: req.user._id })
+            .populate('courseId', 'title');
+
+        if (!session) {
+            return res.status(404).json({ success: false, message: 'Chat session not found' });
+        }
+
+        res.status(200).json({ success: true, session });
+    } catch (error) {
+        console.error('Get chat session error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch chat session' });
+    }
+};
+
+// @desc    Delete a chat session
+// @route   DELETE /api/ai/chat-sessions/:id
+export const deleteChatSession = async (req, res) => {
+    try {
+        const session = await AIChatSession.findOneAndDelete({ _id: req.params.id, userId: req.user._id });
+
+        if (!session) {
+            return res.status(404).json({ success: false, message: 'Chat session not found' });
+        }
+
+        res.status(200).json({ success: true, message: 'Chat session deleted' });
+    } catch (error) {
+        console.error('Delete chat session error:', error);
+        res.status(500).json({ success: false, message: 'Failed to delete chat session' });
+    }
+};
+
+// @desc    Add a message to a session and get AI response
+// @route   POST /api/ai/chat-sessions/:id/message
+export const addMessageToChatSession = async (req, res) => {
+    try {
+        if (!GROQ_API_KEY) {
+            return res.status(500).json({ success: false, message: 'Groq API key not configured' });
+        }
+
+        const { message } = req.body;
+        if (!message) {
+            return res.status(400).json({ success: false, message: 'Message text is required' });
+        }
+
+        const session = await AIChatSession.findOne({ _id: req.params.id, userId: req.user._id });
+        if (!session) {
+            return res.status(404).json({ success: false, message: 'Chat session not found' });
+        }
+
+        // Auto-generate title if this is the first message
+        if (session.messages.length === 0) {
+            const title = await generateChatTitle(message);
+            session.title = title;
+        }
+
+        // Save User Message
+        const userMsg = { role: 'user', content: message, timestamp: new Date() };
+        session.messages.push(userMsg);
+
+        // Perform RAG if courseId is available
+        let context = '';
+        let citations = [];
+        let contextUsed = false;
+        let liveCourseMetadata = '';
+
+        if (session.courseId) {
+            try {
+                // Get user's instituteId for Vector Search
+                const user = await (await import('../models/User.js')).default.findById(req.user._id);
+                const instituteId = user?.instituteId;
+
+                const searchResults = await VectorService.similaritySearch(
+                    message,
+                    session.courseId,
+                    instituteId,
+                    4
+                );
+
+                if (searchResults && searchResults.length > 0) {
+                    context = searchResults.map((result, index) =>
+                        `[Source ${index + 1}]: ${result.content}`
+                    ).join('\n\n');
+
+                    citations = searchResults.map((result, index) => ({
+                        id: index + 1,
+                        title: result.lesson.title,
+                        content: result.content.substring(0, 200) + '...',
+                        similarity: result.similarity
+                    }));
+                    contextUsed = true;
+                }
+
+                // Fetch dynamic course / tutor / enrollment metadata for AI context
+                try {
+                    const Course = (await import('../models/Course.js')).default;
+                    const Enrollment = (await import('../models/Enrollment.js')).default;
+                    const Lesson = (await import('../models/Lesson.js')).default;
+
+                    const courseDetails = await Course.findById(session.courseId).populate({
+                        path: 'tutorId',
+                        populate: { path: 'userId', select: 'name bio' }
+                    });
+
+                    const enrollment = await Enrollment.findOne({ studentId: req.user._id, courseId: session.courseId });
+
+                    if (courseDetails) {
+                        const totalLessons = await Lesson.countDocuments({ courseId: session.courseId });
+                        const tutorName = courseDetails.tutorId?.userId?.name || 'Unknown Tutor';
+                        const tutorBio = courseDetails.tutorId?.bio || courseDetails.tutorId?.userId?.bio || 'No bio available';
+                        const tutorExperience = courseDetails.tutorId?.experience ? `${courseDetails.tutorId.experience} years` : 'Unknown';
+                        const tutorSubjects = courseDetails.tutorId?.subjects?.join(', ') || 'Various Subjects';
+                        const progressPercent = enrollment?.progress?.percentage || 0;
+                        const completedCount = enrollment?.progress?.completedLessons?.length || 0;
+
+                        liveCourseMetadata = `
+== COURSE METADATA (DO NOT HALLUCINATE) ==
+Course Title: ${courseDetails.title}
+Course Description: ${courseDetails.description}
+Total Lessons in Course: ${totalLessons}
+Tutor's Name: ${tutorName}
+Tutor's Experience: ${tutorExperience}
+Tutor's Subjects: ${tutorSubjects}
+Tutor's Bio: ${tutorBio}
+Student's Current Progress: ${progressPercent}% completed (${completedCount} out of ${totalLessons} lessons finished).
+============================================`;
+                    }
+                } catch (metaError) {
+                    console.error('Metadata fetch error in chat session:', metaError);
+                }
+
+            } catch (searchError) {
+                console.error('Vector search error in chat session:', searchError);
+            }
+        }
+
+        // Build History Profile
+        const systemPrompt = {
+            role: 'system',
+            content: `You are Sapience AI, an elite educational tutor. Help the student learn effectively.
+            
+${liveCourseMetadata ? `Here are concrete facts about the course and the student's enrollment:\n${liveCourseMetadata}\nIf the student asks about the tutor, syllabus, or their progress, use this exact data exclusively.\n` : ''}
+
+${contextUsed ? `CONTEXT FROM COURSE MATERIALS:
+${context}
+
+IMPORTANT: Use the above context to accurately answer the question. If the context doesn't have the answer, use your general knowledge but indicate it.
+When referencing context, cite it using [Source 1], [Source 2].` : 'Provide helpful, encouraging, and accurate educational answers.'}
+
+Format replies cleanly using Markdown.`
+        };
+
+        // Get last 15 messages for context window
+        const recentHistory = session.messages.slice(-15).map(m => ({
+            role: m.role,
+            content: m.content
+        }));
+
+        const aiPayload = [systemPrompt, ...recentHistory];
+
+        // Call Groq AI
+        const responseText = await callGroqAIChat(aiPayload);
+
+        // Save Assistant Message
+        const aiMsg = {
+            role: 'assistant',
+            content: responseText,
+            citations: citations,
+            contextUsed: contextUsed,
+            timestamp: new Date()
+        };
+        session.messages.push(aiMsg);
+
+        await session.save();
+
+        res.status(200).json({
+            success: true,
+            reply: aiMsg,
+            sessionTitle: session.title // Send back in case it was auto-updated
+        });
+
+        // Log usage
+        await logAIUsage(req.user._id, 'tutor_chat_session', { sessionId: session._id, courseId: session.courseId });
+
+    } catch (error) {
+        console.error('Chat Session Message error:', error);
+        res.status(500).json({ success: false, message: 'AI failed to respond' });
     }
 };

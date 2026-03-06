@@ -2,23 +2,38 @@ import User from '../models/User.js';
 import Course from '../models/Course.js';
 import Enrollment from '../models/Enrollment.js';
 import bcrypt from 'bcryptjs';
-import { authorize } from '../middleware/auth.js';
 import Settings from '../models/Settings.js';
 import Tutor from '../models/Tutor.js';
+import Institute from '../models/Institute.js';
+import InstituteMembership from '../models/InstituteMembership.js';
+import mongoose from 'mongoose';
+
+const getAdminInstituteId = (req) => req.user?.instituteId || null;
+const userScope = (req, extra = {}) => ({ instituteId: getAdminInstituteId(req), ...extra });
+const courseScope = (req, extra = {}) => ({ instituteId: getAdminInstituteId(req), ...extra });
 
 // @desc    Get Admin Dashboard Stats
 // @route   GET /api/admin/stats
 // @access  Private (Admin)
 export const getAdminStats = async (req, res) => {
     try {
+        const instituteId = getAdminInstituteId(req);
+        const scopedUsers = userScope(req);
+        const scopedCourses = courseScope(req);
+        const instituteCourses = await Course.find(scopedCourses).select('_id price');
+        const instituteCourseIds = instituteCourses.map(c => c._id);
+
         // 1. Total Counts
-        const totalTutors = await User.countDocuments({ role: 'tutor' });
-        const totalStudents = await User.countDocuments({ role: 'student' });
-        const totalCourses = await Course.countDocuments();
-        const activeCourses = await Course.countDocuments({ status: 'published' });
+        const totalTutors = await User.countDocuments(userScope(req, { role: 'tutor' }));
+        const totalStudents = await User.countDocuments(userScope(req, { role: 'student' }));
+        const totalCourses = await Course.countDocuments(scopedCourses);
+        const activeCourses = await Course.countDocuments(courseScope(req, { status: 'published' }));
 
         // 2. Global Financials
-        const allEnrollments = await Enrollment.find({ status: 'active' }).populate('courseId', 'price');
+        const allEnrollments = await Enrollment.find({
+            status: 'active',
+            courseId: { $in: instituteCourseIds }
+        }).populate('courseId', 'price');
         const totalRevenue = allEnrollments.reduce((sum, enr) => sum + (enr.courseId?.price || 0), 0);
 
         // 3. Real Trend Calculation (Current Month vs Last Month)
@@ -34,18 +49,24 @@ export const getAdminStats = async (req, res) => {
         };
 
         // Users Trend
-        const currentMonthUsers = await User.countDocuments({ createdAt: { $gte: firstDayCurrentMonth } });
+        const currentMonthUsers = await User.countDocuments({
+            ...scopedUsers,
+            createdAt: { $gte: firstDayCurrentMonth }
+        });
         const lastMonthUsers = await User.countDocuments({
+            ...scopedUsers,
             createdAt: { $gte: firstDayLastMonth, $lte: lastDayLastMonth }
         });
         const usersTrend = calculateTrend(currentMonthUsers, lastMonthUsers);
 
         // Courses Trend (Published)
         const currentMonthCourses = await Course.countDocuments({
+            ...scopedCourses,
             status: 'published',
             createdAt: { $gte: firstDayCurrentMonth }
         });
         const lastMonthCourses = await Course.countDocuments({
+            ...scopedCourses,
             status: 'published',
             createdAt: { $gte: firstDayLastMonth, $lte: lastDayLastMonth }
         });
@@ -53,10 +74,12 @@ export const getAdminStats = async (req, res) => {
 
         // Revenue Trend
         const currentMonthRevenue = (await Enrollment.find({
+            courseId: { $in: instituteCourseIds },
             createdAt: { $gte: firstDayCurrentMonth }
         }).populate('courseId', 'price')).reduce((sum, e) => sum + (e.courseId?.price || 0), 0);
 
         const lastMonthRevenue = (await Enrollment.find({
+            courseId: { $in: instituteCourseIds },
             createdAt: { $gte: firstDayLastMonth, $lte: lastDayLastMonth }
         }).populate('courseId', 'price')).reduce((sum, e) => sum + (e.courseId?.price || 0), 0);
 
@@ -69,7 +92,7 @@ export const getAdminStats = async (req, res) => {
         };
 
         // 4. Recent Registrations (Using User model)
-        const recentUsers = await User.find()
+        const recentUsers = await User.find(scopedUsers)
             .sort({ createdAt: -1 })
             .limit(5)
             .select('name email role createdAt profileImage');
@@ -91,6 +114,7 @@ export const getAdminStats = async (req, res) => {
 
         // Get enrollments for last 6 months
         const recentEnrollments = await Enrollment.find({
+            courseId: { $in: instituteCourseIds },
             createdAt: { $gte: sixMonthsAgo }
         });
 
@@ -105,6 +129,7 @@ export const getAdminStats = async (req, res) => {
 
         // Get new students for last 6 months
         const newStudents = await User.find({
+            instituteId,
             role: 'student',
             createdAt: { $gte: sixMonthsAgo }
         });
@@ -143,7 +168,7 @@ export const getAdminStats = async (req, res) => {
 // @access  Private (Admin)
 export const getAllTutors = async (req, res) => {
     try {
-        const users = await User.find({ role: 'tutor' })
+        const users = await User.find(userScope(req, { role: 'tutor' }))
             .select('-password')
             .sort({ createdAt: -1 })
             .lean(); // Lean for mutability
@@ -175,7 +200,7 @@ export const getAllTutors = async (req, res) => {
 // @access  Private (Admin)
 export const getAllStudents = async (req, res) => {
     try {
-        const students = await User.find({ role: 'student' })
+        const students = await User.find(userScope(req, { role: 'student' }))
             .select('-password')
             .sort({ createdAt: -1 });
 
@@ -191,7 +216,7 @@ export const getAllStudents = async (req, res) => {
 // @access  Private (Admin)
 export const getAllCourses = async (req, res) => {
     try {
-        const courses = await Course.find()
+        const courses = await Course.find(courseScope(req))
             .populate('tutorId', 'name email')
             .sort({ createdAt: -1 });
 
@@ -207,7 +232,7 @@ export const getAllCourses = async (req, res) => {
 // @access  Private (Admin)
 export const deleteUser = async (req, res) => {
     try {
-        const user = await User.findById(req.params.id);
+        const user = await User.findOne({ _id: req.params.id, instituteId: getAdminInstituteId(req) });
 
         if (!user) {
             return res.status(404).json({ success: false, message: 'User not found' });
@@ -232,6 +257,14 @@ export const createUser = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Please provide all required fields' });
         }
 
+        if (!['student', 'tutor', 'admin'].includes(role)) {
+            return res.status(400).json({ success: false, message: 'Invalid role' });
+        }
+
+        if (role === 'superadmin') {
+            return res.status(403).json({ success: false, message: 'Cannot create superadmin' });
+        }
+
         const userExists = await User.findOne({ email });
         if (userExists) {
             return res.status(400).json({ success: false, message: 'User already exists' });
@@ -244,7 +277,8 @@ export const createUser = async (req, res) => {
             email,
             password: hashedPassword,
             phone,
-            role
+            role,
+            instituteId: getAdminInstituteId(req)
         });
 
         if (role === 'tutor') {
@@ -270,7 +304,7 @@ export const createUser = async (req, res) => {
 // @access  Private (Admin)
 export const updateUser = async (req, res) => {
     try {
-        const user = await User.findById(req.params.id);
+        const user = await User.findOne({ _id: req.params.id, instituteId: getAdminInstituteId(req) });
 
         if (!user) {
             return res.status(404).json({ success: false, message: 'User not found' });
@@ -281,9 +315,20 @@ export const updateUser = async (req, res) => {
         if (name) user.name = name;
         if (email) user.email = email;
         if (phone) user.phone = phone;
-        if (role) user.role = role;
+        if (role && ['student', 'tutor', 'admin'].includes(role)) user.role = role;
 
         const updatedUser = await user.save();
+
+        if (updatedUser.role === 'tutor') {
+            const existingTutorProfile = await Tutor.findOne({ userId: updatedUser._id });
+            if (!existingTutorProfile) {
+                const settings = (await Settings.findOne()) || {};
+                await Tutor.create({
+                    userId: updatedUser._id,
+                    isVerified: settings.autoApproveTutors || false
+                });
+            }
+        }
 
         res.status(200).json({
             success: true,
@@ -301,7 +346,7 @@ export const updateUser = async (req, res) => {
 export const updateUserStatus = async (req, res) => {
     try {
         const { isBlocked } = req.body;
-        const user = await User.findById(req.params.id);
+        const user = await User.findOne({ _id: req.params.id, instituteId: getAdminInstituteId(req) });
 
         if (!user) {
             return res.status(404).json({ success: false, message: 'User not found' });
@@ -331,7 +376,7 @@ export const updateUserStatus = async (req, res) => {
 export const updateCourseStatus = async (req, res) => {
     try {
         const { status } = req.body; // e.g., 'published', 'rejected', 'suspended'
-        const course = await Course.findById(req.params.id);
+        const course = await Course.findOne({ _id: req.params.id, instituteId: getAdminInstituteId(req) });
 
         if (!course) {
             return res.status(404).json({ success: false, message: 'Course not found' });
@@ -355,7 +400,7 @@ export const updateCourseStatus = async (req, res) => {
 // @access  Private (Admin)
 export const deleteCourse = async (req, res) => {
     try {
-        const course = await Course.findById(req.params.id);
+        const course = await Course.findOne({ _id: req.params.id, instituteId: getAdminInstituteId(req) });
 
         if (!course) {
             return res.status(404).json({ success: false, message: 'Course not found' });
@@ -374,13 +419,14 @@ export const deleteCourse = async (req, res) => {
 // @access  Private (Admin)
 export const getDetailedStats = async (req, res) => {
     try {
+        const instituteId = getAdminInstituteId(req);
         // 1. User Growth (Last 6 months) - Aggregation
         // Note: In production, consider using a proper timeseries db or more optimized query
         const sixMonthsAgo = new Date();
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
 
         const userGrowth = await User.aggregate([
-            { $match: { createdAt: { $gte: sixMonthsAgo } } },
+            { $match: { instituteId, createdAt: { $gte: sixMonthsAgo } } },
             {
                 $group: {
                     _id: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
@@ -393,6 +439,7 @@ export const getDetailedStats = async (req, res) => {
         // 2. Course Distribution by Category (Mocked if categories not strict, or aggregation)
         // Assuming courses have categories, let's group by them
         const courseCategories = await Course.aggregate([
+            { $match: { instituteId } },
             {
                 $group: {
                     _id: "$category", // Make sure this field exists or use a default
@@ -405,6 +452,7 @@ export const getDetailedStats = async (req, res) => {
 
         // 3. User Role Distribution
         const userDistribution = await User.aggregate([
+            { $match: { instituteId } },
             {
                 $group: {
                     _id: "$role",
@@ -433,7 +481,9 @@ export const getDetailedStats = async (req, res) => {
 // @access  Private (Admin)
 export const getFinancialStats = async (req, res) => {
     try {
+        const instituteCourseIds = (await Course.find(courseScope(req)).select('_id')).map(c => c._id);
         const enrollments = await Enrollment.find({ status: 'active' })
+            .where('courseId').in(instituteCourseIds)
             .populate('courseId', 'title price')
             .populate('studentId', 'name email')
             .sort({ createdAt: -1 });
@@ -496,8 +546,8 @@ export const getSystemLogs = async (req, res) => {
         // Industry level logging usually involves ELK stack or similar.
         // For this app, we will simulate logs based on recent user/course creation
 
-        const recentUsers = await User.find().sort({ createdAt: -1 }).limit(5).select('name role createdAt');
-        const recentCourses = await Course.find().sort({ createdAt: -1 }).limit(5).select('title tutorId createdAt');
+        const recentUsers = await User.find(userScope(req)).sort({ createdAt: -1 }).limit(5).select('name role createdAt');
+        const recentCourses = await Course.find(courseScope(req)).sort({ createdAt: -1 }).limit(5).select('title tutorId createdAt');
 
         const logs = [];
 
@@ -553,15 +603,22 @@ export const getSystemLogs = async (req, res) => {
 // @access  Private (Admin)
 export const getTutorDetails = async (req, res) => {
     try {
-        const tutor = await User.findById(req.params.id).select('-password');
+        const tutor = await User.findOne({
+            _id: req.params.id,
+            instituteId: getAdminInstituteId(req)
+        }).select('-password');
         if (!tutor || tutor.role !== 'tutor') {
             return res.status(404).json({ success: false, message: 'Tutor not found' });
         }
 
-        // Ensure we find courses regardless of how tutorId is stored (string vs objectId)
-        // Try both precise match and string match if needed, but standard find should work if schema is correct.
-        // Let's debug by fetching all courses and filtering in JS if needed, or trust the query.
-        const courses = await Course.find({ tutorId: tutor._id });
+        const tutorProfile = await Tutor.findOne({ userId: tutor._id }).select('_id isVerified');
+
+        const courses = tutorProfile
+            ? await Course.find({
+                tutorId: tutorProfile._id,
+                instituteId: getAdminInstituteId(req)
+            })
+            : [];
 
         // Logic to calculate stats
         const totalCourses = courses.length;
@@ -582,7 +639,11 @@ export const getTutorDetails = async (req, res) => {
 
         res.status(200).json({
             success: true,
-            tutor,
+            tutor: {
+                ...tutor.toObject(),
+                isVerified: tutorProfile?.isVerified || false,
+                tutorId: tutorProfile?._id || null
+            },
             stats: {
                 totalCourses,
                 totalStudents,
@@ -605,9 +666,13 @@ export const verifyTutor = async (req, res) => {
         const { id } = req.params;
         const { isVerified } = req.body;
 
-        const tutor = await Tutor.findById(id);
+        const tutor = await Tutor.findById(id).populate('userId', 'instituteId');
         if (!tutor) {
             return res.status(404).json({ success: false, message: 'Tutor not found' });
+        }
+
+        if (!tutor.userId || String(tutor.userId.instituteId || '') !== String(getAdminInstituteId(req))) {
+            return res.status(403).json({ success: false, message: 'Not authorized to verify this tutor' });
         }
 
         tutor.isVerified = isVerified;
@@ -629,12 +694,19 @@ export const verifyTutor = async (req, res) => {
 // @access  Private (Admin)
 export const getStudentDetails = async (req, res) => {
     try {
-        const student = await User.findById(req.params.id).select('-password');
+        const student = await User.findOne({
+            _id: req.params.id,
+            instituteId: getAdminInstituteId(req)
+        }).select('-password');
         if (!student || student.role !== 'student') {
             return res.status(404).json({ success: false, message: 'Student not found' });
         }
 
-        const enrollments = await Enrollment.find({ studentId: student._id })
+        const instituteCourseIds = (await Course.find(courseScope(req)).select('_id')).map(c => c._id);
+        const enrollments = await Enrollment.find({
+            studentId: student._id,
+            courseId: { $in: instituteCourseIds }
+        })
             .populate('courseId', 'title price thumbnail level')
             .sort({ createdAt: -1 });
 
@@ -661,7 +733,10 @@ export const getStudentDetails = async (req, res) => {
 // @access  Private (Admin)
 export const getAdminCourseDetails = async (req, res) => {
     try {
-        const course = await Course.findById(req.params.id).populate('tutorId', 'name email profileImage');
+        const course = await Course.findOne({
+            _id: req.params.id,
+            instituteId: getAdminInstituteId(req)
+        }).populate('tutorId', 'name email profileImage');
         if (!course) {
             return res.status(404).json({ success: false, message: 'Course not found' });
         }
@@ -753,6 +828,184 @@ export const updateSettings = async (req, res) => {
         });
     } catch (error) {
         console.error('Update settings error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+// @desc    Create Institute (Super Admin only)
+// @route   POST /api/admin/institutes
+// @access  Private (Super Admin)
+export const createInstitute = async (req, res) => {
+    try {
+        const { name, subdomain, description, adminEmail, adminName, adminPhone } = req.body;
+
+        // Validate required fields
+        if (!name || !subdomain || !adminEmail || !adminName) {
+            return res.status(400).json({
+                success: false,
+                message: 'Name, subdomain, admin email, and admin name are required'
+            });
+        }
+
+        // Check if subdomain already exists
+        const existingSubdomain = await Institute.findOne({ subdomain });
+        if (existingSubdomain) {
+            return res.status(400).json({
+                success: false,
+                message: 'Subdomain already exists'
+            });
+        }
+
+        // Check if admin email already exists
+        const existingAdmin = await User.findOne({ email: adminEmail });
+        if (existingAdmin) {
+            return res.status(400).json({
+                success: false,
+                message: 'Admin email already exists'
+            });
+        }
+
+        // Create institute
+        const institute = await Institute.create({
+            name,
+            subdomain,
+            description,
+            isActive: true,
+            subscriptionPlan: 'premium', // Default for new institutes
+            settings: {
+                allowStudentRegistration: true,
+                requireInviteForStudents: false,
+                requireInviteForTutors: true,
+                autoApproveStudents: true,
+                autoApproveTutors: false
+            }
+        });
+
+        // Create admin user
+        const hashedPassword = await bcrypt.hash('admin123', 10); // Default password
+        const adminUser = await User.create({
+            name: adminName,
+            email: adminEmail,
+            phone: adminPhone || '',
+            password: hashedPassword,
+            role: 'admin',
+            instituteId: institute._id
+        });
+
+        // Create admin membership
+        await InstituteMembership.create({
+            userId: adminUser._id,
+            instituteId: institute._id,
+            roleInInstitute: 'admin',
+            status: 'active',
+            joinedVia: 'system_created',
+            approvedBy: adminUser._id,
+            approvedAt: new Date(),
+            permissions: {
+                canCreateCourses: true,
+                canCreateExams: true,
+                canViewAnalytics: true,
+                canManageStudents: true
+            }
+        });
+
+        res.status(201).json({
+            success: true,
+            message: 'Institute created successfully',
+            institute,
+            admin: {
+                _id: adminUser._id,
+                name: adminUser.name,
+                email: adminUser.email,
+                role: adminUser.role,
+                defaultPassword: 'admin123' // Send to admin via email
+            }
+        });
+    } catch (error) {
+        console.error('Create institute error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+// @desc    Get All Institutes (Super Admin only)
+// @route   GET /api/admin/institutes
+// @access  Private (Super Admin)
+export const getAllInstitutes = async (req, res) => {
+    try {
+        const institutes = await Institute.find()
+            .populate('createdBy', 'name email')
+            .sort({ createdAt: -1 });
+
+        res.status(200).json({
+            success: true,
+            institutes
+        });
+    } catch (error) {
+        console.error('Get institutes error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+// @desc    Remove User from Institute
+// @route   DELETE /api/admin/users/:id/remove-from-institute
+// @access  Private (Admin)
+export const removeUserFromInstitute = async (req, res) => {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+        const { id } = req.params;
+        const adminInstituteId = getAdminInstituteId(req);
+
+        // Find the user to remove
+        const user = await User.findById(id);
+        if (!user) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        // Check if user belongs to admin's institute
+        if (user.instituteId?.toString() !== adminInstituteId?.toString()) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(403).json({ success: false, message: 'User does not belong to your institute' });
+        }
+
+        // Remove institute membership if exists
+        await InstituteMembership.deleteMany({
+            userId: id,
+            instituteId: adminInstituteId
+        }, { session });
+
+        // Remove user's institute association
+        await User.findByIdAndUpdate(id, {
+            $unset: { instituteId: 1 }
+        }, { session });
+
+        // If user is a tutor, remove tutor profile
+        if (user.role === 'tutor') {
+            await Tutor.deleteOne({ userId: id }, { session });
+        }
+
+        // Remove all enrollments for this user in this institute
+        await Enrollment.deleteMany({
+            studentId: id,
+            instituteId: adminInstituteId
+        }, { session });
+
+        await session.commitTransaction();
+        session.endSession();
+
+        res.status(200).json({
+            success: true,
+            message: `${user.name} removed from institute successfully`
+        });
+
+    } catch (error) {
+        await session.abortTransaction();
+        session.endSession();
+        console.error('Remove user from institute error:', error);
         res.status(500).json({ success: false, message: 'Server error' });
     }
 };
