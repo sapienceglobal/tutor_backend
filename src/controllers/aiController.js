@@ -763,6 +763,58 @@ export const contextualChat = async (req, res) => {
                 if (course) {
                     const totalLessons = await Lesson.countDocuments({ courseId: course._id });
                     const enrollment = await Enrollment.findOne({ studentId: req.user._id, courseId: course._id });
+                    const Assignment = (await import('../models/Assignment.js')).default;
+                    const Submission = (await import('../models/Submission.js')).default;
+
+                    const assignments = await Assignment.find({ courseId: course._id, status: 'published' }).select('title totalMarks _id');
+                    let assignmentsMetadata = '';
+                    if (assignments.length > 0) {
+                        const assignmentIds = assignments.map(a => a._id);
+                        const submissions = await Submission.find({ studentId: req.user._id, assignmentId: { $in: assignmentIds } });
+                        const submissionMap = submissions.reduce((map, sub) => {
+                            map[sub.assignmentId.toString()] = sub;
+                            return map;
+                        }, {});
+
+                        assignmentsMetadata = `\n==== ASSIGNMENTS & MARKS ====`;
+                        assignments.forEach((a, idx) => {
+                            const sub = submissionMap[a._id.toString()];
+                            let statusText = sub ? `[Submitted, Status: ${sub.status}]` : '[Not Submitted]';
+                            if (sub && sub.status === 'graded') {
+                                statusText += ` - Score: ${sub.grade}/${a.totalMarks}`;
+                            } else {
+                                statusText += ` - Max Marks: ${a.totalMarks}`;
+                            }
+                            assignmentsMetadata += `\n${idx + 1}. Title: "${a.title}" ${statusText}`;
+                        });
+                        assignmentsMetadata += `\n=============================`;
+                    }
+
+                    // Resources & Discussions Metadata
+                    const LessonComment = (await import('../models/LessonComment.js')).default;
+                    const courseLessons = await Lesson.find({ courseId: course._id });
+
+                    let totalVideoDuration = 0;
+                    let totalDocuments = 0;
+                    let totalQuizzes = 0;
+
+                    courseLessons.forEach(l => {
+                        if (l.type === 'video' && l.content?.duration) totalVideoDuration += l.content.duration;
+                        if (l.type === 'document') totalDocuments += 1;
+                        if (l.type === 'quiz') totalQuizzes += 1;
+                        if (l.content?.documents?.length) totalDocuments += l.content.documents.length;
+                        if (l.content?.attachments?.length) totalDocuments += l.content.attachments.length;
+                    });
+
+                    const lessonIds = courseLessons.map(l => l._id);
+                    const totalDiscussions = await LessonComment.countDocuments({ lessonId: { $in: lessonIds } });
+
+                    let resourcesMetadata = `\n==== COURSE RESOURCES ====`;
+                    resourcesMetadata += `\nTotal Video Duration: ${Math.floor(totalVideoDuration / 60)} minutes`;
+                    resourcesMetadata += `\nTotal Downloadable Documents/Attachments: ${totalDocuments}`;
+                    resourcesMetadata += `\nTotal Quizzes: ${totalQuizzes}`;
+                    resourcesMetadata += `\nTotal Discussion Comments: ${totalDiscussions}`;
+                    resourcesMetadata += `\n==========================`;
 
                     const tutorName = course.tutorId?.userId?.name || 'Unknown Tutor';
                     const tutorBio = course.tutorId?.bio || course.tutorId?.userId?.bio || 'No bio available';
@@ -788,6 +840,9 @@ export const contextualChat = async (req, res) => {
                         systemContext += `\nStudent Status: NOT ENROLLED IN THIS COURSE yet. Provide guidance on why they should enroll based on the curriculum.`;
                     }
                     systemContext += `\n============================================\n`;
+                    systemContext += assignmentsMetadata;
+                    systemContext += resourcesMetadata;
+                    systemContext += `\n`;
 
                     systemContext += `\nAct as a knowledgeable guide about this specific course. Answer questions about what topics it covers, curriculum counts, tutor profile, the prerequisites, and course objectives using the EXACT factual data provided above.`;
                 }
@@ -1031,7 +1086,58 @@ export const addMessageToChatSession = async (req, res) => {
                     const enrollment = await Enrollment.findOne({ studentId: req.user._id, courseId: session.courseId });
 
                     if (courseDetails) {
-                        const totalLessons = await Lesson.countDocuments({ courseId: session.courseId });
+                        const Assignment = (await import('../models/Assignment.js')).default;
+                        const Submission = (await import('../models/Submission.js')).default;
+
+                        const assignments = await Assignment.find({ courseId: session.courseId, status: 'published' }).select('title totalMarks _id');
+                        let assignmentsMetadata = '';
+                        if (assignments.length > 0) {
+                            const assignmentIds = assignments.map(a => a._id);
+                            const submissions = await Submission.find({ studentId: req.user._id, assignmentId: { $in: assignmentIds } });
+                            const submissionMap = submissions.reduce((map, sub) => {
+                                map[sub.assignmentId.toString()] = sub;
+                                return map;
+                            }, {});
+
+                            assignmentsMetadata = `\n== ASSIGNMENTS & MARKS ==`;
+                            assignments.forEach((a, idx) => {
+                                const sub = submissionMap[a._id.toString()];
+                                let statusText = sub ? `[Submitted, Status: ${sub.status}]` : '[Not Submitted]';
+                                if (sub && sub.status === 'graded') {
+                                    statusText += ` - Score: ${sub.grade}/${a.totalMarks}`;
+                                } else {
+                                    statusText += ` - Max Marks: ${a.totalMarks}`;
+                                }
+                                assignmentsMetadata += `\n${idx + 1}. Title: "${a.title}" ${statusText}`;
+                            });
+                        }
+
+                        // Resources & Discussions Metadata
+                        const LessonComment = (await import('../models/LessonComment.js')).default;
+                        const courseLessons = await Lesson.find({ courseId: session.courseId });
+                        
+                        let totalVideoDuration = 0;
+                        let totalDocuments = 0;
+                        let totalQuizzes = 0;
+
+                        courseLessons.forEach(l => {
+                            if (l.type === 'video' && l.content?.duration) totalVideoDuration += l.content.duration;
+                            if (l.type === 'document') totalDocuments += 1;
+                            if (l.type === 'quiz') totalQuizzes += 1;
+                            if (l.content?.documents?.length) totalDocuments += l.content.documents.length;
+                            if (l.content?.attachments?.length) totalDocuments += l.content.attachments.length;
+                        });
+                        
+                        const lessonIds = courseLessons.map(l => l._id);
+                        const totalDiscussions = await LessonComment.countDocuments({ lessonId: { $in: lessonIds } });
+
+                        let resourcesMetadata = `\n== COURSE RESOURCES ==`;
+                        resourcesMetadata += `\nTotal Video Duration: ${Math.floor(totalVideoDuration / 60)} minutes`;
+                        resourcesMetadata += `\nTotal Downloadable Documents/Attachments: ${totalDocuments}`;
+                        resourcesMetadata += `\nTotal Quizzes: ${totalQuizzes}`;
+                        resourcesMetadata += `\nTotal Discussion Comments: ${totalDiscussions}`;
+
+                        const totalLessons = courseLessons.length;
                         const tutorName = courseDetails.tutorId?.userId?.name || 'Unknown Tutor';
                         const tutorBio = courseDetails.tutorId?.bio || courseDetails.tutorId?.userId?.bio || 'No bio available';
                         const tutorExperience = courseDetails.tutorId?.experience ? `${courseDetails.tutorId.experience} years` : 'Unknown';
@@ -1049,6 +1155,8 @@ Tutor's Experience: ${tutorExperience}
 Tutor's Subjects: ${tutorSubjects}
 Tutor's Bio: ${tutorBio}
 Student's Current Progress: ${progressPercent}% completed (${completedCount} out of ${totalLessons} lessons finished).
+${assignmentsMetadata}
+${resourcesMetadata}
 ============================================`;
                     }
                 } catch (metaError) {

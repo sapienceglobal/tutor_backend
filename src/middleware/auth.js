@@ -173,7 +173,7 @@ export const protect = async (req, res, next) => {
     const settings = await Settings.findOne();
     if (settings && settings.maintenanceMode) {
       // Allow only admins to bypass maintenance mode
-      if (req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      if (req.user.role !== 'superadmin') {
         return res.status(503).json({
           success: false,
           isMaintenanceMode: true,

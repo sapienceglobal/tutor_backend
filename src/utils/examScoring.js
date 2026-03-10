@@ -13,7 +13,7 @@ export const normalizePassingConfig = ({ passingPercentage, passingMarks }, tota
   const percentageInput = toNumber(passingPercentage);
   const marksInput = toNumber(passingMarks);
 
-  if (percentageInput !== null) {
+  if (percentageInput !== null && percentageInput > 0) {
     const safePercentage = clamp(percentageInput, 0, 100);
     return {
       passingPercentage: safePercentage,
@@ -47,7 +47,7 @@ export const evaluatePass = ({ score, totalMarks, passingPercentage, passingMark
     { defaultPercentage: 33 }
   );
 
-  const passThreshold = normalized.passingPercentage > 0 ? normalized.passingPercentage : 33;
+  const passThreshold = normalized.passingPercentage;
   const isPassed = safeTotalMarks > 0
     ? rawPercentage >= passThreshold
     : safeScore >= normalized.passingMarks;
@@ -105,8 +105,8 @@ export const buildAttemptQuestionResults = ({ exam, attempt }) => {
     (attempt?.answers || []).map((answer) => [String(answer.questionId), answer])
   );
 
-  const canViewCorrectAnswer = Boolean(exam?.showCorrectAnswers);
-  const canViewSolution = canViewCorrectAnswer && !exam?.hideSolutions;
+  const canViewCorrectAnswer = true;
+  const canViewSolution = true;
 
   return (exam?.questions || []).map((question, index) => {
     const studentAnswer = answerMap.get(String(question._id));

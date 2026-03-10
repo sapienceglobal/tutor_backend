@@ -28,7 +28,7 @@ export const getLessonsByCourse = async (req, res) => {
         }
         const enrollment = await Enrollment.findOne({ studentId: req.user.id, courseId });
         if (enrollment) {
-            canAccess = true;
+          canAccess = true;
         }
       }
       if (!canAccess) {
@@ -114,7 +114,7 @@ export const getLessonById = async (req, res) => {
         }
         const enrollment = await Enrollment.findOne({ studentId: req.user.id, courseId: lesson.courseId._id });
         if (enrollment) {
-            canAccess = true;
+          canAccess = true;
         }
       }
       if (!canAccess) {
@@ -240,6 +240,39 @@ export const createLesson = async (req, res) => {
       content = cleanQuizData(content);
     }
 
+    // ✅ Parse attachments if it's a stringified array
+    // ✅ Parse attachments flexibly
+    if (content && content.attachments) {
+      if (typeof content.attachments === 'string') {
+        try {
+          content.attachments = JSON.parse(content.attachments);
+        } catch (e) {
+          console.error('Failed to parse attachments string:', e);
+          content.attachments = [];
+        }
+      } else if (Array.isArray(content.attachments)) {
+        // Sometimes the frontend might send an array where the first element is a stringified JSON array
+        if (content.attachments.length > 0 && typeof content.attachments[0] === 'string') {
+          try {
+            // Try parsing the first element if it looks like JSON
+            if (content.attachments[0].startsWith('[')) {
+              content.attachments = JSON.parse(content.attachments[0]);
+            } else {
+              // Or it might be individual stringified objects
+              content.attachments = content.attachments.map(item => {
+                if (typeof item === 'string') return JSON.parse(item);
+                return item;
+              });
+            }
+          } catch (e) {
+            console.error('Failed to parse attachments array:', e);
+            // fallback to empty if malformed
+            content.attachments = [];
+          }
+        }
+      }
+    }
+
     const lesson = await Lesson.create({
       courseId,
       moduleId,
@@ -315,14 +348,30 @@ export const updateLesson = async (req, res) => {
       updateData.content = cleanQuizData(updateData.content);
     }
 
-    // ✅ Parse attachments if it's a stringified array
+    // ✅ Parse attachments flexibly
     if (updateData.content && updateData.content.attachments) {
       if (typeof updateData.content.attachments === 'string') {
         try {
           updateData.content.attachments = JSON.parse(updateData.content.attachments);
         } catch (e) {
-          console.error('Failed to parse attachments:', e);
+          console.error('Failed to parse attachments string:', e);
           updateData.content.attachments = [];
+        }
+      } else if (Array.isArray(updateData.content.attachments)) {
+        if (updateData.content.attachments.length > 0 && typeof updateData.content.attachments[0] === 'string') {
+          try {
+            if (updateData.content.attachments[0].startsWith('[')) {
+              updateData.content.attachments = JSON.parse(updateData.content.attachments[0]);
+            } else {
+              updateData.content.attachments = updateData.content.attachments.map(item => {
+                if (typeof item === 'string') return JSON.parse(item);
+                return item;
+              });
+            }
+          } catch (e) {
+            console.error('Failed to parse attachments array:', e);
+            updateData.content.attachments = [];
+          }
         }
       }
       // Ensure it's an array

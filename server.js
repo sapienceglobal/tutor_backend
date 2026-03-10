@@ -44,6 +44,7 @@ import crmRoutes from './src/routes/crmRoutes.js';
 import facilityRoutes from './src/routes/facilityRoutes.js';
 import paymentRoutes from './src/routes/paymentRoutes.js';
 import superadminRoutes from './src/routes/superadmin.js';
+import superadminSettingsRoutes from './src/routes/superadminSettings.js';
 import zoomConfigRoutes from './src/routes/zoomConfigRoutes.js';
 import attendanceRoutes from './src/routes/attendance.js';
 import assignmentRoutes from './src/routes/assignments.js';
@@ -58,6 +59,7 @@ import entitlementRoutes from './src/routes/entitlements.js';
 
 import { verifyApiKey } from './src/middleware/apiKey.js';
 import { auditMiddleware } from './src/middleware/auditMiddleware.js';
+import settingsRouter from './src/routes/settingsRoutes.js';
 
 // Initialize express app
 const app = express();
@@ -83,7 +85,6 @@ app.use(helmet({
 }));
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://195.35.20.207:5000').split(',');
-
 app.use(cors({
     origin: function (origin, callback) {
         if (!origin) return callback(null, true);
@@ -186,6 +187,7 @@ app.use('/api/crm', crmRoutes);
 app.use('/api/facilities', facilityRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/superadmin', superadminRoutes);
+app.use('/api/superadmin', superadminSettingsRoutes);
 app.use('/api/zoom-config', zoomConfigRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/assignments', assignmentRoutes);
@@ -195,10 +197,12 @@ app.use('/api/entitlements', entitlementRoutes);
 app.use('/api/vector', vectorRoutes);
 app.use('/api/user-institute', userInstituteRoutes);
 app.use('/api/ai', aiStudyPlanRoutes);
+app.use('/api/settings', settingsRouter);
 
 // Proxy routes for frontend compatibility
 app.use('/api/proxy/admin/invites', inviteRoutes);
 app.use('/api/proxy/invite', inviteRoutes);
+app.use('/api/proxy/superadmin', superadminSettingsRoutes);
 
 // Direct admin routes (for proxy requests)
 app.use('/api/admin/invites', inviteRoutes);

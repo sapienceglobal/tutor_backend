@@ -95,7 +95,7 @@ const lessonSchema = new mongoose.Schema({
     attachments: [{
       name: String,
       url: String,
-      type: String,
+      type: { type: String }, // Wrapped to prevent Mongoose interpreting the object as a string type
     }],
   },
   order: {

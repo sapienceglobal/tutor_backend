@@ -799,17 +799,20 @@ export const updateSettings = async (req, res) => {
     try {
         let settings = await Settings.findOne();
         if (!settings) {
-            settings = new Settings();
+            settings = await Settings.create({});
         }
 
         // All updatable fields from Settings model
         const updatableFields = [
-            'siteName', 'supportEmail', 'defaultLanguage', 'maintenanceMode',
+            'siteName', 'supportEmail', 'defaultLanguage',
             'allowRegistration', 'autoApproveCourses', 'autoApproveTutors',
             'allowGuestBrowsing', 'platformCommission', 'supportPhone',
             'facebookLink', 'twitterLink', 'primaryColor', 'footerText',
             'contactEmail', 'contactAddress', 'favicon', 'googleAnalyticsId',
-            'metaPixelId', 'instagramLink', 'linkedinLink', 'youtubeLink'
+            'metaPixelId', 'instagramLink', 'linkedinLink', 'youtubeLink',
+            // Theme settings
+            'secondaryColor', 'accentColor', 'fontFamily', 'fontSize',
+            'allowInstituteBranding', 'enforceGlobalTheme', 'enableDarkMode'
         ];
 
         updatableFields.forEach(field => {
