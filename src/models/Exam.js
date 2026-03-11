@@ -320,6 +320,8 @@ const examAttemptSchema = new mongoose.Schema({
     selectedOptionText: String, // Actual text of selected option (fixes shuffle bug)
     numericAnswer: Number, // ✅ NEW: For numeric questions
     matchAnswers: mongoose.Schema.Types.Mixed, // ✅ NEW: For match-the-following questions { "left1": "right2" }
+    textAnswer: String,
+    aiFeedback: String,
     isCorrect: Boolean,
     pointsEarned: Number,
 
@@ -384,3 +386,4 @@ examAttemptSchema.index({ courseId: 1, studentId: 1 });
 
 export const Exam = mongoose.model('Exam', examSchema);
 export const ExamAttempt = mongoose.model('ExamAttempt', examAttemptSchema);
+

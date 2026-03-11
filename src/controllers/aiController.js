@@ -34,7 +34,7 @@ async function callGroqAI(prompt) {
             {
                 model: 'llama-3.3-70b-versatile',
                 messages: [{ role: 'user', content: prompt }],
-                max_tokens: 2000,
+                max_tokens: 4000,
                 temperature: 0.5,
             },
             {
@@ -60,7 +60,7 @@ async function callGroqAIChat(messages) {
             {
                 model: 'llama-3.3-70b-versatile',
                 messages: messages,
-                max_tokens: 2000,
+                max_tokens: 4000,
                 temperature: 0.7,
             },
             {
@@ -77,6 +77,60 @@ async function callGroqAIChat(messages) {
         throw new Error('AI Chat failed');
     }
 }
+
+// @desc    Evaluate subjective answer using AI
+export const evaluateSubjectiveAnswer = async (questionText, idealAnswer, studentAnswer, maxPoints) => {
+    try {
+        if (!GROQ_API_KEY) {
+            console.warn("evaluateSubjectiveAnswer: Missing Groq API Key.");
+            return { pointsEarned: 0, isCorrect: false, feedback: "AI Grading unavailable. Pending manual review." };
+        }
+
+        const prompt = `
+You are an expert examiner grading a student's answer for an exam.
+
+Question: "${questionText}"
+Ideal Answer: "${idealAnswer || 'No ideal answer provided. Grade based on general factual correctness.'}"
+Student Answer: "${studentAnswer || ''}"
+Max Points: ${maxPoints}
+
+Evaluate the student's answer against the ideal answer. Be fair but rigorous. Award partial credit if applicable. Return ONLY a valid JSON object.
+
+Required JSON format:
+{
+  "pointsEarned": <number between 0 and ${maxPoints}>,
+  "isCorrect": <boolean, true if pointsEarned > 0>,
+  "feedback": "<A brief, constructive 1-2 sentence explanation of the score>"
+}
+`;
+
+        const responseString = await callGroqAI(prompt);
+        // Clean JSON parsing
+        const jsonStart = responseString.indexOf('{');
+        const jsonEnd = responseString.lastIndexOf('}') + 1;
+
+        if (jsonStart === -1 || jsonEnd === 0) {
+            throw new Error('No JSON object found in response');
+        }
+
+        const jsonText = responseString.slice(jsonStart, jsonEnd);
+        const evaluation = JSON.parse(jsonText);
+
+        return {
+            pointsEarned: Number(evaluation.pointsEarned) || 0,
+            isCorrect: Boolean(evaluation.isCorrect),
+            feedback: evaluation.feedback || "Processed by AI."
+        };
+
+    } catch (error) {
+        console.error("AI Subjective Grading failed:", error.message);
+        return {
+            pointsEarned: 0,
+            isCorrect: false,
+            feedback: "AI Grading failed. Pending manual review."
+        };
+    }
+};
 
 // @desc    Generate MCQ questions using AI
 // @route   POST /api/ai/generate-questions
@@ -169,8 +223,21 @@ Return ONLY a valid JSON array with no additional text:
                 throw new Error('No JSON array found in response');
             }
 
-            const jsonText = rawResponse.slice(jsonStart, jsonEnd);
-            questions = JSON.parse(jsonText);
+            let jsonText = rawResponse.slice(jsonStart, jsonEnd);
+
+            try {
+                questions = JSON.parse(jsonText);
+            } catch (parseError) {
+                console.warn('Initial JSON parse failed, likely due to token truncation. Attempting to recover...', parseError.message);
+                // Attempt to recover by stripping out the last incomplete object.
+                const lastValidElementEnd = jsonText.lastIndexOf('},');
+                if (lastValidElementEnd !== -1) {
+                    jsonText = jsonText.substring(0, lastValidElementEnd + 1) + ']';
+                    questions = JSON.parse(jsonText); // Try parsing the recovered JSON
+                } else {
+                    throw new Error('Failed to parse AI question response: ' + parseError.message);
+                }
+            }
 
             if (!Array.isArray(questions) || questions.length === 0) {
                 throw new Error('Invalid questions array');
@@ -1115,7 +1182,7 @@ export const addMessageToChatSession = async (req, res) => {
                         // Resources & Discussions Metadata
                         const LessonComment = (await import('../models/LessonComment.js')).default;
                         const courseLessons = await Lesson.find({ courseId: session.courseId });
-                        
+
                         let totalVideoDuration = 0;
                         let totalDocuments = 0;
                         let totalQuizzes = 0;
@@ -1127,7 +1194,7 @@ export const addMessageToChatSession = async (req, res) => {
                             if (l.content?.documents?.length) totalDocuments += l.content.documents.length;
                             if (l.content?.attachments?.length) totalDocuments += l.content.attachments.length;
                         });
-                        
+
                         const lessonIds = courseLessons.map(l => l._id);
                         const totalDiscussions = await LessonComment.countDocuments({ lessonId: { $in: lessonIds } });
 

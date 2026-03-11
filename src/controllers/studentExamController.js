@@ -10,6 +10,7 @@ import { featureFlags } from '../config/featureFlags.js';
 import { getForUser as getEntitlementsForUser } from '../services/entitlementService.js';
 import { evaluateAccess } from '../services/accessPolicy.js';
 import { emitLearningEvent } from '../services/learningEventService.js';
+import { evaluateSubjectiveAnswer } from './aiController.js';
 
 // @desc    Get all exam attempts for analytics
 // @route   GET /api/student/exams/history-all
@@ -285,21 +286,31 @@ export const submitExam = async (req, res) => {
         let score = 0;
         const attemptCount = await ExamAttempt.countDocuments({ examId: id, studentId });
 
-        const processedAnswers = answers.map(ans => {
+        const processedAnswers = (await Promise.all(answers.map(async ans => {
             const question = exam.questions.id(ans.questionId);
             if (!question) return null;
 
             const isSubjective = !question.options || question.options.length === 0;
 
             if (isSubjective) {
-                // Subjective question — store textAnswer, mark for manual review
+                // Subjective question — score with AI
+                const textAnswer = ans.textAnswer || ans.selectedOptionText || '';
+                const maxPoints = question.points || 1;
+                const evaluation = await evaluateSubjectiveAnswer(
+                    question.question,
+                    question.idealAnswer,
+                    textAnswer,
+                    maxPoints
+                );
+
                 return {
                     questionId: question._id,
                     selectedOption: -1,
-                    textAnswer: ans.textAnswer || '',
-                    isCorrect: false,
-                    pendingReview: true,
-                    pointsEarned: 0
+                    textAnswer: textAnswer,
+                    aiFeedback: evaluation.feedback,
+                    isCorrect: evaluation.isCorrect,
+                    pointsEarned: evaluation.pointsEarned,
+                    _scoreDelta: evaluation.pointsEarned
                 };
             }
 
@@ -315,10 +326,11 @@ export const submitExam = async (req, res) => {
                 ? optionByText.isCorrect || false
                 : (selectedOptIndex >= 0 ? question.options[selectedOptIndex]?.isCorrect || false : false);
 
+            let scoreDelta = 0;
             if (isCorrect) {
-                score += question.points || 1;
+                scoreDelta = (question.points || 1);
             } else if (exam.negativeMarking && selectedOptIndex !== -1 && selectedOptIndex !== null) {
-                score -= (question.points || 1) * 0.25;
+                scoreDelta = -((question.points || 1) * 0.25);
             }
 
             return {
@@ -326,10 +338,12 @@ export const submitExam = async (req, res) => {
                 selectedOption: selectedOptIndex,
                 selectedOptionText,
                 isCorrect,
-                pointsEarned: isCorrect ? (question.points || 1) : 0
+                pointsEarned: isCorrect ? (question.points || 1) : 0,
+                _scoreDelta: scoreDelta
             };
-        }).filter(Boolean);
+        }))).filter(Boolean);
 
+        score = processedAnswers.reduce((total, ans) => total + (ans._scoreDelta || 0), 0);
         score = Math.max(0, score);
         const passEvaluation = evaluatePass({
             score,
