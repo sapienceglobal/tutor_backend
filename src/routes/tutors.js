@@ -9,24 +9,35 @@ import {
     deleteTutor,
     getTutorById,
     getCurrentTutor,
+    getTutorAnnouncements,
     getTutorStats,
     getTutorsByCategory,
     getTutorStudentDetails,
     getAllTutorStudents
 } from '../controllers/tutorController.js';
-import { requestPayout, getMyPayouts } from '../controllers/payoutController.js';
+import {
+    requestPayout,
+    getMyPayouts,
+    getTutorPayoutReport,
+    exportTutorPayoutReport,
+    cancelMyPayoutRequest,
+} from '../controllers/payoutController.js';
 
 const router = express.Router();
 
 // Protected routes
 router.get('/profile', protect, getCurrentTutor);
 router.get('/stats', protect, authorize('tutor'), getTutorStats); // Specific route before /:id
+router.get('/announcements', protect, authorize('tutor'), getTutorAnnouncements);
 router.get('/students', protect, authorize('tutor'), getAllTutorStudents);
 router.get('/students/:id', protect, authorize('tutor'), getTutorStudentDetails);
 
 // Payout Routes
 router.post('/payouts/request', protect, authorize('tutor'), requestPayout);
 router.get('/payouts', protect, authorize('tutor'), getMyPayouts);
+router.get('/payouts/report', protect, authorize('tutor'), getTutorPayoutReport);
+router.get('/payouts/export', protect, authorize('tutor'), exportTutorPayoutReport);
+router.patch('/payouts/:id/cancel', protect, authorize('tutor'), cancelMyPayoutRequest);
 
 // Public routes (optionalAuth to populate req.user for blocked student filtering)
 router.get('/', optionalAuth, getAllTutors);

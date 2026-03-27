@@ -618,7 +618,7 @@ export const deleteExam = async (req, res) => {
 export const submitExam = async (req, res) => {
   try {
     const { id } = req.params;
-    const { answers, timeSpent, startedAt } = req.body;
+    const { answers, timeSpent, startedAt, tabSwitchCount, proctoringEvents } = req.body;
 
     const exam = await Exam.findById(id);
     if (!exam) {
@@ -811,6 +811,29 @@ export const submitExam = async (req, res) => {
     const percentage = passEvaluation.displayPercentage;
     const isPassed = passEvaluation.isPassed;
 
+    // --- AI Risk Calculation ---
+    const finalTabSwitches = Number(tabSwitchCount) || 0;
+    const finalProctoringEvents = Array.isArray(proctoringEvents) ? proctoringEvents : [];
+    
+    let aiRiskScore = finalTabSwitches * 1.5;
+    finalProctoringEvents.forEach(e => {
+      if (e.severity === 'critical') aiRiskScore += 3;
+      else if (e.severity === 'high') aiRiskScore += 2;
+      else if (e.severity === 'medium') aiRiskScore += 1;
+      else aiRiskScore += 0.5;
+    });
+
+    aiRiskScore = Math.min(10, aiRiskScore); // Cap at 10
+
+    let aiRiskLevel = 'Safe';
+    if (aiRiskScore >= 7) aiRiskLevel = 'Cheating';
+    else if (aiRiskScore >= 4) aiRiskLevel = 'Suspicious';
+    else if (aiRiskScore >= 2) aiRiskLevel = 'Low Confidence';
+
+    let summary = 'Session completed cleanly.';
+    if (aiRiskScore >= 4) summary = "Suspicious AI indicators flagged. Score: " + aiRiskScore.toFixed(1) + "/10.";
+    if (aiRiskScore >= 7) summary = 'Critical violations detected. Direct instructor review highly recommended.';
+
     // Create attempt
     const attempt = await ExamAttempt.create({
       examId: id,
@@ -824,6 +847,11 @@ export const submitExam = async (req, res) => {
       timeSpent,
       startedAt: new Date(startedAt),
       submittedAt: new Date(),
+      tabSwitchCount: finalTabSwitches,
+      proctoringEvents: finalProctoringEvents,
+      aiRiskScore,
+      aiRiskLevel,
+      aiProctoringSummary: summary
     });
 
     // Update exam statistics

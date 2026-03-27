@@ -141,6 +141,18 @@ const examSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  isProctoringEnabled: {
+    type: Boolean,
+    default: false,
+  }, 
+  isAudioProctoringEnabled: {
+    type: Boolean,
+    default: false
+  },
+  strictTabSwitching: {
+    type: Boolean,
+    default: false,
+  },
 
   // Questions
   questions: [examQuestionSchema],
@@ -378,6 +390,27 @@ const examAttemptSchema = new mongoose.Schema({
     type: Number,
     default: 0,
   },
+
+  // --- Advanced AI Proctoring Tracking ---
+  proctoringEvents: [{
+    eventType: { type: String, enum: ['tab_switch', 'unauthorized_object', 'multiple_faces', 'no_face', 'audio_anomaly'] },
+    timestamp: { type: Date, default: Date.now },
+    severity: { type: String, enum: ['low', 'medium', 'high'] },
+    details: String,
+    videoTimestamp: Number,
+  }],
+  aiRiskScore: {
+    type: Number,
+    default: 0,
+    min: 0, max: 10
+  },
+  aiRiskLevel: {
+    type: String,
+    enum: ['Safe', 'Low Confidence Detected', 'Suspicious Detected', 'Cheating Detected'],
+    default: 'Safe',
+  },
+  aiProctoringSummary: String,
+
 });
 
 // Index for faster queries

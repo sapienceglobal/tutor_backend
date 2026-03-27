@@ -277,16 +277,25 @@ export const updateTutor = async (req, res) => {
       });
     }
 
-    if (categoryId) tutor.categoryId = categoryId;
-    if (hourlyRate) tutor.hourlyRate = hourlyRate;
-    if (experience) tutor.experience = experience;
-    if (subjects) tutor.subjects = subjects;
-    if (availability) tutor.availability = availability;
-    if (availability) tutor.availability = availability;
-    if (bio) tutor.bio = bio;
-    if (req.body.title) tutor.title = req.body.title;
-    if (req.body.website) tutor.website = req.body.website;
-    if (req.body.location) tutor.location = req.body.location;
+    if (categoryId !== undefined) tutor.categoryId = categoryId;
+    if (hourlyRate !== undefined) tutor.hourlyRate = hourlyRate;
+    if (experience !== undefined) tutor.experience = experience;
+    if (subjects !== undefined) tutor.subjects = subjects;
+    if (availability !== undefined) tutor.availability = availability;
+    if (bio !== undefined) tutor.bio = bio;
+    if (req.body.title !== undefined) tutor.title = req.body.title;
+    if (req.body.website !== undefined) tutor.website = req.body.website;
+    if (req.body.location !== undefined) tutor.location = req.body.location;
+
+    if (req.body.notificationPreferences !== undefined) {
+      const nextPrefs = req.body.notificationPreferences || {};
+      tutor.notificationPreferences = {
+        enrollment: nextPrefs.enrollment !== undefined ? Boolean(nextPrefs.enrollment) : Boolean(tutor.notificationPreferences?.enrollment),
+        reviews: nextPrefs.reviews !== undefined ? Boolean(nextPrefs.reviews) : Boolean(tutor.notificationPreferences?.reviews),
+        summary: nextPrefs.summary !== undefined ? Boolean(nextPrefs.summary) : Boolean(tutor.notificationPreferences?.summary),
+        promotions: nextPrefs.promotions !== undefined ? Boolean(nextPrefs.promotions) : Boolean(tutor.notificationPreferences?.promotions),
+      };
+    }
 
     await tutor.save();
 
@@ -394,6 +403,77 @@ export const getCurrentTutor = async (req, res) => {
       success: false,
       message: 'Internal server error'
     });
+  }
+};
+
+// @desc    Get all announcements for current tutor across courses and batches
+// @route   GET /api/tutors/announcements
+export const getTutorAnnouncements = async (req, res) => {
+  try {
+    const tutor = await Tutor.findOne({ userId: req.user.id });
+    if (!tutor) {
+      return res.status(404).json({ success: false, message: 'Tutor profile not found' });
+    }
+
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+    const type = req.query.type;
+
+    const Course = (await import('../models/Course.js')).default;
+    const Batch = (await import('../models/Batch.js')).default;
+
+    const [courses, batches] = await Promise.all([
+      Course.find({ tutorId: tutor._id }).select('title announcements'),
+      Batch.find({ tutorId: tutor._id }).select('name courseId announcements').populate('courseId', 'title'),
+    ]);
+
+    const courseAnnouncements = [];
+    courses.forEach((course) => {
+      (course.announcements || []).forEach((announcement) => {
+        courseAnnouncements.push({
+          sourceType: 'course',
+          sourceId: course._id,
+          sourceTitle: course.title,
+          title: announcement.title,
+          message: announcement.message,
+          createdAt: announcement.createdAt || course.updatedAt || course.createdAt,
+        });
+      });
+    });
+
+    const batchAnnouncements = [];
+    batches.forEach((batch) => {
+      (batch.announcements || []).forEach((announcement) => {
+        batchAnnouncements.push({
+          sourceType: 'batch',
+          sourceId: batch._id,
+          sourceTitle: batch.name,
+          courseTitle: batch.courseId?.title || '',
+          title: announcement.title,
+          message: announcement.message,
+          createdAt: announcement.createdAt || batch.updatedAt || batch.createdAt,
+        });
+      });
+    });
+
+    const allAnnouncements = [...courseAnnouncements, ...batchAnnouncements]
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    const filteredAnnouncements = (type === 'course' || type === 'batch')
+      ? allAnnouncements.filter((item) => item.sourceType === type)
+      : allAnnouncements;
+
+    return res.status(200).json({
+      success: true,
+      stats: {
+        total: allAnnouncements.length,
+        course: courseAnnouncements.length,
+        batch: batchAnnouncements.length,
+      },
+      announcements: filteredAnnouncements.slice(0, limit),
+    });
+  } catch (error) {
+    console.error('Get tutor announcements error:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
 
@@ -565,6 +645,67 @@ export const getTutorStats = async (req, res) => {
       }
     });
 
+    // 8. Action queue + communications snapshot
+    const LiveClass = (await import('../models/LiveClass.js')).default;
+    const Assignment = (await import('../models/Assignment.js')).default;
+    const Submission = (await import('../models/Submission.js')).default;
+    const Batch = (await import('../models/Batch.js')).default;
+    const Notification = (await import('../models/Notification.js')).default;
+
+    const [upcomingClasses, upcomingClassesCount] = await Promise.all([
+      LiveClass.find({
+        tutorId: tutor._id,
+        dateTime: { $gte: now },
+        status: { $in: ['scheduled', 'live'] },
+      })
+        .sort({ dateTime: 1 })
+        .limit(5)
+        .populate('courseId', 'title')
+        .lean(),
+      LiveClass.countDocuments({
+        tutorId: tutor._id,
+        dateTime: { $gte: now },
+        status: { $in: ['scheduled', 'live'] },
+      }),
+    ]);
+
+    const assignmentIds = (await Assignment.find({ courseId: { $in: courseIds } }).select('_id').lean()).map((assignment) => assignment._id);
+    const pendingAssignmentReviews = assignmentIds.length > 0
+      ? await Submission.countDocuments({ assignmentId: { $in: assignmentIds }, status: 'submitted' })
+      : 0;
+
+    const unreadNotificationsCount = await Notification.countDocuments({
+      userId,
+      isRead: false,
+    });
+
+    const batches = await Batch.find({ tutorId: tutor._id })
+      .select('name announcements courseId')
+      .populate('courseId', 'title')
+      .lean();
+
+    const recentAnnouncements = [
+      ...courses.flatMap((course) => (course.announcements || []).map((announcement) => ({
+        sourceType: 'course',
+        sourceId: course._id,
+        sourceTitle: course.title,
+        title: announcement.title,
+        message: announcement.message,
+        createdAt: announcement.createdAt || course.updatedAt || course.createdAt,
+      }))),
+      ...batches.flatMap((batch) => (batch.announcements || []).map((announcement) => ({
+        sourceType: 'batch',
+        sourceId: batch._id,
+        sourceTitle: batch.name,
+        courseTitle: batch.courseId?.title || '',
+        title: announcement.title,
+        message: announcement.message,
+        createdAt: announcement.createdAt || batch.updatedAt || batch.createdAt,
+      }))),
+    ]
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      .slice(0, 5);
+
     res.status(200).json({
       success: true,
       stats: {
@@ -575,6 +716,17 @@ export const getTutorStats = async (req, res) => {
         recentEnrollments,
         topCourses,
         monthlyData,
+        upcomingClasses: upcomingClasses.map((liveClass) => ({
+          _id: liveClass._id,
+          title: liveClass.title,
+          courseTitle: liveClass.courseId?.title || '',
+          dateTime: liveClass.dateTime,
+          status: liveClass.status,
+        })),
+        upcomingClassesCount,
+        pendingAssignmentReviews,
+        unreadNotificationsCount,
+        recentAnnouncements,
         ratingsDistribution,
         totalReviews: reviews.length,
         trends: {

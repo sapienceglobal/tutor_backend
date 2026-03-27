@@ -16,6 +16,10 @@ import {
   getExamsByTutor,
   getStudentExams,
 } from '../controllers/examController.js';
+import {
+  getTutorReevaluationRequests,
+  reviewReevaluationRequest,
+} from '../controllers/examReevaluationController.js';
 import { protect, authorize } from '../middleware/auth.js';
 
 
@@ -25,6 +29,8 @@ const router = express.Router();
 router.get('/tutor/all', protect, authorize('tutor', 'admin'), getExamsByTutor);
 router.get('/student/history-all', protect, getMyAllAttempts);
 router.get('/student/all', protect, getStudentExams);
+router.get('/re-evaluation-requests', protect, authorize('tutor'), getTutorReevaluationRequests);
+router.patch('/re-evaluation-requests/:requestId/review', protect, authorize('tutor'), reviewReevaluationRequest);
 
 router.get('/course/:courseId', protect, getExamsByCourse);
 router.get('/:id', protect, getExamById);

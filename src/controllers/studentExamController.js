@@ -172,9 +172,11 @@ export const getAllExams = async (req, res) => {
 
 // @desc    Get Single Exam for Taking Loop (Student Portal)
 // @route   GET /api/student/exams/:id
+// @desc    Get Single Exam for Taking Loop (Student Portal)
+// @route   GET /api/student/exams/:id
 export const getExamById = async (req, res) => {
     try {
-        const { id } = req.params;
+        const { id } = req.params;// Ensure Exam is imported
         const exam = await Exam.findById(id).lean();
 
         if (!exam || exam.status !== 'published') {
@@ -199,17 +201,44 @@ export const getExamById = async (req, res) => {
             }
         }
 
-        // Security: Remove correct answers
-        const secureQuestions = exam.questions.map(q => ({
-            _id: q._id,
-            question: q.question,
-            options: q.options.map(opt => ({
+        // Helper function for shuffling arrays
+        const shuffleArray = (array) => {
+            const newArr = [...array];
+            for (let i = newArr.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [newArr[i], newArr[j]] = [newArr[j], newArr[i]];
+            }
+            return newArr;
+        };
+
+        // Security: Remove correct answers AND apply shuffling if enabled by tutor
+        let secureQuestions = exam.questions.map(q => {
+            // Shuffle options if enabled
+            let safeOptions = q.options.map(opt => ({
                 _id: opt._id,
                 text: opt.text
-            })),
-            points: q.points,
-            type: q.type
-        }));
+            }));
+
+            if (exam.shuffleOptions) {
+                safeOptions = shuffleArray(safeOptions);
+            }
+
+            return {
+                _id: q._id,
+                question: q.question,
+                options: safeOptions,
+                points: q.points,
+                type: q.questionType || q.type, // Ensure type is passed correctly
+                passage: q.passage,             // Important for passage type
+                pairs: q.pairs ? q.pairs.map(p => ({ left: p.left, right: p.right })) : [] // For match type
+            };
+        });
+
+        // Shuffle questions if enabled
+        if (exam.shuffleQuestions && !exam.sections?.length) {
+            // Don't shuffle if sections exist, as it breaks section index bounds
+            secureQuestions = shuffleArray(secureQuestions);
+        }
 
         res.status(200).json({
             success: true,
@@ -217,11 +246,17 @@ export const getExamById = async (req, res) => {
                 _id: exam._id,
                 title: exam.title,
                 duration: exam.duration,
-                instructions: exam.instructions,
+                instructions: exam.instructions || exam.description,
                 questions: secureQuestions,
                 totalMarks: exam.totalMarks,
                 sections: exam.sections || [],
                 isAdaptive: exam.isAdaptive || false,
+                isProctoringEnabled: exam.isProctoringEnabled || false,
+                isAudioProctoringEnabled: exam.isAudioProctoringEnabled || false,
+                strictTabSwitching: exam.strictTabSwitching || false,
+                negativeMarking: exam.negativeMarking || false,
+                maxAttempts: exam.maxAttempts || 1,
+                showResultImmediately: exam.showResultImmediately // Frontend ke liye useful h
             }
         });
 
@@ -233,10 +268,25 @@ export const getExamById = async (req, res) => {
 
 // @desc    Submit Exam (Student Portal)
 // @route   POST /api/student/exams/:id/submit
+// ================================================================
+// REPLACE the existing submitExam function in studentExamController.js
+// with this version — it saves tabSwitchCount, proctoringEvents,
+// aiRiskScore and aiRiskLevel into the ExamAttempt document.
+// ================================================================
+
+// @desc    Submit Exam (Student Portal)
+// @route   POST /api/student/exams/:id/submit
 export const submitExam = async (req, res) => {
     try {
         const { id } = req.params;
-        const { answers, timeSpent, startedAt } = req.body;
+        const {
+            answers,
+            timeSpent,
+            startedAt,
+            // ── Proctoring data from frontend ──────────────────────
+            tabSwitchCount = 0,
+            proctoringEvents = [],
+        } = req.body;
         const studentId = req.user.id;
 
         const exam = await Exam.findById(id);
@@ -249,19 +299,11 @@ export const submitExam = async (req, res) => {
                 courseId: exam.courseId,
                 status: 'active',
             });
-
             if (!enrollment) {
-                return res.status(403).json({
-                    success: false,
-                    message: 'You must be enrolled in the course to take this exam',
-                });
+                return res.status(403).json({ success: false, message: 'You must be enrolled in the course to take this exam' });
             }
-
             if (exam.batchId && enrollment.batchId?.toString() !== exam.batchId.toString()) {
-                return res.status(403).json({
-                    success: false,
-                    message: 'This exam is not available for your batch',
-                });
+                return res.status(403).json({ success: false, message: 'This exam is not available for your batch' });
             }
         }
 
@@ -276,13 +318,11 @@ export const submitExam = async (req, res) => {
                 courseId: exam.courseId,
             });
             if (!accessDecision.allowed) {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Exam is not available in your current audience scope',
-                });
+                return res.status(403).json({ success: false, message: 'Exam is not available in your current audience scope' });
             }
         }
 
+        // ── Grade answers ─────────────────────────────────────────
         let score = 0;
         const attemptCount = await ExamAttempt.countDocuments({ examId: id, studentId });
 
@@ -293,7 +333,6 @@ export const submitExam = async (req, res) => {
             const isSubjective = !question.options || question.options.length === 0;
 
             if (isSubjective) {
-                // Subjective question — score with AI
                 const textAnswer = ans.textAnswer || ans.selectedOptionText || '';
                 const maxPoints = question.points || 1;
                 const evaluation = await evaluateSubjectiveAnswer(
@@ -302,19 +341,17 @@ export const submitExam = async (req, res) => {
                     textAnswer,
                     maxPoints
                 );
-
                 return {
                     questionId: question._id,
                     selectedOption: -1,
-                    textAnswer: textAnswer,
+                    textAnswer,
                     aiFeedback: evaluation.feedback,
                     isCorrect: evaluation.isCorrect,
                     pointsEarned: evaluation.pointsEarned,
-                    _scoreDelta: evaluation.pointsEarned
+                    _scoreDelta: evaluation.pointsEarned,
                 };
             }
 
-            // MCQ / option-based auto-grading
             const selectedOptIndex = Number.isInteger(ans.selectedOption) ? ans.selectedOption : -1;
             const selectedOptionText = (typeof ans.selectedOptionText === 'string' && ans.selectedOptionText.trim())
                 ? ans.selectedOptionText.trim()
@@ -328,7 +365,7 @@ export const submitExam = async (req, res) => {
 
             let scoreDelta = 0;
             if (isCorrect) {
-                scoreDelta = (question.points || 1);
+                scoreDelta = question.points || 1;
             } else if (exam.negativeMarking && selectedOptIndex !== -1 && selectedOptIndex !== null) {
                 scoreDelta = -((question.points || 1) * 0.25);
             }
@@ -339,12 +376,13 @@ export const submitExam = async (req, res) => {
                 selectedOptionText,
                 isCorrect,
                 pointsEarned: isCorrect ? (question.points || 1) : 0,
-                _scoreDelta: scoreDelta
+                _scoreDelta: scoreDelta,
             };
         }))).filter(Boolean);
 
         score = processedAnswers.reduce((total, ans) => total + (ans._scoreDelta || 0), 0);
         score = Math.max(0, score);
+
         const passEvaluation = evaluatePass({
             score,
             totalMarks: exam.totalMarks,
@@ -354,6 +392,48 @@ export const submitExam = async (req, res) => {
         const percentage = passEvaluation.displayPercentage;
         const isPassed = passEvaluation.isPassed;
 
+        // ── Compute AI risk score from proctoring data ────────────
+        const safeTabCount = Math.max(0, Number(tabSwitchCount) || 0);
+        const safeEvents = Array.isArray(proctoringEvents) ? proctoringEvents : [];
+
+        const highEvents = safeEvents.filter(e => e.severity === 'high' || e.severity === 'critical').length;
+        const mediumEvents = safeEvents.filter(e => e.severity === 'medium').length;
+
+        // Risk score 0–10
+        let aiRiskScore = 0;
+        aiRiskScore += Math.min(safeTabCount * 0.8, 3);   // tab switches — max 3 pts
+        aiRiskScore += Math.min(highEvents * 1.5, 4);   // high severity — max 4 pts
+        aiRiskScore += Math.min(mediumEvents * 0.8, 2);   // medium severity — max 2 pts
+        aiRiskScore += Math.min(safeEvents.length * 0.1, 1); // raw event count — max 1 pt
+        aiRiskScore = Math.min(10, Math.round(aiRiskScore * 10) / 10);
+
+        // Risk level
+        let aiRiskLevel;
+        if (aiRiskScore >= 6.5) aiRiskLevel = 'Cheating Detected';
+        else if (aiRiskScore >= 3.5) aiRiskLevel = 'Suspicious Detected';
+        else if (aiRiskScore >= 1.0) aiRiskLevel = 'Low Confidence Detected';
+        else aiRiskLevel = 'Safe';
+
+        // Build tabSwitchLog from events
+        const tabSwitchLog = safeEvents
+            .filter(e => e.eventType === 'tab_switch')
+            .map(e => ({ switchedAt: new Date(e.timestamp || Date.now()), count: 1 }));
+
+        // ── Sanitize proctoringEvents for DB enum ─────────────────
+        const allowedEventTypes = ['tab_switch', 'unauthorized_object', 'multiple_faces', 'no_face', 'audio_anomaly'];
+        const allowedSeverities = ['low', 'medium', 'high'];
+
+        const sanitizedEvents = safeEvents
+            .filter(e => allowedEventTypes.includes(e.eventType))
+            .map(e => ({
+                eventType: e.eventType,
+                timestamp: new Date(e.timestamp || Date.now()),
+                severity: allowedSeverities.includes(e.severity) ? e.severity : 'medium',
+                details: typeof e.details === 'string' ? e.details.slice(0, 500) : '',
+                videoTimestamp: typeof e.videoTimestamp === 'number' ? e.videoTimestamp : 0,
+            }));
+
+        // ── Create attempt ────────────────────────────────────────
         const attempt = await ExamAttempt.create({
             examId: id,
             studentId,
@@ -365,10 +445,17 @@ export const submitExam = async (req, res) => {
             isPassed,
             timeSpent,
             startedAt: startedAt ? new Date(startedAt) : new Date(),
-            submittedAt: new Date()
+            submittedAt: new Date(),
+
+            // ── Proctoring fields ─────────────────────────────────
+            tabSwitchCount: safeTabCount,
+            tabSwitchLog,
+            proctoringEvents: sanitizedEvents,
+            aiRiskScore,
+            aiRiskLevel,
         });
 
-        // --- Compute Percentile ---
+        // ── Compute percentile ────────────────────────────────────
         const allAttempts = await ExamAttempt.find({ examId: id });
         const allScores = allAttempts.map(a => a.score).sort((a, b) => a - b);
         const rank = allScores.filter(s => s < score).length;
@@ -382,12 +469,7 @@ export const submitExam = async (req, res) => {
             batchId: exam.batchId || enrollment?.batchId || null,
             resourceId: exam._id,
             resourceType: 'exam',
-            meta: {
-                score,
-                percentage,
-                isPassed,
-                attemptNumber: attempt.attemptNumber,
-            },
+            meta: { score, percentage, isPassed, attemptNumber: attempt.attemptNumber },
         });
 
         res.status(200).json({
@@ -396,7 +478,14 @@ export const submitExam = async (req, res) => {
             isPassed,
             percentage,
             percentile,
-            attemptId: attempt._id
+            attemptId: attempt._id,
+            // Return proctoring summary so frontend can show warning if needed
+            proctoring: {
+                riskLevel: aiRiskLevel,
+                riskScore: aiRiskScore,
+                tabSwitches: safeTabCount,
+                totalEvents: sanitizedEvents.length,
+            },
         });
 
     } catch (error) {

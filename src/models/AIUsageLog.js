@@ -13,7 +13,18 @@ const aiUsageLogSchema = new mongoose.Schema({
     },
     action: {
         type: String,
-        enum: ['question_generation', 'tutor_chat', 'lesson_quiz', 'summarize_lesson', 'revision_notes', 'analytics', 'contextual_chat'],
+        enum: [
+            'question_generation',
+            'tutor_chat',
+            'tutor_chat_session',  
+            'lesson_quiz',
+            'generate_lesson_quiz', 
+            'summarize_lesson',
+            'revision_notes',
+            'analytics',
+            'contextual_chat',
+            'doubt_solver',         
+        ],
         required: true,
     },
     tokenCount: {

@@ -15,6 +15,11 @@ const aiChatSessionSchema = new mongoose.Schema({
         ref: 'Course',
         default: null // Optional context for RAG
     },
+    persona: {
+        type: String,
+        enum: ['student', 'tutor'],
+        default: 'student'
+    },
     messages: [{
         role: {
             type: String,

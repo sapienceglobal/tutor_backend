@@ -21,6 +21,7 @@ const notificationSchema = new mongoose.Schema({
       'tutor_reply',        // Tutor ne comment/question ka reply diya
       'review_reply',
       'new_review',
+      'direct_message',
       'study_plan_generated',
       'assignment_created',
       'assignment_graded'

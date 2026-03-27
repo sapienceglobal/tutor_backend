@@ -59,6 +59,24 @@ const tutorSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
+  notificationPreferences: {
+    enrollment: {
+      type: Boolean,
+      default: true,
+    },
+    reviews: {
+      type: Boolean,
+      default: true,
+    },
+    summary: {
+      type: Boolean,
+      default: false,
+    },
+    promotions: {
+      type: Boolean,
+      default: false,
+    },
+  },
   blockedStudents: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'

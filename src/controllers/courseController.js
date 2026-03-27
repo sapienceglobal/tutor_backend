@@ -10,6 +10,7 @@ import mongoose from 'mongoose';
 import { featureFlags } from '../config/featureFlags.js';
 import { getForUser as getEntitlementsForUser } from '../services/entitlementService.js';
 import { evaluateAccess } from '../services/accessPolicy.js';
+import { createNotification } from './notificationController.js';
 import {
   AUDIENCE_SCOPES,
   normalizeAudienceInput,
@@ -780,6 +781,23 @@ export const addCourseAnnouncement = async (req, res) => {
 
     course.announcements.push({ title, message, createdAt: new Date() });
     await course.save();
+
+    try {
+      const enrollments = await Enrollment.find({ courseId: course._id, status: 'active' }).select('studentId');
+      await Promise.allSettled(
+        enrollments.map((enrollment) =>
+          createNotification({
+            userId: enrollment.studentId,
+            type: 'announcement',
+            title: `Course Announcement: ${title}`,
+            message,
+            data: { courseId: course._id },
+          })
+        )
+      );
+    } catch (notificationError) {
+      console.error('Course announcement notification error:', notificationError);
+    }
 
     res.status(201).json({
       success: true,

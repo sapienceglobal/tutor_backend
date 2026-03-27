@@ -4,6 +4,7 @@ import Tutor from '../models/Tutor.js';
 import { ExamAttempt } from '../models/Exam.js';
 import Enrollment from '../models/Enrollment.js';
 import mongoose from 'mongoose';
+import { createNotification } from './notificationController.js';
 
 // @desc    Create a new batch
 // @route   POST /api/batches
@@ -298,6 +299,23 @@ export const addBatchAnnouncement = async (req, res) => {
 
         batch.announcements.push({ title, message });
         await batch.save();
+
+        try {
+            const studentIds = Array.isArray(batch.students) ? batch.students : [];
+            await Promise.allSettled(
+                studentIds.map((studentId) =>
+                    createNotification({
+                        userId: studentId,
+                        type: 'announcement',
+                        title: `Batch Announcement: ${title}`,
+                        message,
+                        data: { batchId: batch._id, courseId: batch.courseId },
+                    })
+                )
+            );
+        } catch (notificationError) {
+            console.error('Batch announcement notification error:', notificationError);
+        }
 
         res.status(201).json({
             success: true,
