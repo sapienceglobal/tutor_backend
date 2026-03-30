@@ -399,7 +399,8 @@ export const createCourse = async (req, res) => {
         message: 'Institute policy blocks global publishing for institute tutors',
       });
     }
-
+    const settings = await Settings.findOne();
+    const autoApprove = !settings || settings.autoApproveCourses !== false;
     const course = await Course.create({
       title,
       description,
@@ -408,6 +409,8 @@ export const createCourse = async (req, res) => {
       tutorId: tutor._id,
       instituteId: audience.scope === AUDIENCE_SCOPES.GLOBAL ? null : (audience.instituteId || tutor.instituteId || null),
       createdBy: req.user.id,
+      status: autoApprove ? 'published' : 'pending',
+      isAIGenerated: req.body.isAIGenerated || false,
       price: price || 0,
       level: level || 'beginner',
       duration: duration || 0,
@@ -663,11 +666,13 @@ export const getMyCourses = async (req, res) => {
         message: 'Only tutors can access this endpoint',
       });
     }
-
+    // Institute filter remove karo — tutor ke saare courses dikhao
+    // (global + institute dono)
     const filter = { tutorId: tutor._id };
-    if (tutor.instituteId) {
-      filter.instituteId = tutor.instituteId;
-    }
+    //else----
+    // if (tutor.instituteId) {
+    //   filter.instituteId = tutor.instituteId;
+    // }
 
     const courses = await Course.find(filter)
       .populate('categoryId', 'name icon')

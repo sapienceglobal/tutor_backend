@@ -168,6 +168,10 @@ const courseSchema = new mongoose.Schema({
       recordingUrl: String
     }]
   },
+  isAIGenerated: {
+    type: Boolean,
+    default: false,
+  },
   createdAt: {
     type: Date,
     default: Date.now,

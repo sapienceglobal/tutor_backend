@@ -54,8 +54,8 @@ import {
     getReportStudents, generateReport, getRecentReports, deleteReport,
 
     getProctoringAlerts, generateProctoringAISummary,
-
-    generateAICourse, getRecentAICourses, deleteAICourse,
+    generateAICourse,
+    getRecentAICourses, deleteAICourse,
 } from '../controllers/aiController.js';
 import { protect, admin } from '../middleware/auth.js';
 import { fileUpload } from '../utils/cloudinary.js';

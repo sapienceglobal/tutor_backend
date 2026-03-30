@@ -13,8 +13,8 @@ import pdfParse from 'pdf-parse';        // npm i pdf-parse
 import Assignment from '../models/Assignment.js';
 import Submission from '../models/Submission.js';
 import LectureSummary from '../models/LectureSummary.js';
-import StudyPlan from '../models/StudyPlan.js';
-import GeneratedReport from '../models/GeneratedReport.js';
+// import StudyPlan from '../models/StudyPlan.js';
+// import GeneratedReport from '../models/GeneratedReport.js';
 import mongoose from 'mongoose';
 import { Exam, ExamAttempt } from '../models/Exam.js';
 
@@ -5693,6 +5693,14 @@ Write a 3-4 sentence professional integrity assessment. State the risk level, de
 // @desc    Generate AI course structure
 // @route   POST /api/ai/course-builder/generate
 // @access  Private (tutor)
+// ─────────────────────────────────────────────────────────────────────────────
+// COURSE BUILDER CONTROLLERS
+// Append to aiController.js
+// ─────────────────────────────────────────────────────────────────────────────
+
+// @desc    Generate AI course AND save to real Course + Lesson DB
+// @route   POST /api/ai/course-builder/generate
+// @access  Private (tutor)
 export const generateAICourse = async (req, res) => {
     try {
         if (!GROQ_API_KEY) return res.status(500).json({ success: false, message: 'Groq API key not configured' });
@@ -5703,14 +5711,18 @@ export const generateAICourse = async (req, res) => {
             gradeLevel     = '',
             difficulty     = 'balanced',
             sections       = {},
+            categoryId,        // ← tutor must pass this
+            price          = 0,
         } = req.body;
 
-        if (!topic?.trim()) return res.status(400).json({ success: false, message: 'Course topic is required' });
+        if (!topic?.trim())    return res.status(400).json({ success: false, message: 'Course topic is required' });
+        if (!categoryId)       return res.status(400).json({ success: false, message: 'categoryId is required to save course' });
 
-        const Tutor    = (await import('../models/Tutor.js')).default;
-        const AICourse = (await import('../models/AICourse.js')).default;
+        const Tutor  = (await import('../models/Tutor.js')).default;
+        const Course = (await import('../models/Course.js')).default;
+        const Lesson = (await import('../models/Lesson.js')).default;
 
-        const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id').lean();
+        const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id instituteId').lean();
         if (!tutor) return res.status(403).json({ success: false, message: 'Tutor profile not found' });
 
         const selectedSections = {
@@ -5723,7 +5735,7 @@ export const generateAICourse = async (req, res) => {
             includeAIChatbot:     sections.includeAIChatbot     === true,
         };
 
-        const difficultyLabel = difficulty === 'easy' ? 'Easy (Beginner-friendly)'
+        const difficultyLabel = difficulty === 'easy'     ? 'Easy (Beginner-friendly)'
             : difficulty === 'focused'  ? 'Focused (Deep dive into specific topics)'
             : difficulty === 'advanced' ? 'Advanced (Expert level)'
             : 'Balanced (Mixed Difficulty)';
@@ -5738,7 +5750,7 @@ export const generateAICourse = async (req, res) => {
 You are an expert curriculum designer. Create a comprehensive course structure.
 
 Course Topic: "${topic.trim()}"
-${subject    ? `Subject: ${subject}`         : ''}
+${subject    ? `Subject: ${subject}`             : ''}
 ${gradeLevel ? `Target Grade Level: ${gradeLevel}` : ''}
 Difficulty: ${difficultyLabel}
 Include Sections: ${sectionsList}
@@ -5749,33 +5761,34 @@ Generate a complete, structured course. Return ONLY valid JSON (no markdown, no 
   "description": "<2-3 sentence course description>",
   "estimatedDuration": "<e.g. 4 weeks, 20 hours>",
   "targetAudience": "<e.g. Grade 8 students, beginners>",
-  "learningObjectives": ["<objective 1>", "<objective 2>", "<objective 3>", "<objective 4>"],
+  "whatYouWillLearn": ["<objective 1>", "<objective 2>", "<objective 3>", "<objective 4>"],
+  "requirements": ["<prerequisite 1>", "<prerequisite 2>"],
   "modules": [
     {
-      "moduleNumber": 1,
       "title": "<module title>",
       "description": "<1 sentence module overview>",
-      "duration": "<e.g. 1 week>",
       "lessons": [
         {
-          "lessonNumber": 1,
           "title": "<lesson title>",
-          "type": "<video|reading|quiz|assignment|flashcard|summary>",
+          "type": "<video|document|quiz>",
           "duration": "<e.g. 30 mins>",
           "description": "<1 sentence lesson description>",
-          "keyPoints": ["<point 1>", "<point 2>", "<point 3>"]
+          "isFree": <true for first lesson of first module, false otherwise>,
+          "quizQuestions": [
+            {
+              "question": "<MCQ question — only include if type is quiz>",
+              "options": [
+                { "text": "<option A>", "isCorrect": false },
+                { "text": "<option B>", "isCorrect": true },
+                { "text": "<option C>", "isCorrect": false },
+                { "text": "<option D>", "isCorrect": false }
+              ],
+              "explanation": "<why correct answer is right>",
+              "points": 1
+            }
+          ]
         }
       ]
-    }
-  ],
-  "flashcards": [
-    { "front": "<term or question>", "back": "<definition or answer>" }
-  ],
-  "sampleQuiz": [
-    {
-      "question": "<MCQ question>",
-      "options": ["<A>", "<B>", "<C>", "<D>"],
-      "correctAnswer": "<correct option text>"
     }
   ]
 }
@@ -5783,10 +5796,11 @@ Generate a complete, structured course. Return ONLY valid JSON (no markdown, no 
 Rules:
 - Generate exactly 3-4 modules
 - Each module should have 3-4 lessons
-- Generate exactly 5 flashcards
-- Generate exactly 3 quiz questions
+- Lesson types: use "video" for concept lessons, "document" for reading/notes/flashcards, "quiz" for practice/assessment
+- For quiz lessons: include 3-5 quizQuestions with proper MCQ format
+- For non-quiz lessons: quizQuestions should be empty array []
+- First lesson of first module should have isFree: true
 - Make content specific to the topic and grade level
-- Lesson types should match selected sections (e.g. if practiceQuizzes selected, include quiz lessons)
 `.trim();
 
         const raw = await callGroqAI(prompt);
@@ -5799,58 +5813,177 @@ Rules:
             return res.status(500).json({ success: false, message: 'AI returned invalid format. Please retry.' });
         }
 
-        // ── Get instituteId ───────────────────────────────────────────
-        let instituteId = null;
-        try {
-            const User = (await import('../models/User.js')).default;
-            const user = await User.findById(req.user._id).select('instituteId').lean();
-            instituteId = user?.instituteId || null;
-        } catch { /* non-critical */ }
+        // ── Get user info ─────────────────────────────────────────────
+        const User = (await import('../models/User.js')).default;
+        const user = await User.findById(req.user._id).select('instituteId').lean();
+        const instituteId = user?.instituteId || tutor.instituteId || null;
 
-        // ── Save to DB ────────────────────────────────────────────────
-        const course = await AICourse.create({
-            tutorId:           tutor._id,
+        // ── Build modules array for Course ────────────────────────────
+        const mongoose = (await import('mongoose')).default;
+
+        const modulesWithIds = (parsed.modules || []).map((mod, mIdx) => ({
+            _id:         new mongoose.Types.ObjectId(),
+            title:       mod.title       || `Module ${mIdx + 1}`,
+            description: mod.description || '',
+            order:       mIdx,
+        }));
+
+        // ── Create Course (same as manual createCourse) ───────────────
+        const levelMap = {
+            easy:     'beginner',
+            balanced: 'intermediate',
+            focused:  'intermediate',
+            advanced: 'advanced',
+        };
+
+        const course = await Course.create({
+            title:           parsed.title            || topic,
+            description:     parsed.description      || '',
+            categoryId,
+            tutorId:         tutor._id,
             instituteId,
-            topic:             topic.trim(),
-            subject:           subject || '',
-            gradeLevel:        gradeLevel || '',
-            difficulty,
-            sections:          selectedSections,
-            title:             parsed.title             || topic,
-            description:       parsed.description       || '',
-            estimatedDuration: parsed.estimatedDuration || '',
-            targetAudience:    parsed.targetAudience    || gradeLevel || '',
-            learningObjectives:parsed.learningObjectives|| [],
-            modules:           parsed.modules           || [],
-            flashcards:        (parsed.flashcards       || []).slice(0, 5),
-            sampleQuiz:        (parsed.sampleQuiz       || []).slice(0, 3),
-            status:            'ready',
+            createdBy:       req.user._id,
+            price:           Number(price)           || 0,
+            isFree:          Number(price) === 0,
+            level:           levelMap[difficulty]    || 'beginner',
+            language:        'English',
+            duration:        0,
+            whatYouWillLearn:(parsed.whatYouWillLearn|| []).slice(0, 6),
+            requirements:    (parsed.requirements    || []).slice(0, 4),
+            modules:         modulesWithIds,
+            status:          'published',
+            isAIGenerated:   true,
+            visibility:      instituteId ? 'institute' : 'public',
+            audience: {
+                scope:       instituteId ? 'institute' : 'global',
+                instituteId: instituteId || null,
+                batchIds:    [],
+                studentIds:  [],
+            },
         });
 
+        // ── Create Lessons for each module ────────────────────────────
+        const createdLessons = [];
+        let globalOrder = 0;
+
+        for (let mIdx = 0; mIdx < (parsed.modules || []).length; mIdx++) {
+            const mod        = parsed.modules[mIdx];
+            const moduleDoc  = modulesWithIds[mIdx];
+
+            for (let lIdx = 0; lIdx < (mod.lessons || []).length; lIdx++) {
+                const aiLesson = mod.lessons[lIdx];
+
+                // Build content object based on lesson type
+                let content = {};
+                const lessonType = aiLesson.type || 'video';
+
+                if (lessonType === 'video') {
+                    content = {
+                        videoUrl:    '',          // tutor will add later
+                        duration:    0,
+                        attachments: [],
+                    };
+                } else if (lessonType === 'quiz') {
+                    // Build proper quiz content
+                    const questions = (aiLesson.quizQuestions || []).map(q => ({
+                        question:    q.question    || '',
+                        options:     (q.options    || []).map(opt => ({
+                            text:      opt.text      || '',
+                            isCorrect: opt.isCorrect || false,
+                        })),
+                        explanation: q.explanation || '',
+                        points:      q.points      || 1,
+                    }));
+
+                    content = {
+                        quiz: {
+                            title:              aiLesson.title || 'Quiz',
+                            description:        aiLesson.description || '',
+                            passingScore:       70,
+                            timeLimit:          null,
+                            shuffleQuestions:   false,
+                            shuffleOptions:     false,
+                            showCorrectAnswers: true,
+                            allowRetake:        true,
+                            maxAttempts:        null,
+                            questions,
+                            totalPoints:        questions.reduce((s, q) => s + q.points, 0),
+                        },
+                        attachments: [],
+                    };
+                } else {
+                    // document type — reading, notes, flashcards, summary
+                    content = {
+                        documents:   [],
+                        attachments: [{
+                            name: `${aiLesson.title} — AI Generated Notes`,
+                            url:  '',  // tutor will upload actual file later
+                            type: 'text/plain',
+                        }].filter(a => false), // start empty, tutor uploads
+                        attachments: [],
+                    };
+                }
+
+                try {
+                    const lesson = await Lesson.create({
+                        courseId:    course._id,
+                        moduleId:    moduleDoc._id,
+                        title:       aiLesson.title        || `Lesson ${lIdx + 1}`,
+                        description: aiLesson.description  || '',
+                        type:        lessonType,
+                        content,
+                        order:       globalOrder++,
+                        isFree:      aiLesson.isFree       || (mIdx === 0 && lIdx === 0),
+                        isPublished: true,
+                    });
+                    createdLessons.push(lesson);
+                } catch (lessonErr) {
+                    console.error(`Lesson create error (${aiLesson.title}):`, lessonErr.message);
+                    // Continue — don't fail entire course for one lesson
+                }
+            }
+        }
+
+        // ── Log AI usage ──────────────────────────────────────────────
         logAIUsage(req.user._id, 'analytics', {
-            type:      'course_builder',
-            courseId:  course._id,
+            type:         'course_builder',
+            courseId:     course._id,
             topic,
             gradeLevel,
+            lessonsCount: createdLessons.length,
         });
 
         res.status(200).json({
             success: true,
             course: {
-                _id:               course._id,
-                title:             course.title,
-                description:       course.description,
-                estimatedDuration: course.estimatedDuration,
-                targetAudience:    course.targetAudience,
-                learningObjectives:course.learningObjectives,
-                modules:           course.modules,
-                flashcards:        course.flashcards,
-                sampleQuiz:        course.sampleQuiz,
+                _id:             course._id,
+                title:           course.title,
+                description:     course.description,
+                isAIGenerated:   true,
+                status:          course.status,
+                level:           course.level,
+                whatYouWillLearn:course.whatYouWillLearn,
+                modules:         modulesWithIds.map((mod, i) => ({
+                    ...mod,
+                    lessons: createdLessons
+                        .filter(l => l.moduleId.toString() === mod._id.toString())
+                        .map(l => ({
+                            _id:         l._id,
+                            title:       l.title,
+                            type:        l.type,
+                            description: l.description,
+                            isFree:      l.isFree,
+                            order:       l.order,
+                        })),
+                })),
+                estimatedDuration: parsed.estimatedDuration || '',
+                targetAudience:    parsed.targetAudience    || '',
                 topic,
                 subject,
                 gradeLevel,
                 difficulty,
                 sections:          selectedSections,
+                lessonsCreated:    createdLessons.length,
                 createdAt:         course.createdAt,
             },
         });
@@ -5862,23 +5995,22 @@ Rules:
 };
 
 
-// @desc    Get recent AI-generated courses
-// @route   GET /api/ai/course-builder/recent
-// @access  Private (tutor)
+// getRecentAICourses — AICourse → Course model
 export const getRecentAICourses = async (req, res) => {
     try {
         const { limit = 10 } = req.query;
 
-        const Tutor    = (await import('../models/Tutor.js')).default;
-        const AICourse = (await import('../models/AICourse.js')).default;
+        const Tutor  = (await import('../models/Tutor.js')).default;
+        const Course = (await import('../models/Course.js')).default;
 
         const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id').lean();
         if (!tutor) return res.status(403).json({ success: false, message: 'Tutor profile not found' });
 
-        const courses = await AICourse.find({ tutorId: tutor._id, status: 'ready' })
+        // ── Sirf AI generated courses fetch karo ─────────────────────
+        const courses = await Course.find({ tutorId: tutor._id, isAIGenerated: true })
             .sort({ createdAt: -1 })
             .limit(Number(limit))
-            .select('-modules -flashcards -sampleQuiz')
+            .select('_id title description gradeLevel subject level status createdAt isAIGenerated modules')
             .lean();
 
         const formatted = courses.map(c => {
@@ -5889,13 +6021,26 @@ export const getRecentAICourses = async (req, res) => {
                 : diffMin < 1440  ? `${Math.floor(diffMin / 60)}h ago`
                 : diffMin < 10080 ? `${Math.floor(diffMin / 1440)}d ago`
                 : new Date(c.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
-            return { ...c, timeAgo };
+
+            return {
+                _id:          c._id,
+                title:        c.title,
+                description:  c.description,
+                gradeLevel:   c.gradeLevel  || '',   // Course model mein nahi hai — empty string fallback
+                subject:      c.subject     || '',   // Same
+                level:        c.level       || '',
+                status:       c.status,
+                moduleCount:  c.modules?.length || 0,
+                isAIGenerated:true,
+                timeAgo,
+                createdAt:    c.createdAt,
+            };
         });
 
-        // Stats
-        const total      = await AICourse.countDocuments({ tutorId: tutor._id });
-        const timeSaved  = Math.round(total * 0.7);      // rough: 42 mins saved per course
-        const shareCount = Math.round(total * 35.7);     // mock share count
+        // ── Stats ─────────────────────────────────────────────────────
+        const total     = await Course.countDocuments({ tutorId: tutor._id, isAIGenerated: true });
+        const timeSaved = Math.round(total * 0.7);
+        const shareCount= Math.round(total * 35.7);
 
         res.status(200).json({
             success: true,
@@ -5910,22 +6055,39 @@ export const getRecentAICourses = async (req, res) => {
 };
 
 
-// @desc    Delete an AI course
-// @route   DELETE /api/ai/course-builder/:id
-// @access  Private (tutor)
+// deleteAICourse — AICourse → Course model
+
 export const deleteAICourse = async (req, res) => {
     try {
-        const Tutor    = (await import('../models/Tutor.js')).default;
-        const AICourse = (await import('../models/AICourse.js')).default;
+        const Tutor  = (await import('../models/Tutor.js')).default;
+        const Course = (await import('../models/Course.js')).default;
 
         const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id').lean();
         if (!tutor) return res.status(403).json({ success: false, message: 'Tutor profile not found' });
 
-        const course = await AICourse.findOneAndDelete({ _id: req.params.id, tutorId: tutor._id });
-        if (!course) return res.status(404).json({ success: false, message: 'Course not found' });
+        // Verify ownership
+        const course = await Course.findOne({ _id: req.params.id, tutorId: tutor._id, isAIGenerated: true });
+        if (!course) return res.status(404).json({ success: false, message: 'AI course not found' });
 
-        res.status(200).json({ success: true, message: 'Course deleted' });
+        // Enrollment check — enrolled students hain toh delete block karo
+        const enrollmentCount = await Enrollment.countDocuments({ courseId: course._id });
+        if (enrollmentCount > 0) {
+            return res.status(400).json({
+                success: false,
+                message: `Cannot delete — ${enrollmentCount} students are enrolled in this course`,
+            });
+        }
+
+        // Delete all lessons first
+        await Lesson.deleteMany({ courseId: course._id });
+
+        // Delete course
+        await course.deleteOne();
+
+        res.status(200).json({ success: true, message: 'AI course and its lessons deleted successfully' });
+
     } catch (error) {
+        console.error('deleteAICourse error:', error);
         res.status(500).json({ success: false, message: 'Failed to delete course' });
     }
 };
