@@ -13,6 +13,8 @@ import {
     getTutorDetails,
     getStudentDetails,
     getAdminCourseDetails,
+    createAdminCourse,
+    updateAdminCourse,
     createUser,
     updateUser,
     updateUserStatus,
@@ -20,7 +22,9 @@ import {
     getSettings,
     updateSettings,
     verifyTutor,
-    removeUserFromInstitute
+    removeUserFromInstitute,
+    getAdminFees,
+    issueStudentFee
 } from '../controllers/adminController.js';
 import { getAllPayouts, updatePayoutStatus } from '../controllers/payoutController.js';
 
@@ -34,13 +38,10 @@ router.get('/stats', getAdminStats);
 router.get('/tutors', getAllTutors);
 router.get('/students', getAllStudents);
 router.get('/courses', getAllCourses);
+router.post('/courses', createAdminCourse);
+router.put('/courses/:id', updateAdminCourse);
 
 router.post('/users', createUser);
-router.put('/users/:id', updateUser);
-router.put('/users/:id/status', updateUserStatus);
-router.delete('/users/:id', deleteUser);
-router.delete('/users/:id/remove-from-institute', removeUserFromInstitute);
-router.put('/courses/:id/status', updateCourseStatus);
 // System Settings (Admin Only)
 router.get('/settings', getSettings);
 router.put('/settings', updateSettings);
@@ -56,6 +57,10 @@ router.get('/tutors/:id', getTutorDetails);
 router.put('/tutors/:id/verify', verifyTutor);
 router.get('/students/:id', getStudentDetails);
 router.get('/courses/:id', getAdminCourseDetails);
+
+// Fee Management Routes
+router.get('/fees', getAdminFees);
+router.post('/fees/issue', issueStudentFee);
 
 // Payout Routes
 router.get('/payouts', getAllPayouts);

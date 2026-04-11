@@ -86,9 +86,37 @@ const userSchema = new mongoose.Schema({
     street: { type: String, default: '' },
     city: { type: String, default: '' },
     state: { type: String, default: '' },
-    zipCode: { type: String, default: '' },
+    zipCode: { type: String, default: '' }, // acts as pinCode
     country: { type: String, default: '' }
   },
+  dob: {
+    type: Date,
+    default: null
+  },
+  gender: {
+    type: String,
+    enum: ['Male', 'Female', 'Other', null],
+    default: null
+  },
+  alternatePhone: {
+    type: String,
+    default: ''
+  },
+  studentSmartphoneNo: {
+    type: String,
+    default: ''
+  },
+  assignedBranch: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Facility',
+    default: null
+  },
+  parentDetails: [{
+    firstName: { type: String, default: '' },
+    lastName: { type: String, default: '' },
+    email: { type: String, default: '' },
+    phone: { type: String, default: '' }
+  }],
   passwordResetOTP: {
     type: String,
     select: false

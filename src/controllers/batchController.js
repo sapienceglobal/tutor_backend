@@ -11,40 +11,32 @@ import { createNotification } from './notificationController.js';
 // @access  Private (Admin or Tutor)
 export const createBatch = async (req, res) => {
     try {
-        const { name, courseId, scheduleDescription, startDate, endDate, students } = req.body;
+        const { name, courseId, scheduleDescription, startDate, endDate, students, grade, instructors } = req.body;
 
-        // If a tutor creates it, get their tutorId. If admin, check if tutorId is passed
         let tutorId;
+        let finalInstructors = Array.isArray(instructors) ? instructors : [];
+
         if (req.user.role === 'tutor') {
-            // Find tutor document by userId
             const tutor = await Tutor.findOne({ userId: req.user._id });
             if (!tutor) {
                 return res.status(404).json({ success: false, message: 'Tutor profile not found' });
             }
             tutorId = tutor._id;
+            if (!finalInstructors.some(id => id.toString() === tutorId.toString())) {
+                finalInstructors.unshift(tutorId);
+            }
         } else {
-            // Admin creating, use provided tutorId or default to creator
-            tutorId = req.body.tutorId;
+            // Admin creating — use provided tutorId or derive from instructors list
+            tutorId = req.body.tutorId || (finalInstructors.length > 0 ? finalInstructors[0] : null);
+            if (tutorId && !finalInstructors.map(id => id.toString()).includes(tutorId.toString())) {
+                finalInstructors.unshift(tutorId);
+            }
         }
 
         if (!name || !courseId || !startDate || !tutorId) {
             return res.status(400).json({ success: false, message: 'Please provide all required fields (name, courseId, startDate, tutorId)' });
         }
 
-        console.log('🔍 Creating batch with data:', {
-            name,
-            courseId,
-            tutorId,
-            instituteId: req.tenant?._id || null,
-            scheduleDescription,
-            startDate,
-            endDate,
-            students: students || [],
-            user: req.user,
-            tenant: req.tenant
-        });
-
-        // Validate date format
         if (startDate) {
             const startDateObj = new Date(startDate);
             if (isNaN(startDateObj.getTime())) {
@@ -63,14 +55,14 @@ export const createBatch = async (req, res) => {
             name,
             courseId,
             tutorId,
+            instructors: finalInstructors,
+            grade,
             instituteId: req.tenant?._id || null,
             scheduleDescription,
             startDate,
             endDate,
             students: students || []
         });
-
-        console.log('✅ Batch created successfully:', batch._id);
 
         // Sync enrollments for added students
         if (students && students.length > 0) {
@@ -80,22 +72,63 @@ export const createBatch = async (req, res) => {
             );
         }
 
-        res.status(201).json({
-            success: true,
-            message: 'Batch created successfully',
-            batch
-        });
+        res.status(201).json({ success: true, message: 'Batch created successfully', batch });
     } catch (error) {
-        console.error('❌ Create batch error:', {
-            message: error.message,
-            stack: error.stack,
-            name: error.name,
-            validationErrors: error.errors
-        });
-        res.status(500).json({
-            success: false,
-            message: error.message || 'Server error'
-        });
+        console.error('❌ Create batch error:', error);
+        res.status(500).json({ success: false, message: error.message || 'Server error' });
+    }
+};
+
+// @desc    Update a batch (full update)
+// @route   PUT /api/batches/:id
+// @access  Private (Admin or Tutor)
+export const updateBatch = async (req, res) => {
+    try {
+        const { name, courseId, grade, startDate, endDate, scheduleDescription, instructors, students } = req.body;
+
+        const batch = await Batch.findById(req.params.id);
+        if (!batch) return res.status(404).json({ success: false, message: 'Batch not found' });
+
+        if (req.user.role === 'tutor') {
+            const tutor = await Tutor.findOne({ userId: req.user._id });
+            if (!tutor) return res.status(403).json({ success: false, message: 'No tutor profile found' });
+            if (batch.tutorId.toString() !== tutor._id.toString()) {
+                return res.status(403).json({ success: false, message: 'Not authorized to update this batch' });
+            }
+        }
+
+        if (name) batch.name = name;
+        if (courseId) batch.courseId = courseId;
+        if (grade !== undefined) batch.grade = grade;
+        if (startDate) batch.startDate = startDate;
+        if (endDate) batch.endDate = endDate;
+        if (scheduleDescription !== undefined) batch.scheduleDescription = scheduleDescription;
+        if (Array.isArray(instructors)) batch.instructors = instructors;
+
+        if (Array.isArray(students)) {
+            const previousStudents = batch.students.map(s => s.toString());
+            batch.students = students;
+
+            const removedStudents = previousStudents.filter(id => !students.includes(id));
+            if (removedStudents.length > 0) {
+                await Enrollment.updateMany(
+                    { studentId: { $in: removedStudents }, courseId: batch.courseId, batchId: batch._id },
+                    { $set: { batchId: null } }
+                );
+            }
+            if (students.length > 0) {
+                await Enrollment.updateMany(
+                    { studentId: { $in: students }, courseId: batch.courseId },
+                    { $set: { batchId: batch._id } }
+                );
+            }
+        }
+
+        await batch.save();
+        res.status(200).json({ success: true, message: 'Batch updated successfully', batch });
+    } catch (error) {
+        console.error('Update batch error:', error);
+        res.status(500).json({ success: false, message: error.message || 'Server error' });
     }
 };
 
@@ -106,26 +139,31 @@ export const getBatches = async (req, res) => {
     try {
         let filter = {};
 
-        // Tutors only see their own batches
+        // Tutors only see batches they own or co-instruct
         if (req.user.role === 'tutor') {
-            // Find tutor document by userId
             const tutor = await Tutor.findOne({ userId: req.user._id });
             if (!tutor) return res.status(403).json({ success: false, message: 'No tutor profile found' });
-            filter.tutorId = tutor._id;
+            filter.$or = [
+                { tutorId: tutor._id },
+                { instructors: tutor._id }
+            ];
         }
 
         if (req.tenant) filter.instituteId = req.tenant._id;
 
         const batches = await Batch.find(filter)
             .populate('courseId', 'title thumbnail')
-            .populate('tutorId') // optionally populate more if needed
+            .populate({
+                path: 'tutorId',
+                populate: { path: 'userId', select: 'name profileImage' }
+            })
+            .populate({
+                path: 'instructors',
+                populate: { path: 'userId', select: 'name profileImage' }
+            })
             .sort({ createdAt: -1 });
 
-        res.status(200).json({
-            success: true,
-            count: batches.length,
-            batches
-        });
+        res.status(200).json({ success: true, count: batches.length, batches });
     } catch (error) {
         console.error('Get batches error:', error);
         res.status(500).json({ success: false, message: 'Server error' });
@@ -146,11 +184,6 @@ export const getMyBatches = async (req, res) => {
         } else if (req.query.scope === 'strict') {
             if (req.tenant) filter.instituteId = req.tenant._id;
         }
-        // If not specified or scope='all', we don't apply an instituteId filter. 
-        // This allows students to see a batch they were explicitly added to by a tutor 
-        // from a different institute (e.g., cross-tenant enrollment).
-
-        console.log(`🔍 DEBUG - getMyBatches filter:`, filter);
 
         const batches = await Batch.find(filter)
             .populate('courseId', 'title thumbnail')
@@ -158,18 +191,88 @@ export const getMyBatches = async (req, res) => {
                 path: 'tutorId',
                 populate: { path: 'userId', select: 'name profileImage' }
             })
+            .populate({
+                path: 'instructors',
+                populate: { path: 'userId', select: 'name profileImage' }
+            })
             .sort({ startDate: -1 });
 
-        res.status(200).json({
-            success: true,
-            count: batches.length,
-            batches
-        });
+        res.status(200).json({ success: true, count: batches.length, batches });
     } catch (error) {
         console.error('Get my batches error:', error);
         res.status(500).json({ success: false, message: 'Server error' });
     }
 };
+
+// @desc    Get all available batches for a student to browse and self-join
+// @route   GET /api/batches/available
+// @access  Private (Student)
+export const getAvailableBatches = async (req, res) => {
+    try {
+        const studentId = req.user._id;
+
+        // Build scope filter — include institute batches + global batches
+        const scopeFilter = req.tenant
+            ? { $or: [{ instituteId: req.tenant._id }, { instituteId: null }] }
+            : { instituteId: null };
+
+        // Exclude batches the student has already joined
+        const batches = await Batch.find({
+            ...scopeFilter,
+            students: { $ne: studentId },
+            status: { $ne: 'inactive' },
+        })
+            .populate('courseId', 'title thumbnail')
+            .populate({
+                path: 'tutorId',
+                populate: { path: 'userId', select: 'name profileImage' }
+            })
+            .populate({
+                path: 'instructors',
+                populate: { path: 'userId', select: 'name profileImage' }
+            })
+            .sort({ startDate: 1 })
+            .lean();
+
+        res.status(200).json({ success: true, count: batches.length, batches });
+    } catch (error) {
+        console.error('Get available batches error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+// @desc    Student self-joins a batch
+// @route   POST /api/batches/:id/join
+// @access  Private (Student)
+export const joinBatch = async (req, res) => {
+    try {
+        const studentId = req.user._id;
+        const batch = await Batch.findById(req.params.id);
+
+        if (!batch) return res.status(404).json({ success: false, message: 'Batch not found' });
+        if (batch.students.map(s => s.toString()).includes(studentId.toString())) {
+            return res.status(400).json({ success: false, message: 'You have already joined this batch' });
+        }
+
+        batch.students.push(studentId);
+        await batch.save();
+
+        // Sync enrollment batchId if student is enrolled in the course
+        if (batch.courseId) {
+            await Enrollment.updateOne(
+                { studentId, courseId: batch.courseId },
+                { $set: { batchId: batch._id } }
+            );
+        }
+
+        res.status(200).json({ success: true, message: 'Successfully joined the batch', batch });
+    } catch (error) {
+        console.error('Join batch error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+
 
 // @desc    Get single batch details
 // @route   GET /api/batches/:id
@@ -182,6 +285,10 @@ export const getBatchById = async (req, res) => {
             .populate({
                 path: 'tutorId',
                 populate: { path: 'userId', select: 'name email profileImage' }
+            })
+            .populate({
+                path: 'instructors',
+                populate: { path: 'userId', select: 'name email profileImage' }
             });
 
         if (!batch) {
@@ -190,22 +297,22 @@ export const getBatchById = async (req, res) => {
 
         // Authorization check
         if (req.user.role === 'tutor') {
-            // Find tutor document by userId
             const tutor = await Tutor.findOne({ userId: req.user._id });
             if (!tutor) return res.status(403).json({ success: false, message: 'No tutor profile found' });
 
-            if (batch.tutorId._id.toString() !== tutor._id.toString()) {
+            const isOwner = batch.tutorId?._id?.toString() === tutor._id.toString();
+            const isInstructor = batch.instructors?.some(inst => inst._id?.toString() === tutor._id.toString());
+
+            if (!isOwner && !isInstructor) {
                 return res.status(403).json({ success: false, message: 'Not authorized to view this batch' });
             }
         }
+
         if (req.user.role === 'student' && !batch.students.some(s => s._id.toString() === req.user.id)) {
             return res.status(403).json({ success: false, message: 'You are not a part of this batch' });
         }
 
-        res.status(200).json({
-            success: true,
-            batch
-        });
+        res.status(200).json({ success: true, batch });
     } catch (error) {
         console.error('Get batch by id error:', error);
         res.status(500).json({ success: false, message: 'Server error' });
@@ -217,7 +324,7 @@ export const getBatchById = async (req, res) => {
 // @access  Private (Admin or Tutor)
 export const updateBatchStudents = async (req, res) => {
     try {
-        const { studentIds } = req.body; // Array of student user ObjectIds
+        const { studentIds } = req.body;
 
         if (!Array.isArray(studentIds)) {
             return res.status(400).json({ success: false, message: 'studentIds must be an array' });
@@ -230,7 +337,6 @@ export const updateBatchStudents = async (req, res) => {
         }
 
         if (req.user.role === 'tutor') {
-            // Find tutor document by userId
             const tutor = await Tutor.findOne({ userId: req.user._id });
             if (!tutor) return res.status(403).json({ success: false, message: 'No tutor profile found' });
 
@@ -243,7 +349,7 @@ export const updateBatchStudents = async (req, res) => {
         batch.students = studentIds;
         await batch.save();
 
-        // 1. Unset batchId for students removed from this batch
+        // Unset batchId for students removed from this batch
         const removedStudents = previousStudents.filter(id => !studentIds.includes(id));
         if (removedStudents.length > 0) {
             await Enrollment.updateMany(
@@ -252,7 +358,7 @@ export const updateBatchStudents = async (req, res) => {
             );
         }
 
-        // 2. Set batchId for students added to this batch
+        // Set batchId for students added to this batch
         if (studentIds.length > 0) {
             await Enrollment.updateMany(
                 { studentId: { $in: studentIds }, courseId: batch.courseId },
@@ -260,11 +366,7 @@ export const updateBatchStudents = async (req, res) => {
             );
         }
 
-        res.status(200).json({
-            success: true,
-            message: 'Batch students updated successfully',
-            batch
-        });
+        res.status(200).json({ success: true, message: 'Batch students updated successfully', batch });
     } catch (error) {
         console.error('Update batch students error:', error);
         res.status(500).json({ success: false, message: 'Server error' });
@@ -288,7 +390,6 @@ export const addBatchAnnouncement = async (req, res) => {
         }
 
         if (req.user.role === 'tutor') {
-            // Find tutor document by userId
             const tutor = await Tutor.findOne({ userId: req.user._id });
             if (!tutor) return res.status(403).json({ success: false, message: 'No tutor profile found' });
 
@@ -339,7 +440,6 @@ export const getBatchAnalytics = async (req, res) => {
         }
 
         if (req.user.role === 'tutor') {
-            // Find tutor document by userId
             const tutor = await Tutor.findOne({ userId: req.user._id });
             if (!tutor) return res.status(403).json({ success: false, message: 'No tutor profile found' });
 
@@ -348,9 +448,7 @@ export const getBatchAnalytics = async (req, res) => {
             }
         }
 
-        // Aggregate exam results for batch students
         const studentIds = batch.students.map(s => s._id);
-
         const results = await ExamAttempt.find({ studentId: { $in: studentIds } })
             .populate('examId', 'title')
             .lean();
@@ -362,7 +460,6 @@ export const getBatchAnalytics = async (req, res) => {
         const passCount = results.filter(r => (r.percentage || 0) >= 40).length;
         const failCount = results.length - passCount;
 
-        // Per-student summary
         const studentSummary = batch.students.map(s => {
             const studentResults = results.filter(r => r.studentId?.toString() === s._id.toString());
             const avg = studentResults.length > 0

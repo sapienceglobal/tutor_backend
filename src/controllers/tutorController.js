@@ -479,22 +479,25 @@ export const getTutorAnnouncements = async (req, res) => {
 
 // @desc    Get tutor stats (dashboard)
 // @route   GET /api/tutors/stats
+// @desc    Get tutor stats (dashboard)
+// @route   GET /api/tutors/stats
 export const getTutorStats = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    // 1. Get Tutor Profile
-    let tutor = await Tutor.findOne({ userId });
+    // 1. Get Tutor Profile (Added populate to get real name for the UI greeting)
+    let tutor = await Tutor.findOne({ userId }).populate('userId', 'name profileImage');
+    
     if (!tutor) {
       if (req.user.role === 'tutor') {
         tutor = await Tutor.create({ userId });
+        tutor = await Tutor.findById(tutor._id).populate('userId', 'name profileImage');
       } else {
         return res.status(404).json({ success: false, message: 'Tutor profile not found' });
       }
     }
 
     // 2. Get Courses
-    // Dynamic import to avoid circular dependency
     const Course = (await import('../models/Course.js')).default;
     const courses = await Course.find({ tutorId: tutor._id });
     const courseIds = courses.map(c => c._id);
@@ -509,91 +512,57 @@ export const getTutorStats = async (req, res) => {
       .populate('courseId', 'title price thumbnail')
       .sort({ enrolledAt: -1 });
 
-    // Calculate Total Earnings
     const totalEarnings = enrollments.reduce((sum, enrollment) => {
       return sum + (enrollment.courseId?.price || 0);
     }, 0);
 
-    // Calculate Unique Students
     const uniqueStudents = new Set(enrollments.map(e => e.studentId?._id.toString())).size;
 
     // 4. Calculate Ratings & Distribution
     const totalRatings = courses.reduce((sum, course) => sum + (course.rating || 0), 0);
     const avgRating = totalCourses > 0 ? (totalRatings / totalCourses).toFixed(1) : 0;
 
-    // Get Reviews for Ratings Distribution
-    // Dynamic import to avoid circular dependency
     const Review = (await import('../models/Review.js')).default;
-    // Assuming Review model has courseId field and courseIds are available
     const reviews = await Review.find({ courseId: { $in: courseIds } });
 
-    const ratingsDistribution = {
-      5: 0, 4: 0, 3: 0, 2: 0, 1: 0
-    };
-
+    const ratingsDistribution = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
     reviews.forEach(review => {
-      const rating = Math.round(review.rating); // Assuming rating is 1-5
-      if (ratingsDistribution[rating] !== undefined) {
-        ratingsDistribution[rating]++;
-      }
+      const rating = Math.round(review.rating);
+      if (ratingsDistribution[rating] !== undefined) ratingsDistribution[rating]++;
     });
 
-    // Helper to check if date is in current or last month
     const now = new Date();
     const currentMonth = now.getMonth();
     const currentYear = now.getFullYear();
     const lastMonth = currentMonth === 0 ? 11 : currentMonth - 1;
     const lastMonthYear = currentMonth === 0 ? currentYear - 1 : currentYear;
 
-    const isCurrentMonth = (date) => {
-      const d = new Date(date);
-      return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
-    };
-    const isLastMonth = (date) => {
-      const d = new Date(date);
-      return d.getMonth() === lastMonth && d.getFullYear() === lastMonthYear;
-    };
+    const isCurrentMonth = (date) => new Date(date).getMonth() === currentMonth && new Date(date).getFullYear() === currentYear;
+    const isLastMonth = (date) => new Date(date).getMonth() === lastMonth && new Date(date).getFullYear() === lastMonthYear;
 
     // --- Trend Calculations ---
-
-    // 1. Students Trend
-    // We need unique students from enrollments in current month vs last month
-    // Note: This is an approximation. Ideally we'd query by enrollment date grouping.
     const currentMonthStudents = new Set(enrollments.filter(e => isCurrentMonth(e.enrolledAt)).map(e => e.studentId?._id.toString()));
     const lastMonthStudents = new Set(enrollments.filter(e => isLastMonth(e.enrolledAt)).map(e => e.studentId?._id.toString()));
 
-    // Calculate percentage change
     const calculateTrend = (current, previous) => {
-      if (previous === 0) {
-        // If current is also 0, no change. If current > 0, it's distinct growth (New). 
-        // Return null to indicate "New" or "No Baseline"
-        return current === 0 ? 0 : null;
-      }
+      if (previous === 0) return current === 0 ? 0 : null;
       return ((current - previous) / previous) * 100;
     };
 
     const studentTrend = calculateTrend(currentMonthStudents.size, lastMonthStudents.size);
-
-    // 2. Earnings Trend
     const currentMonthEarnings = enrollments.filter(e => isCurrentMonth(e.enrolledAt)).reduce((sum, e) => sum + (e.courseId?.price || 0), 0);
     const lastMonthEarnings = enrollments.filter(e => isLastMonth(e.enrolledAt)).reduce((sum, e) => sum + (e.courseId?.price || 0), 0);
     const earningsTrend = calculateTrend(currentMonthEarnings, lastMonthEarnings);
 
-    // 3. Courses Trend (Newly published)
     const currentMonthCourses = courses.filter(c => c.status === 'published' && isCurrentMonth(c.createdAt)).length;
     const lastMonthCourses = courses.filter(c => c.status === 'published' && isLastMonth(c.createdAt)).length;
     const coursesTrend = calculateTrend(currentMonthCourses, lastMonthCourses);
 
-    // 4. Ratings Trend (New ratings avg vs old doesn't make sense, maybe just count of new ratings?)
-    // Let's do Average Rating change if possible, otherwise count of new reviews
     const currentMonthReviews = reviews.filter(r => isCurrentMonth(r.createdAt));
     const lastMonthReviews = reviews.filter(r => isLastMonth(r.createdAt));
-
-    // Review count trend for now, as avg rating fluctuation is minimal
     const reviewsTrend = calculateTrend(currentMonthReviews.length, lastMonthReviews.length);
 
-
-    // 5. Recent Enrollments (Last 5)
+    // 5. Recent Enrollments
     const recentEnrollments = enrollments.slice(0, 5).map(e => ({
       _id: e._id,
       studentName: e.studentId?.name || 'Unknown',
@@ -604,7 +573,7 @@ export const getTutorStats = async (req, res) => {
       enrolledAt: e.enrolledAt
     }));
 
-    // 6. Top Courses (by enrollment count)
+    // 6. Top Courses
     const topCourses = courses
       .sort((a, b) => b.enrolledCount - a.enrolledCount)
       .slice(0, 5)
@@ -618,32 +587,85 @@ export const getTutorStats = async (req, res) => {
         color: 'text-blue-600'
       }));
 
-    // 7. Monthly Data (Last 12 months)
+    // 7. Monthly Data
     const monthlyData = Array.from({ length: 12 }, (_, i) => {
       const d = new Date();
       d.setMonth(d.getMonth() - i);
       return {
         name: d.toLocaleString('default', { month: 'short' }),
-        students: 0,    // Previously 'website'
-        enrollments: 0  // Previously 'user'
+        students: 0,
+        enrollments: 0
       };
     }).reverse();
 
     enrollments.forEach(e => {
-      const date = new Date(e.enrolledAt);
-      const monthName = date.toLocaleString('default', { month: 'short' });
+      const monthName = new Date(e.enrolledAt).toLocaleString('default', { month: 'short' });
       const monthParams = monthlyData.find(m => m.name === monthName);
       if (monthParams) {
         monthParams.enrollments += 1;
-        // For 'students' in the chart, we could show Total Active or Revenue. 
-        // Let's us 'students' to represent Revenue (scaled / 10 for visibility) or just use separate logic.
-        // Actually, looking at the Chart component, it expects 'students' and 'enrollments'.
-        // Let's make 'students' = Revenue ($) and 'enrollments' = Count.
-        // But better: 'students' = New Students, 'enrollments' = Course Sales.
-        // For now, let's map: students -> unique students joined that month. enrollments -> total sales count.
-        monthParams.students += 1; // Simplification: 1 enrollment = 1 student interaction
+        monthParams.students += 1;
       }
     });
+
+    // 8b. Weekly Performance (Perfectly matched for the Area Chart)
+    const Progress = (await import('../models/Progress.js')).default;
+    const weeklyPerformance = await Promise.all(
+      [0, 1, 2, 3].map(async (weekIndex) => {
+        const weekStart = new Date();
+        weekStart.setDate(weekStart.getDate() - (28 - weekIndex * 7));
+        const weekEnd = new Date();
+        weekEnd.setDate(weekEnd.getDate() - (21 - weekIndex * 7));
+
+        const [weekEnrollments, weekCompletions, weekRevenue] = await Promise.all([
+          Enrollment.countDocuments({ courseId: { $in: courseIds }, enrolledAt: { $gte: weekStart, $lt: weekEnd } }),
+          Progress.countDocuments({ courseId: { $in: courseIds }, completed: true, completedAt: { $gte: weekStart, $lt: weekEnd } }),
+          Enrollment.find({ courseId: { $in: courseIds }, enrolledAt: { $gte: weekStart, $lt: weekEnd } })
+            .populate('courseId', 'price')
+            .then(enrs => enrs.reduce((sum, e) => sum + (e.courseId?.price || 0), 0)),
+        ]);
+
+        return {
+          name: `Week ${weekIndex + 1}`,
+          enrollments: weekEnrollments,
+          completions: weekCompletions,
+          revenue: weekRevenue,
+        };
+      })
+    );
+
+    // 8c. Recent Student Activity (Mapped exact UI fields)
+    const recentStudentActivity = await Promise.all(
+      enrollments.slice(0, 5).map(async (enr) => {
+        if (!enr.studentId || !enr.courseId) return null;
+
+        const course = courses.find(c => c._id.toString() === (enr.courseId._id || enr.courseId).toString());
+        const totalLessons = await (await import('../models/Lesson.js')).default.countDocuments({ courseId: enr.courseId._id || enr.courseId });
+        const completedLessons = await Progress.countDocuments({ studentId: enr.studentId._id, courseId: enr.courseId._id || enr.courseId, completed: true });
+
+        const lastProgress = await Progress.findOne({ studentId: enr.studentId._id, courseId: enr.courseId._id || enr.courseId }).sort({ createdAt: -1 });
+
+        // Safe percentage calculation
+        const score = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
+
+        const lastActivityDate = lastProgress?.createdAt || enr.enrolledAt;
+        const diffMins = Math.floor((now - new Date(lastActivityDate)) / 60000);
+        
+        let lastActivityStr = 'Just now';
+        if (diffMins > 0) {
+            if (diffMins < 60) lastActivityStr = `${diffMins} min${diffMins !== 1 ? 's' : ''} ago`;
+            else if (diffMins < 1440) lastActivityStr = `${Math.floor(diffMins / 60)} hr${Math.floor(diffMins / 60) !== 1 ? 's' : ''} ago`;
+            else lastActivityStr = `${Math.floor(diffMins / 1440)} day${Math.floor(diffMins / 1440) !== 1 ? 's' : ''} ago`;
+        }
+
+        return {
+          studentName: enr.studentId?.name || 'Unknown',
+          studentImage: enr.studentId?.profileImage || null,
+          courseName: enr.courseId?.title || course?.title || 'Unknown',
+          score: score,
+          lastActivity: lastActivityStr,
+        };
+      })
+    ).then(results => results.filter(Boolean));
 
     // 8. Action queue + communications snapshot
     const LiveClass = (await import('../models/LiveClass.js')).default;
@@ -652,63 +674,31 @@ export const getTutorStats = async (req, res) => {
     const Batch = (await import('../models/Batch.js')).default;
     const Notification = (await import('../models/Notification.js')).default;
 
-    const [upcomingClasses, upcomingClassesCount] = await Promise.all([
-      LiveClass.find({
-        tutorId: tutor._id,
-        dateTime: { $gte: now },
-        status: { $in: ['scheduled', 'live'] },
-      })
-        .sort({ dateTime: 1 })
-        .limit(5)
-        .populate('courseId', 'title')
-        .lean(),
-      LiveClass.countDocuments({
-        tutorId: tutor._id,
-        dateTime: { $gte: now },
-        status: { $in: ['scheduled', 'live'] },
-      }),
-    ]);
+    const upcomingClassesCount = await LiveClass.countDocuments({
+      tutorId: tutor._id,
+      dateTime: { $gte: now },
+      status: { $in: ['scheduled', 'live'] },
+    });
 
-    const assignmentIds = (await Assignment.find({ courseId: { $in: courseIds } }).select('_id').lean()).map((assignment) => assignment._id);
+    const assignmentIds = (await Assignment.find({ courseId: { $in: courseIds } }).select('_id').lean()).map(a => a._id);
     const pendingAssignmentReviews = assignmentIds.length > 0
       ? await Submission.countDocuments({ assignmentId: { $in: assignmentIds }, status: 'submitted' })
       : 0;
 
-    const unreadNotificationsCount = await Notification.countDocuments({
-      userId,
-      isRead: false,
-    });
+    const unreadNotificationsCount = await Notification.countDocuments({ userId, isRead: false });
 
-    const batches = await Batch.find({ tutorId: tutor._id })
-      .select('name announcements courseId')
-      .populate('courseId', 'title')
-      .lean();
+    const batches = await Batch.find({ tutorId: tutor._id }).select('name announcements courseId').populate('courseId', 'title').lean();
 
     const recentAnnouncements = [
-      ...courses.flatMap((course) => (course.announcements || []).map((announcement) => ({
-        sourceType: 'course',
-        sourceId: course._id,
-        sourceTitle: course.title,
-        title: announcement.title,
-        message: announcement.message,
-        createdAt: announcement.createdAt || course.updatedAt || course.createdAt,
-      }))),
-      ...batches.flatMap((batch) => (batch.announcements || []).map((announcement) => ({
-        sourceType: 'batch',
-        sourceId: batch._id,
-        sourceTitle: batch.name,
-        courseTitle: batch.courseId?.title || '',
-        title: announcement.title,
-        message: announcement.message,
-        createdAt: announcement.createdAt || batch.updatedAt || batch.createdAt,
-      }))),
-    ]
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-      .slice(0, 5);
+      ...courses.flatMap(c => (c.announcements || []).map(a => ({ title: a.title, message: a.message, createdAt: a.createdAt }))),
+      ...batches.flatMap(b => (b.announcements || []).map(a => ({ title: a.title, message: a.message, createdAt: a.createdAt }))),
+    ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 4); // Max 4 for UI
 
+    // Return all matched data to Frontend
     res.status(200).json({
       success: true,
       stats: {
+        tutorName: tutor.userId?.name || 'Tutor', // Used for greeting
         totalStudents: uniqueStudents,
         activeCourses,
         totalEarnings,
@@ -716,25 +706,15 @@ export const getTutorStats = async (req, res) => {
         recentEnrollments,
         topCourses,
         monthlyData,
-        upcomingClasses: upcomingClasses.map((liveClass) => ({
-          _id: liveClass._id,
-          title: liveClass.title,
-          courseTitle: liveClass.courseId?.title || '',
-          dateTime: liveClass.dateTime,
-          status: liveClass.status,
-        })),
+        weeklyPerformance, // Chart data
+        recentStudentActivity, // Table data
         upcomingClassesCount,
         pendingAssignmentReviews,
         unreadNotificationsCount,
-        recentAnnouncements,
+        recentAnnouncements, // Notification box
         ratingsDistribution,
         totalReviews: reviews.length,
-        trends: {
-          students: studentTrend,
-          courses: coursesTrend,
-          earnings: earningsTrend,
-          reviews: reviewsTrend
-        },
+        trends: { students: studentTrend, courses: coursesTrend, earnings: earningsTrend, reviews: reviewsTrend },
         isVerified: tutor.isVerified
       }
     });

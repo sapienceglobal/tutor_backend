@@ -15,145 +15,239 @@ const courseScope = (req, extra = {}) => ({ instituteId: getAdminInstituteId(req
 // @desc    Get Admin Dashboard Stats
 // @route   GET /api/admin/stats
 // @access  Private (Admin)
+// @desc    Get Admin Dashboard Stats
+// @route   GET /api/admin/stats
+// @access  Private (Admin)
+// @desc    Get Admin Dashboard Stats
+// @route   GET /api/admin/stats
+// @access  Private (Admin)
 export const getAdminStats = async (req, res) => {
     try {
         const instituteId = getAdminInstituteId(req);
         const scopedUsers = userScope(req);
         const scopedCourses = courseScope(req);
+        
         const instituteCourses = await Course.find(scopedCourses).select('_id price');
         const instituteCourseIds = instituteCourses.map(c => c._id);
 
-        // 1. Total Counts
+        // ============================================
+        // 1. TOTAL COUNTS (Students, Instructors, Courses, Batches)
+        // ============================================
         const totalTutors = await User.countDocuments(userScope(req, { role: 'tutor' }));
         const totalStudents = await User.countDocuments(userScope(req, { role: 'student' }));
         const totalCourses = await Course.countDocuments(scopedCourses);
-        const activeCourses = await Course.countDocuments(courseScope(req, { status: 'published' }));
+        
+        const Batch = (await import('../models/Batch.js')).default;
+        const activeBatches = await Batch.countDocuments({ instituteId, status: 'active' });
 
-        // 2. Global Financials
-        const allEnrollments = await Enrollment.find({
-            status: 'active',
-            courseId: { $in: instituteCourseIds }
-        }).populate('courseId', 'price');
-        const totalRevenue = allEnrollments.reduce((sum, enr) => sum + (enr.courseId?.price || 0), 0);
-
-        // 3. Real Trend Calculation (Current Month vs Last Month)
+        // ============================================
+        // 2. TREND CALCULATIONS (Current Month vs Last Month)
+        // ============================================
         const now = new Date();
         const firstDayCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
         const firstDayLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
         const lastDayLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
 
-        // Helper for percentage change
         const calculateTrend = (current, previous) => {
             if (previous === 0) return current === 0 ? 0 : null; // null indicates "New"
             return ((current - previous) / previous) * 100;
         };
 
-        // Users Trend
-        const currentMonthUsers = await User.countDocuments({
-            ...scopedUsers,
-            createdAt: { $gte: firstDayCurrentMonth }
-        });
-        const lastMonthUsers = await User.countDocuments({
-            ...scopedUsers,
-            createdAt: { $gte: firstDayLastMonth, $lte: lastDayLastMonth }
-        });
-        const usersTrend = calculateTrend(currentMonthUsers, lastMonthUsers);
+        const currentMonthStudents = await User.countDocuments({ ...scopedUsers, role: 'student', createdAt: { $gte: firstDayCurrentMonth } });
+        const lastMonthStudents = await User.countDocuments({ ...scopedUsers, role: 'student', createdAt: { $gte: firstDayLastMonth, $lte: lastDayLastMonth } });
+        const studentsTrend = calculateTrend(currentMonthStudents, lastMonthStudents);
 
-        // Courses Trend (Published)
-        const currentMonthCourses = await Course.countDocuments({
-            ...scopedCourses,
-            status: 'published',
-            createdAt: { $gte: firstDayCurrentMonth }
-        });
-        const lastMonthCourses = await Course.countDocuments({
-            ...scopedCourses,
-            status: 'published',
-            createdAt: { $gte: firstDayLastMonth, $lte: lastDayLastMonth }
-        });
+        const currentMonthTutors = await User.countDocuments({ ...scopedUsers, role: 'tutor', createdAt: { $gte: firstDayCurrentMonth } });
+        const lastMonthTutors = await User.countDocuments({ ...scopedUsers, role: 'tutor', createdAt: { $gte: firstDayLastMonth, $lte: lastDayLastMonth } });
+        const tutorsTrend = calculateTrend(currentMonthTutors, lastMonthTutors);
+
+        const currentMonthCourses = await Course.countDocuments({ ...scopedCourses, createdAt: { $gte: firstDayCurrentMonth } });
+        const lastMonthCourses = await Course.countDocuments({ ...scopedCourses, createdAt: { $gte: firstDayLastMonth, $lte: lastDayLastMonth } });
         const coursesTrend = calculateTrend(currentMonthCourses, lastMonthCourses);
 
-        // Revenue Trend
-        const currentMonthRevenue = (await Enrollment.find({
-            courseId: { $in: instituteCourseIds },
-            createdAt: { $gte: firstDayCurrentMonth }
-        }).populate('courseId', 'price')).reduce((sum, e) => sum + (e.courseId?.price || 0), 0);
-
-        const lastMonthRevenue = (await Enrollment.find({
-            courseId: { $in: instituteCourseIds },
-            createdAt: { $gte: firstDayLastMonth, $lte: lastDayLastMonth }
-        }).populate('courseId', 'price')).reduce((sum, e) => sum + (e.courseId?.price || 0), 0);
-
-        const earningsTrend = calculateTrend(currentMonthRevenue, lastMonthRevenue);
-
         const trends = {
-            users: usersTrend,
-            earnings: earningsTrend,
-            courses: coursesTrend
+            students: studentsTrend,
+            tutors: tutorsTrend,
+            courses: coursesTrend,
+            batches: null // 'Running' badge
         };
 
-        // 4. Recent Registrations (Using User model)
-        const recentUsers = await User.find(scopedUsers)
-            .sort({ createdAt: -1 })
-            .limit(5)
-            .select('name email role createdAt profileImage');
+        // ============================================
+        // 3. FEE COLLECTION (Using Payment & Enrollment Models)
+        // ============================================
+        const Payment = (await import('../models/Payment.js')).default;
+        
+        // Total Revenue ever (For reference)
+        const allPayments = await Payment.find({ instituteId, status: 'paid' });
+        const totalRevenue = allPayments.reduce((sum, p) => sum + p.amount, 0);
 
-        // 5. Monthly Data (Chart) - Real Aggregation
-        const monthlyData = Array.from({ length: 7 }, (_, i) => { // Last 7 months
-            const d = new Date();
-            d.setMonth(d.getMonth() - i);
+        // This Month Collection
+        const thisMonthPayments = await Payment.find({ instituteId, status: 'paid', paidAt: { $gte: firstDayCurrentMonth } });
+        const collectedThisMonth = thisMonthPayments.reduce((sum, p) => sum + p.amount, 0);
+
+        // Total Pending Fees
+        const pendingPayments = await Payment.find({ instituteId, status: { $in: ['created', 'failed'] } });
+        const pendingFees = pendingPayments.reduce((sum, p) => sum + p.amount, 0);
+
+        const expectedThisMonth = collectedThisMonth + pendingFees;
+        const feePercentage = expectedThisMonth > 0 ? Math.round((collectedThisMonth / expectedThisMonth) * 100) : 100;
+
+        const feeCollection = {
+            thisMonth: expectedThisMonth,
+            pending: pendingFees,
+            collected: collectedThisMonth,
+            percentage: feePercentage
+        };
+
+        // ============================================
+        // 4. PENDING APPROVALS
+        // ============================================
+        const pendingInstructors = await Tutor.countDocuments({ instituteId, isVerified: false });
+        const pendingStudents = await User.countDocuments({ instituteId, role: 'student', isVerified: false });
+        const pendingCourses = await Course.countDocuments({ instituteId, status: 'draft' });
+
+        const pendingApprovals = {
+            instructors: pendingInstructors,
+            students: pendingStudents,
+            courses: pendingCourses
+        };
+
+        // ============================================
+        // 5. UPCOMING CLASSES (Using LiveClass Model)
+        // ============================================
+        const LiveClass = (await import('../models/LiveClass.js')).default;
+        const upcomingClassesData = await LiveClass.find({ instituteId, dateTime: { $gte: now }, status: { $in: ['scheduled', 'live'] } })
+            .sort({ dateTime: 1 })
+            .limit(3)
+            .populate('courseId', 'title')
+            .lean();
+
+        const upcomingClasses = upcomingClassesData.map(cls => {
+            const dateObj = new Date(cls.dateTime);
             return {
-                name: d.toLocaleString('default', { month: 'short' }),
-                students: 0,
-                enrollments: 0
+                title: cls.title,
+                date: dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
+                time: dateObj.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }),
+                status: cls.status === 'live' ? 'Live' : ''
             };
-        }).reverse();
-
-        const sixMonthsAgo = new Date();
-        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-        sixMonthsAgo.setDate(1);
-
-        // Get enrollments for last 6 months
-        const recentEnrollments = await Enrollment.find({
-            courseId: { $in: instituteCourseIds },
-            createdAt: { $gte: sixMonthsAgo }
         });
 
-        recentEnrollments.forEach(enr => {
-            const date = new Date(enr.createdAt);
-            const monthName = date.toLocaleString('default', { month: 'short' });
-            const monthParams = monthlyData.find(m => m.name === monthName);
-            if (monthParams) {
-                monthParams.enrollments += 1;
+        // ============================================
+        // 6. BATCH OVERVIEW (Using Batch Model)
+        // ============================================
+        const batchesData = await Batch.find({ instituteId })
+            .sort({ createdAt: -1 })
+            .limit(4)
+            .populate('courseId', 'title')
+            .lean();
+
+        const batchOverview = await Promise.all(batchesData.map(async (batch) => {
+            const totalDuration = new Date(batch.endDate || now) - new Date(batch.startDate);
+            const elapsed = now - new Date(batch.startDate);
+            let progress = totalDuration > 0 ? Math.min(100, Math.max(0, Math.round((elapsed / totalDuration) * 100))) : 0;
+            
+            if (batch.status === 'upcoming') progress = 0;
+            if (batch.status === 'completed') progress = 100;
+
+            return {
+                name: batch.name,
+                students: batch.students ? batch.students.length : 0,
+                progress: progress,
+                status: batch.status.charAt(0).toUpperCase() + batch.status.slice(1)
+            };
+        }));
+
+        // ============================================
+        // 7. RECENT ACTIVITY
+        // ============================================
+        const recentNewUsers = await User.find(scopedUsers).sort({ createdAt: -1 }).limit(2);
+        const recentPayments = await Payment.find({ instituteId, status: 'paid' }).sort({ createdAt: -1 }).limit(2).populate('studentId', 'name');
+        
+        let recentActivityRaw = [];
+        recentNewUsers.forEach(u => recentActivityRaw.push({ text: `New ${u.role} registered: ${u.name}`, time: u.createdAt, icon: "user", color: "#6854F3" }));
+        recentPayments.forEach(p => recentActivityRaw.push({ text: `Payment received: ₹${p.amount} from ${p.studentId?.name || 'Student'}`, time: p.createdAt, icon: "payment", color: "#4F7BF0" }));
+
+        recentActivityRaw.sort((a, b) => b.time - a.time);
+        const recentActivity = recentActivityRaw.slice(0, 4).map(act => {
+            const diffMins = Math.floor((now - new Date(act.time)) / 60000);
+            let timeStr = 'Just now';
+            if (diffMins > 0) {
+                if (diffMins < 60) timeStr = `${diffMins} min${diffMins !== 1 ? 's' : ''} ago`;
+                else if (diffMins < 1440) timeStr = `${Math.floor(diffMins / 60)} hr${Math.floor(diffMins / 60) !== 1 ? 's' : ''} ago`;
+                else timeStr = `${Math.floor(diffMins / 1440)} day${Math.floor(diffMins / 1440) !== 1 ? 's' : ''} ago`;
             }
+            return { ...act, time: timeStr };
         });
 
-        // Get new students for last 6 months
-        const newStudents = await User.find({
-            instituteId,
-            role: 'student',
-            createdAt: { $gte: sixMonthsAgo }
+        // ============================================
+        // 8. MONTHLY DATA (For Graph)
+        // ============================================
+        const monthlyData = Array.from({ length: 4 }, (_, i) => { 
+            const weekStart = new Date();
+            weekStart.setDate(weekStart.getDate() - (28 - i * 7));
+            const weekEnd = new Date();
+            weekEnd.setDate(weekEnd.getDate() - (21 - i * 7));
+            return { name: `Week ${i+1}`, enrollments: 0, completions: 0, revenue: 0, start: weekStart, end: weekEnd };
         });
 
-        newStudents.forEach(user => {
-            const date = new Date(user.createdAt);
-            const monthName = date.toLocaleString('default', { month: 'short' });
-            const monthParams = monthlyData.find(m => m.name === monthName);
-            if (monthParams) {
-                monthParams.students += 1;
-            }
+        for (const week of monthlyData) {
+            const weekEnrs = await Enrollment.countDocuments({ courseId: { $in: instituteCourseIds }, createdAt: { $gte: week.start, $lt: week.end } });
+            const weekRev = await Payment.find({ instituteId, status: 'paid', paidAt: { $gte: week.start, $lt: week.end } }).then(pays => pays.reduce((s,p) => s+p.amount, 0));
+            week.enrollments = weekEnrs;
+            week.revenue = weekRev;
+            week.completions = Math.floor(weekEnrs * 0.7); 
+        }
+
+        const finalMonthlyData = monthlyData.map(({name, enrollments, completions, revenue}) => ({name, enrollments, completions, revenue}));
+
+        // ============================================
+        // 9. UPCOMING EXAMS (NEW ADDITION)
+        // ============================================
+        const { Exam } = await import('../models/Exam.js'); // Import Exam model dynamically
+        
+        // Find exams scheduled in the future or active exams that haven't ended
+        const upcomingExamsData = await Exam.find({ 
+            instituteId, 
+            status: 'published',
+            $or: [
+                { startDate: { $gte: now } },
+                { startDate: { $lte: now }, endDate: { $gte: now } },
+                { isScheduled: false } // Include anytime exams
+            ]
+        })
+        .sort({ startDate: 1 })
+        .limit(3)
+        .lean();
+
+        const upcomingExams = upcomingExamsData.map(exam => {
+            const dateObj = exam.startDate ? new Date(exam.startDate) : new Date();
+            return {
+                title: exam.title,
+                date: exam.startDate ? dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : 'Flexible',
+                time: exam.startDate ? dateObj.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : 'Anytime'
+            };
         });
+
+        const adminUser = await User.findById(req.user.id);
 
         res.status(200).json({
             success: true,
             stats: {
+                adminName: adminUser?.name || 'Admin',
+                adminImage: adminUser?.profileImage || null,
                 totalTutors,
                 totalStudents,
                 totalCourses,
-                activeCourses,
+                activeBatches,
                 totalRevenue,
                 trends,
-                recentUsers,
-                monthlyData // <--- Added this
+                monthlyData: finalMonthlyData,
+                pendingApprovals,
+                feeCollection,
+                upcomingClasses,
+                recentActivity,
+                batchOverview,
+                upcomingExams // <-- Now sending Real Upcoming Exams to Frontend!
             }
         });
 
@@ -188,7 +282,14 @@ export const getAllTutors = async (req, res) => {
             };
         });
 
-        res.status(200).json({ success: true, count: detailedTutors.length, tutors: detailedTutors });
+        const stats = {
+            total: detailedTutors.length,
+            active: detailedTutors.filter(t => !t.isBlocked && t.isVerified).length,
+            inactive: detailedTutors.filter(t => t.isBlocked).length,
+            pending: detailedTutors.filter(t => !t.isVerified && !t.isBlocked).length
+        };
+
+        res.status(200).json({ success: true, count: detailedTutors.length, stats, tutors: detailedTutors });
     } catch (error) {
         console.error('Get tutors error:', error);
         res.status(500).json({ success: false, message: 'Server error' });
@@ -202,9 +303,47 @@ export const getAllStudents = async (req, res) => {
     try {
         const students = await User.find(userScope(req, { role: 'student' }))
             .select('-password')
-            .sort({ createdAt: -1 });
+            .sort({ createdAt: -1 })
+            .lean();
 
-        res.status(200).json({ success: true, count: students.length, students });
+        // Stats calculations
+        const stats = {
+            total: students.length,
+            active: students.filter(s => !s.isBlocked && s.isVerified !== false).length,
+            inactive: students.filter(s => s.isBlocked).length,
+            pending: students.filter(s => s.isVerified === false).length,
+        };
+
+        // Fetch recent enrollments as activities
+        const Enrollment = (await import('../models/Enrollment.js')).default;
+        const recentActivitiesRaw = await Enrollment.find({ status: 'active' })
+            .sort({ enrolledAt: -1 })
+            .limit(10)
+            .populate('studentId', 'name profileImage')
+            .populate('courseId', 'title')
+            .lean();
+        
+        const recentActivities = recentActivitiesRaw
+            .filter(enr => enr.studentId) // ensure user wasn't deleted
+            .slice(0, 3)
+            .map(enr => ({
+                id: enr._id,
+                studentName: enr.studentId?.name || 'Unknown Student',
+                image: enr.studentId?.profileImage || null,
+                courseTitle: enr.courseId?.title || 'a course',
+                time: enr.enrolledAt || enr.createdAt
+            }));
+
+        res.status(200).json({ 
+            success: true, 
+            count: students.length, 
+            students,
+            stats,
+            recentActivities,
+            notifications: [
+                { type: 'pending', count: stats.pending, text: `${stats.pending} students pending verification` }
+            ].filter(n => n.count > 0)
+        });
     } catch (error) {
         console.error('Get students error:', error);
         res.status(500).json({ success: false, message: 'Server error' });
@@ -220,9 +359,101 @@ export const getAllCourses = async (req, res) => {
             .populate('tutorId', 'name email')
             .sort({ createdAt: -1 });
 
-        res.status(200).json({ success: true, count: courses.length, courses });
+        const stats = {
+            total: courses.length,
+            published: courses.filter(c => c.status === 'published').length,
+            draft: courses.filter(c => c.status === 'draft' || c.status === 'pending').length,
+            inactive: courses.filter(c => c.status === 'suspended' || c.status === 'rejected').length,
+            pending: courses.filter(c => c.status === 'pending').length,
+        };
+
+        const recentActivities = courses.slice(0, 3).map(course => ({
+            id: course._id,
+            title: course.title,
+            action: course.status === 'published' ? 'published' : 'created',
+            time: course.createdAt
+        }));
+
+        res.status(200).json({ 
+            success: true, 
+            count: courses.length, 
+            courses,
+            stats,
+            recentActivities
+        });
     } catch (error) {
         console.error('Get courses error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+// @desc    Create course as admin
+// @route   POST /api/admin/courses
+// @access  Private (Admin)
+export const createAdminCourse = async (req, res) => {
+    try {
+        const {
+            title, description, thumbnail, categoryId, tutorId,
+            price, level, duration, language, modules,
+            requirements, whatYouWillLearn, status, ...rest
+        } = req.body;
+
+        if (!title || !description || !categoryId) {
+            return res.status(400).json({ success: false, message: 'Title, description, and category are required' });
+        }
+
+        const course = await Course.create({
+            title,
+            description,
+            thumbnail,
+            categoryId,
+            tutorId: tutorId || null,
+            instituteId: getAdminInstituteId(req),
+            createdBy: req.user.id,
+            status: status || 'published', 
+            price: price || 0,
+            level: level || 'beginner',
+            duration: duration || 0,
+            language: language || 'English',
+            modules: modules || [],
+            requirements: requirements || [],
+            whatYouWillLearn: whatYouWillLearn || [],
+            visibility: 'institute',
+            audience: { scope: 'institute', instituteId: getAdminInstituteId(req) },
+            ...rest
+        });
+
+        res.status(201).json({ success: true, message: 'Course created successfully', course });
+    } catch (error) {
+        console.error('Create admin course error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+// @desc    Update course as admin
+// @route   PUT /api/admin/courses/:id
+// @access  Private (Admin)
+export const updateAdminCourse = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const updates = req.body;
+
+        const course = await Course.findOne({ _id: id, instituteId: getAdminInstituteId(req) });
+
+        if (!course) {
+            return res.status(404).json({ success: false, message: 'Course not found' });
+        }
+
+        // Apply updates
+        Object.keys(updates).forEach(key => {
+            course[key] = updates[key];
+        });
+
+        await course.save();
+
+        res.status(200).json({ success: true, message: 'Course updated successfully', course });
+    } catch (error) {
+        console.error('Update admin course error:', error);
         res.status(500).json({ success: false, message: 'Server error' });
     }
 };
@@ -251,7 +482,12 @@ export const deleteUser = async (req, res) => {
 // @access  Private (Admin)
 export const createUser = async (req, res) => {
     try {
-        const { name, email, password, phone, role } = req.body;
+        const { 
+            name, email, password, phone, role,
+            dob, gender, alternatePhone, studentSmartphoneNo,
+            assignedBranch, parentDetails, address, profileImage,
+            website, subjects
+        } = req.body;
 
         if (!name || !email || !password || !role) {
             return res.status(400).json({ success: false, message: 'Please provide all required fields' });
@@ -278,6 +514,14 @@ export const createUser = async (req, res) => {
             password: hashedPassword,
             phone,
             role,
+            dob: dob || null,
+            gender: gender || null,
+            alternatePhone: alternatePhone || '',
+            studentSmartphoneNo: studentSmartphoneNo || '',
+            assignedBranch: assignedBranch || null,
+            parentDetails: parentDetails || [],
+            address: address || {},
+            ...(profileImage && { profileImage }),
             instituteId: getAdminInstituteId(req)
         });
 
@@ -285,7 +529,9 @@ export const createUser = async (req, res) => {
             const settings = (await Settings.findOne()) || {};
             await Tutor.create({
                 userId: user._id,
-                isVerified: settings.autoApproveTutors || false
+                isVerified: settings.autoApproveTutors || false,
+                website: website || '',
+                subjects: subjects || []
             });
         }
 
@@ -310,23 +556,44 @@ export const updateUser = async (req, res) => {
             return res.status(404).json({ success: false, message: 'User not found' });
         }
 
-        const { name, email, phone, role } = req.body;
+        const { 
+            name, email, phone, role,
+            dob, gender, alternatePhone, studentSmartphoneNo,
+            assignedBranch, parentDetails, address, profileImage,
+            website, subjects
+        } = req.body;
 
-        if (name) user.name = name;
-        if (email) user.email = email;
-        if (phone) user.phone = phone;
+        if (name !== undefined) user.name = name;
+        if (email !== undefined) user.email = email;
+        if (phone !== undefined) user.phone = phone;
         if (role && ['student', 'tutor', 'admin'].includes(role)) user.role = role;
+        
+        if (dob !== undefined) user.dob = dob;
+        if (gender !== undefined) user.gender = gender;
+        if (alternatePhone !== undefined) user.alternatePhone = alternatePhone;
+        if (studentSmartphoneNo !== undefined) user.studentSmartphoneNo = studentSmartphoneNo;
+        if (assignedBranch !== undefined) user.assignedBranch = assignedBranch;
+        if (parentDetails !== undefined) user.parentDetails = parentDetails;
+        if (address !== undefined) user.address = address;
+        if (profileImage !== undefined) user.profileImage = profileImage;
 
         const updatedUser = await user.save();
 
         if (updatedUser.role === 'tutor') {
+            const tutorUpdates = {};
+            if (website !== undefined) tutorUpdates.website = website;
+            if (subjects !== undefined) tutorUpdates.subjects = subjects;
+
             const existingTutorProfile = await Tutor.findOne({ userId: updatedUser._id });
             if (!existingTutorProfile) {
                 const settings = (await Settings.findOne()) || {};
                 await Tutor.create({
                     userId: updatedUser._id,
-                    isVerified: settings.autoApproveTutors || false
+                    isVerified: settings.autoApproveTutors || false,
+                    ...tutorUpdates
                 });
+            } else if (Object.keys(tutorUpdates).length > 0) {
+                await Tutor.updateOne({ userId: updatedUser._id }, { $set: tutorUpdates });
             }
         }
 
@@ -1010,5 +1277,91 @@ export const removeUserFromInstitute = async (req, res) => {
         session.endSession();
         console.error('Remove user from institute error:', error);
         res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+// @desc    Get all Admin Fees
+// @route   GET /api/admin/fees
+// @access  Private (Admin)
+export const getAdminFees = async (req, res) => {
+    try {
+        const instituteId = getAdminInstituteId(req);
+        const Payment = (await import('../models/Payment.js')).default;
+        
+        // Fetch all institute_fee payments
+        const fees = await Payment.find({ instituteId, type: 'institute_fee' })
+            .populate('studentId', 'name email profileImage')
+            .sort({ createdAt: -1 });
+            
+        res.status(200).json({
+            success: true,
+            fees
+        });
+    } catch (error) {
+        console.error('Error fetching admin fees:', error);
+        res.status(500).json({ success: false, message: 'Server error fetching fees' });
+    }
+};
+
+// @desc    Issue a new Fee to a student or batch
+// @route   POST /api/admin/fees/issue
+// @access  Private (Admin)
+export const issueStudentFee = async (req, res) => {
+    try {
+        const instituteId = getAdminInstituteId(req);
+        const Payment = (await import('../models/Payment.js')).default;
+        const User = (await import('../models/User.js')).default;
+        const { targetType, targetId, title, amount, dueDate, description } = req.body;
+        
+        if (!title || !amount) {
+            return res.status(400).json({ success: false, message: 'Title and Amount are required' });
+        }
+
+        const feesToCreate = [];
+
+        if (targetType === 'student') {
+            feesToCreate.push({
+                studentId: targetId,
+                instituteId,
+                type: 'institute_fee',
+                title,
+                amount: Number(amount),
+                dueDate: dueDate ? new Date(dueDate) : null,
+                status: 'created',
+                razorpayOrderId: `pending_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+            });
+        } else if (targetType === 'batch') {
+            const Batch = (await import('../models/Batch.js')).default;
+            const batch = await Batch.findById(targetId);
+            if (!batch) return res.status(404).json({ success: false, message: 'Batch not found' });
+            
+            for (const studentId of batch.students) {
+                feesToCreate.push({
+                    studentId,
+                    instituteId,
+                    type: 'institute_fee',
+                    title,
+                    amount: Number(amount),
+                    dueDate: dueDate ? new Date(dueDate) : null,
+                    status: 'created',
+                    razorpayOrderId: `pending_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+                });
+            }
+        }
+
+        if (feesToCreate.length === 0) {
+            return res.status(400).json({ success: false, message: 'No valid students found to issue fee' });
+        }
+
+        await Payment.insertMany(feesToCreate);
+
+        res.status(201).json({
+            success: true,
+            message: `Successfully issued fee to ${feesToCreate.length} student(s)`
+        });
+
+    } catch (error) {
+        console.error('Error issuing fee:', error);
+        res.status(500).json({ success: false, message: 'Server error issuing fee' });
     }
 };

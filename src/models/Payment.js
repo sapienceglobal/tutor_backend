@@ -19,8 +19,16 @@ const paymentSchema = new mongoose.Schema({
     },
     type: {
         type: String,
-        enum: ['course_purchase', 'subscription_renewal'],
+        enum: ['course_purchase', 'subscription_renewal', 'institute_fee'],
         default: 'course_purchase',
+    },
+    title: {
+        type: String,
+        default: null,
+    },
+    dueDate: {
+        type: Date,
+        default: null,
     },
     amount: {
         type: Number,

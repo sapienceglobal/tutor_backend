@@ -139,30 +139,39 @@ export const verifyPayment = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Payment record not found' });
         }
 
-        // Auto-enroll the student
-        const existingEnrollment = await Enrollment.findOne({
-            studentId: payment.studentId,
-            courseId: payment.courseId,
-        });
-
-        if (!existingEnrollment) {
-            await Enrollment.create({
+        // Auto-enroll the student if it's a course purchase
+        if (payment.type === 'course_purchase' && payment.courseId) {
+            const existingEnrollment = await Enrollment.findOne({
                 studentId: payment.studentId,
                 courseId: payment.courseId,
             });
 
-            // Update enrolled count
-            await Course.findByIdAndUpdate(payment.courseId, { $inc: { enrolledCount: 1 } });
+            if (!existingEnrollment) {
+                await Enrollment.create({
+                    studentId: payment.studentId,
+                    courseId: payment.courseId,
+                });
 
-            // Notification
-            const course = await Course.findById(payment.courseId);
-            await createNotification({
-                userId: payment.studentId,
-                type: 'course_enrolled',
-                title: '🎉 Payment Successful!',
-                message: `You've been enrolled in "${course?.title}". Happy learning!`,
-                data: { courseId: payment.courseId },
-            });
+                // Update enrolled count
+                await Course.findByIdAndUpdate(payment.courseId, { $inc: { enrolledCount: 1 } });
+
+                // Notification
+                const course = await Course.findById(payment.courseId);
+                await createNotification({
+                    userId: payment.studentId,
+                    type: 'course_enrolled',
+                    title: '🎉 Payment Successful!',
+                    message: `You've been enrolled in "${course?.title}". Happy learning!`,
+                    data: { courseId: payment.courseId },
+                });
+            }
+        } else if (payment.type === 'institute_fee') {
+             await createNotification({
+                 userId: payment.studentId,
+                 type: 'fee_paid',
+                 title: '✅ Fee Paid Successfully!',
+                 message: `Your payment for "${payment.title || 'Institute Fee'}" has been received.`,
+             });
         }
 
         res.status(200).json({
@@ -373,9 +382,9 @@ export const retryFailedPayment = async (req, res) => {
             return res.status(400).json({ success: false, message: 'This payment is already completed' });
         }
 
-        // Max 3 retries
+        // Max 3 retries (not for institute fees)
         const retryCount = payment.retryCount || 0;
-        if (retryCount >= 3) {
+        if (payment.type !== 'institute_fee' && retryCount >= 3) {
             return res.status(400).json({ success: false, message: 'Maximum retry attempts (3) reached. Please create a new order.' });
         }
 

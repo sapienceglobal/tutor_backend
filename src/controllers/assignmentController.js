@@ -521,3 +521,27 @@ export const gradeSubmission = async (req, res) => {
         res.status(500).json({ success: false, message: 'Server error' });
     }
 };
+
+// @desc    Student fetches their own submission for an assignment (with grade/feedback)
+// @route   GET /api/assignments/:id/my-submission
+// @access  Private (Student)
+export const getMySubmission = async (req, res) => {
+    try {
+        const submission = await Submission.findOne({
+            assignmentId: req.params.id,
+            studentId: req.user._id,
+        })
+            .populate('gradedBy', 'name')
+            .lean();
+
+        if (!submission) {
+            return res.status(404).json({ success: false, message: 'No submission found' });
+        }
+
+        const assignment = await Assignment.findById(req.params.id).lean();
+        res.json({ success: true, submission, assignment });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
