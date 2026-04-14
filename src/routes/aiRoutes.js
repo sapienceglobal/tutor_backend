@@ -57,10 +57,11 @@ import {
     generateAICourse,
     getRecentAICourses, deleteAICourse,
 } from '../controllers/aiController.js';
-import { protect, admin } from '../middleware/auth.js';
+import { protect, admin ,requireFeature} from '../middleware/auth.js';
 import { fileUpload } from '../utils/cloudinary.js';
 
 const router = express.Router();
+requireFeature('aiFeatures')
 
 // Chat Session Routes (Industry Standard UI)
 

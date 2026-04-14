@@ -10,7 +10,9 @@ import {
     deleteUserByAdmin,
     getActivityLog,
     getInstituteUsers,
-    impersonateUser
+    impersonateUser,
+    getSubscriptionsOverview,
+    deleteInstitute
 } from '../controllers/superadminController.js';
 
 const router = express.Router();
@@ -18,12 +20,13 @@ const router = express.Router();
 // All routes require SUPERADMIN access
 router.use(protect);
 router.use(authorize('superadmin'));
-
+router.delete('/institutes/:id', protect, deleteInstitute);
 router.get('/dashboard-stats', getPlatformStats);
 router.get('/institutes', getInstitutes);
 router.post('/institutes', createInstitute);
 router.put('/institutes/:id', updateInstitute);
 router.get('/institutes/:id/users', getInstituteUsers);
+router.get('/subscriptions-overview', getSubscriptionsOverview);
 
 // User management
 router.get('/users', getAllUsers);

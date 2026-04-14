@@ -61,6 +61,7 @@ import entitlementRoutes from './src/routes/entitlements.js';
 import { verifyApiKey } from './src/middleware/apiKey.js';
 import { auditMiddleware } from './src/middleware/auditMiddleware.js';
 import settingsRouter from './src/routes/settingsRoutes.js';
+import subscriptionRoutes from './src/routes/subscriptionRoutes.js';
 
 // Initialize express app
 const app = express();
@@ -208,6 +209,7 @@ app.use('/api/proxy/superadmin', superadminSettingsRoutes);
 
 // Direct admin routes (for proxy requests)
 app.use('/api/admin/invites', inviteRoutes);
+app.use('/api/subscriptions', subscriptionRoutes)
 
 // Error handling middleware
 app.use((err, req, res, next) => {

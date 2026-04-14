@@ -241,3 +241,34 @@ export const optionalAuth = async (req, res, next) => {
   }
   next();
 };
+// --- NEW: Subscription Feature Enforcement Middleware ---
+// Ensure this is used AFTER the `protect` middleware on your routes.
+export const requireFeature = (featureKey) => {
+  return (req, res, next) => {
+    // 1. Superadmin has god-mode — always bypass feature locks
+    if (req.user && req.user.role === 'superadmin') {
+      return next();
+    }
+
+    // 2. Safety check: Ensure tenant (institute) was attached by protect middleware
+    if (!req.tenant) {
+      return res.status(403).json({
+        success: false,
+        message: 'Institute context missing. Cannot verify subscription features.'
+      });
+    }
+
+    // 3. Check if the requested feature is true in the institute's features object
+    if (req.tenant.features && req.tenant.features[featureKey] === true) {
+      return next(); // Feature unlocked, proceed to the controller
+    }
+
+    // 4. Feature is missing or false — Block access
+    return res.status(403).json({
+      success: false,
+      featureLocked: true, // Special flag for frontend to trigger UI changes if needed
+      requiredFeature: featureKey,
+      message: 'This feature is not available in your current subscription plan. Please contact your Institute Admin to upgrade.'
+    });
+  };
+};

@@ -73,7 +73,7 @@ const instituteSchema = new mongoose.Schema({
     // ── Plan & Features ────────────────────────────────────────────────────
     subscriptionPlan: {
         type: String,
-        enum: ['free', 'basic', 'pro', 'enterprise'],
+        // enum: ['free', 'basic', 'pro', 'enterprise'],
         default: 'free'
     },
     features: {

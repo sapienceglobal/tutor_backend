@@ -467,10 +467,13 @@ export const loginUser = async (req, res) => {
 
 // @desc    Get current user
 // @route   GET /api/auth/me
+// @desc    Get current user
+// @route   GET /api/auth/me
 export const getMe = async (req, res) => {
   try {
     const user = await User.findById(req.user.id)
-      .populate('instituteId', 'name subdomain isActive subscriptionPlan')
+      // 🌟 CHANGE 1: 'features' ko string mein add kiya taaki DB se uth kar aaye
+      .populate('instituteId', 'name subdomain isActive subscriptionPlan features')
       .select('+password');
 
     if (!user) {
@@ -497,6 +500,8 @@ export const getMe = async (req, res) => {
           subdomain: user.instituteId.subdomain,
           isActive: user.instituteId.isActive,
           subscriptionPlan: user.instituteId.subscriptionPlan,
+          // 🌟 CHANGE 2: Frontend (SubscriptionContext) ko features dena zaroori hai!
+          features: user.instituteId.features || {}, 
         } : null,
         profileImage: user.profileImage,
         language: user.language,
