@@ -6,7 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import upload from '../utils/cloudinary.js';
 import { protect, authorize } from '../middleware/auth.js';
 import { processVideoForHLS } from '../services/hlsService.js';
-import { secureFeatureCheck, secureSubscriptionCheck } from '../middleware/subscriptionSecurity.js';
+import { requireFeature } from '../middleware/subscriptionMiddleware.js';
 
 const router = express.Router();
 
@@ -80,8 +80,7 @@ router.post(
   '/video-hls',
   protect,
   authorize('tutor'),
-  secureSubscriptionCheck,
-  secureFeatureCheck('hlsStreaming'), // SECURE: Only tenants with HLS plan can use this
+  requireFeature('hlsStreaming'), // SECURE: Only tenants with HLS plan can use this
   localVideoUpload.single('video'),
   async (req, res) => {
 

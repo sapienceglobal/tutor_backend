@@ -93,6 +93,70 @@ async function callGroqAIChat(messages) {
 
 // @desc    Generate MCQ questions using AI
 // @route   POST /api/ai/generate-questions
+// Helper function to call Groq AI iteratively handling all backend function calls
+// Helper function to call OpenAI iteratively handling all backend function calls
+async function callOpenAIWithTools(messages, tools, maxLoops = 3) {
+    let loopCount = 0;
+    const { executeAgentTool } = await import('../services/aiAgentTools.js');
+
+    while (loopCount < maxLoops) {
+        loopCount++;
+
+        try {
+            const res = await (await import('axios')).default.post(
+                'https://api.openai.com/v1/chat/completions', // 🌟 OpenAI URL
+                {
+                    model: 'gpt-4o-mini', // 🌟 Paid OpenAI Model
+                    messages: messages,
+                    tools: tools,
+                    tool_choice: 'auto',
+                    max_tokens: 2000,
+                    temperature: 0.5,
+                },
+                {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, // 🌟 Ensure this key is in your .env file
+                    },
+                }
+            );
+
+            const responseMessage = res.data.choices[0].message;
+            messages.push(responseMessage);
+
+            // Agar AI ne koi tool call nahi kiya, toh sidha jawab return kar do
+            if (!responseMessage.tool_calls || responseMessage.tool_calls.length === 0) {
+                return responseMessage.content || '';
+            }
+
+            // Agar AI ne tool call kiya hai, toh usko execute karo
+            const toolResults = await Promise.all(
+                responseMessage.tool_calls
+                    .filter(tc => tc.type === 'function')
+                    .map(async (toolCall) => {
+                        const functionResponse = await executeAgentTool(
+                            toolCall.function.name,
+                            toolCall.function.arguments
+                        );
+                        return {
+                            tool_call_id: toolCall.id,
+                            role: 'tool',
+                            name: toolCall.function.name,
+                            content: functionResponse,
+                        };
+                    })
+            );
+
+            // Tool ka result messages array mein daal kar loop continue karo
+            messages.push(...toolResults);
+        } catch (error) {
+            console.error('OpenAI Agentic Loop Error:', error.response?.data || error.message);
+            throw new Error(error.response?.data?.error?.message || 'AI Chat failed');
+        }
+    }
+    return "Agentic loop limit reached. Please refine your question or ask in smaller parts.";
+}
+
 export const generateQuestions = async (req, res) => {
     try {
         if (!GROQ_API_KEY) {
@@ -2165,7 +2229,7 @@ export const getNotesKnowledgeBank = async (req, res) => {
             { $sort: { count: -1 } },
             { $limit: 8 },
             { $lookup: { from: 'courses', localField: '_id', foreignField: '_id', as: 'course' } },
-           { $unwind: { path: '$course', preserveNullAndEmptyArrays: true } },
+            { $unwind: { path: '$course', preserveNullAndEmptyArrays: true } },
             { $project: { name: '$course.title', count: 1 } },
         ]);
 
@@ -2260,7 +2324,7 @@ Evaluate thoroughly and return ONLY a valid JSON object (no markdown, no backtic
 
     const raw = await callGroqAI(prompt);
     const jsonStart = raw.indexOf('{');
-    const jsonEnd   = raw.lastIndexOf('}') + 1;
+    const jsonEnd = raw.lastIndexOf('}') + 1;
     return JSON.parse(raw.slice(jsonStart, jsonEnd));
 }
 
@@ -2273,9 +2337,9 @@ export const getEvaluatorAssignments = async (req, res) => {
         const { courseId, page = 1, limit = 10 } = req.query;
 
         // Find tutor
-        const Tutor  = (await import('../models/Tutor.js')).default;
+        const Tutor = (await import('../models/Tutor.js')).default;
         const Course = (await import('../models/Course.js')).default;
-        const tutor  = await Tutor.findOne({ userId: req.user._id }).select('_id').lean();
+        const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id').lean();
         if (!tutor) return res.status(403).json({ success: false, message: 'Tutor profile not found' });
 
         // Get tutor's courses
@@ -2285,8 +2349,8 @@ export const getEvaluatorAssignments = async (req, res) => {
         const courseIds = courses.map(c => c._id);
 
         const filter = { courseId: { $in: courseIds }, status: 'published' };
-        const skip   = (Number(page) - 1) * Number(limit);
-        const total  = await Assignment.countDocuments(filter);
+        const skip = (Number(page) - 1) * Number(limit);
+        const total = await Assignment.countDocuments(filter);
 
         const assignments = await Assignment.find(filter)
             .sort({ createdAt: -1 })
@@ -2302,8 +2366,8 @@ export const getEvaluatorAssignments = async (req, res) => {
             {
                 $group: {
                     _id: '$assignmentId',
-                    total:   { $sum: 1 },
-                    graded:  { $sum: { $cond: [{ $eq: ['$status', 'graded'] }, 1, 0] } },
+                    total: { $sum: 1 },
+                    graded: { $sum: { $cond: [{ $eq: ['$status', 'graded'] }, 1, 0] } },
                     pending: { $sum: { $cond: [{ $eq: ['$status', 'submitted'] }, 1, 0] } },
                     avgGrade: { $avg: { $cond: [{ $eq: ['$status', 'graded'] }, '$grade', null] } },
                 },
@@ -2341,11 +2405,11 @@ export const getEvaluatorSubmissions = async (req, res) => {
 
         // Format timeAgo for each
         const formatted = submissions.map(s => {
-            const diffMs  = Date.now() - new Date(s.submittedAt).getTime();
+            const diffMs = Date.now() - new Date(s.submittedAt).getTime();
             const diffMin = Math.floor(diffMs / 60000);
             const timeAgo = diffMin < 60 ? `${diffMin}m ago`
                 : diffMin < 1440 ? `${Math.floor(diffMin / 60)}h ago`
-                : `${Math.floor(diffMin / 1440)}d ago`;
+                    : `${Math.floor(diffMin / 1440)}d ago`;
             return { ...s, timeAgo };
         });
 
@@ -2376,7 +2440,7 @@ export const aiEvaluateSubmission = async (req, res) => {
 
         // Log usage
         logAIUsage(req.user._id, 'doubt_solver', {
-            type:         'assignment_evaluator',
+            type: 'assignment_evaluator',
             submissionId: submission._id,
             assignmentId: assignment._id,
         });
@@ -2386,11 +2450,11 @@ export const aiEvaluateSubmission = async (req, res) => {
             evaluation: {
                 ...evaluation,
                 submissionId: submission._id,
-                studentName:  submission.studentId?.name || 'Student',
+                studentName: submission.studentId?.name || 'Student',
                 studentEmail: submission.studentId?.email || '',
-                studentAvatar:submission.studentId?.avatar || null,
-                submittedAt:  submission.submittedAt,
-                currentStatus:submission.status,
+                studentAvatar: submission.studentId?.avatar || null,
+                submittedAt: submission.submittedAt,
+                currentStatus: submission.status,
                 currentGrade: submission.grade ?? null,
             },
         });
@@ -2418,26 +2482,26 @@ export const confirmAIGrade = async (req, res) => {
 
         // Validate grade against assignment totalMarks
         const assignment = await Assignment.findById(submission.assignmentId).lean();
-        const maxMarks   = assignment?.totalMarks || 100;
+        const maxMarks = assignment?.totalMarks || 100;
         const finalGrade = Math.min(Number(grade), maxMarks);
 
-        submission.status      = 'graded';
-        submission.grade       = finalGrade;
-        submission.feedback    = feedback || '';
-        submission.rubricScores= rubricScores || [];
-        submission.gradedAt    = new Date();
-        submission.gradedBy    = req.user._id;
+        submission.status = 'graded';
+        submission.grade = finalGrade;
+        submission.feedback = feedback || '';
+        submission.rubricScores = rubricScores || [];
+        submission.gradedAt = new Date();
+        submission.gradedBy = req.user._id;
         await submission.save();
 
         // Notify student
         try {
             const { createNotification } = await import('./notificationController.js');
             await createNotification({
-                userId:  submission.studentId,
-                type:    'assignment_graded',
-                title:   'Assignment Graded',
+                userId: submission.studentId,
+                type: 'assignment_graded',
+                title: 'Assignment Graded',
                 message: `Your assignment has been graded. You scored ${finalGrade}/${maxMarks} marks.`,
-                data:    { courseId: submission.courseId, assignmentId: submission.assignmentId },
+                data: { courseId: submission.courseId, assignmentId: submission.assignmentId },
             });
         } catch { /* non-critical */ }
 
@@ -2475,9 +2539,9 @@ export const bulkAIEvaluate = async (req, res) => {
             try {
                 const evaluation = await runAIEvaluation(sub, assignment);
                 results.push({
-                    submissionId:  sub._id,
-                    studentName:   sub.studentId?.name || 'Student',
-                    studentEmail:  sub.studentId?.email || '',
+                    submissionId: sub._id,
+                    studentName: sub.studentId?.name || 'Student',
+                    studentEmail: sub.studentId?.email || '',
                     evaluation,
                     success: true,
                 });
@@ -2490,9 +2554,9 @@ export const bulkAIEvaluate = async (req, res) => {
 
         // Log bulk usage
         logAIUsage(req.user._id, 'doubt_solver', {
-            type:         'bulk_assignment_evaluator',
+            type: 'bulk_assignment_evaluator',
             assignmentId: assignment._id,
-            count:        results.length,
+            count: results.length,
         });
 
         res.status(200).json({ success: true, total: submissions.length, results });
@@ -2537,12 +2601,12 @@ export const generateLectureSummary = async (req, res) => {
             return res.status(500).json({ success: false, message: 'Groq API key not configured' });
         }
 
-        let rawText       = '';
-        let sourceType    = 'text';
+        let rawText = '';
+        let sourceType = 'text';
         let sourceFileName = null;
-        let sourceFileUrl  = null;
-        let title         = req.body.title || 'Untitled Lecture';
-        let pageCount     = 0;
+        let sourceFileUrl = null;
+        let title = req.body.title || 'Untitled Lecture';
+        let pageCount = 0;
 
         const {
             lessonId,
@@ -2562,18 +2626,18 @@ export const generateLectureSummary = async (req, res) => {
             // From existing lesson
             const lesson = await Lesson.findById(lessonId);
             if (!lesson) return res.status(404).json({ success: false, message: 'Lesson not found' });
-            title      = req.body.title || lesson.title;
-            rawText    = `Title: ${lesson.title}\nDescription: ${lesson.description || ''}\nContent: ${lesson.content?.text || ''}`;
+            title = req.body.title || lesson.title;
+            rawText = `Title: ${lesson.title}\nDescription: ${lesson.description || ''}\nContent: ${lesson.content?.text || ''}`;
             sourceType = 'lesson';
-            pageCount  = 1;
+            pageCount = 1;
 
         } else if (req.file) {
             // File upload
-            rawText        = await extractTextFromBuffer(req.file.buffer, req.file.mimetype, req.file.originalname);
-            sourceType     = req.file.mimetype === 'application/pdf' ? 'file' : 'file';
+            rawText = await extractTextFromBuffer(req.file.buffer, req.file.mimetype, req.file.originalname);
+            sourceType = req.file.mimetype === 'application/pdf' ? 'file' : 'file';
             sourceFileName = req.file.originalname;
-            title          = req.body.title || req.file.originalname.replace(/\.[^.]+$/, '');
-            pageCount      = estimatePages(rawText);
+            title = req.body.title || req.file.originalname.replace(/\.[^.]+$/, '');
+            pageCount = estimatePages(rawText);
 
             // Upload to Cloudinary for reference
             try {
@@ -2592,13 +2656,13 @@ export const generateLectureSummary = async (req, res) => {
         } else if (youtubeUrl) {
             // YouTube — use title + URL as context (no transcript)
             sourceType = 'youtube';
-            title      = req.body.title || 'YouTube Lecture';
-            rawText    = `YouTube Lecture URL: ${youtubeUrl}\nTitle: ${title}\nGenerate a structured educational summary based on what this lecture likely covers given the title.`;
-            pageCount  = 0;
+            title = req.body.title || 'YouTube Lecture';
+            rawText = `YouTube Lecture URL: ${youtubeUrl}\nTitle: ${title}\nGenerate a structured educational summary based on what this lecture likely covers given the title.`;
+            pageCount = 0;
 
         } else if (req.body.text) {
-            rawText   = req.body.text.trim();
-            title     = req.body.title || 'Pasted Lecture Notes';
+            rawText = req.body.text.trim();
+            title = req.body.title || 'Pasted Lecture Notes';
             pageCount = estimatePages(rawText);
 
         } else {
@@ -2623,8 +2687,8 @@ export const generateLectureSummary = async (req, res) => {
         const lengthGuide = summaryLength === 'short'
             ? 'Keep the summary very concise — max 100 words for summary, 3-4 key points.'
             : summaryLength === 'detailed'
-            ? 'Be thorough and detailed — 300+ words for summary, 8-10 key points, comprehensive notes.'
-            : 'Medium length — 150-200 words for summary, 5-6 key points.';
+                ? 'Be thorough and detailed — 300+ words for summary, 8-10 key points, comprehensive notes.'
+                : 'Medium length — 150-200 words for summary, 5-6 key points.';
 
         const focusInstruction = focusAreas.length
             ? `Focus especially on: ${focusAreas.join(', ')}.`
@@ -2668,9 +2732,9 @@ Return ONLY a valid JSON object (no markdown, no backticks):
             return res.status(500).json({ success: false, message: 'AI returned invalid format. Please retry.' });
         }
 
-        const minutesSaved  = estimateMinutesSaved(rawText);
+        const minutesSaved = estimateMinutesSaved(rawText);
         const keyPointCount = (parsed.keyPoints || []).length;
-        const finalTitle    = parsed.title || title;
+        const finalTitle = parsed.title || title;
 
         // ── 6. Get instituteId ────────────────────────────────────────
         let instituteId = null;
@@ -2682,57 +2746,57 @@ Return ONLY a valid JSON object (no markdown, no backticks):
 
         // ── 7. Save to DB ─────────────────────────────────────────────
         const record = await LectureSummary.create({
-            userId:        req.user._id,
+            userId: req.user._id,
             instituteId,
-            courseId:      courseId  || null,
-            lessonId:      lessonId  || null,
-            title:         finalTitle,
+            courseId: courseId || null,
+            lessonId: lessonId || null,
+            title: finalTitle,
             sourceType,
             sourceFileName,
             sourceFileUrl,
-            youtubeUrl:    youtubeUrl || null,
-            rawText:       rawText.slice(0, 8000),
+            youtubeUrl: youtubeUrl || null,
+            rawText: rawText.slice(0, 8000),
             summaryLength,
             focusAreas,
-            summary:       parsed.summary      || '',
-            keyPoints:     parsed.keyPoints    || [],
-            keyTakeaways:  parsed.keyTakeaways || [],
-            studyNotes:    parsed.studyNotes   || '',
+            summary: parsed.summary || '',
+            keyPoints: parsed.keyPoints || [],
+            keyTakeaways: parsed.keyTakeaways || [],
+            studyNotes: parsed.studyNotes || '',
             pageCount,
             keyPointCount,
             minutesSaved,
-            accuracy:      98,
-            status:        'ready',
+            accuracy: 98,
+            status: 'ready',
         });
 
         // ── 8. Log AI usage ───────────────────────────────────────────
         logAIUsage(req.user._id, 'summarize_lesson', {
-            type:      'lecture_summary',
-            recordId:  record._id,
-            lessonId:  lessonId  || null,
-            courseId:  courseId  || null,
+            type: 'lecture_summary',
+            recordId: record._id,
+            lessonId: lessonId || null,
+            courseId: courseId || null,
             sourceType,
         });
 
         res.status(200).json({
             success: true,
             record: {
-                _id:           record._id,
-                title:         finalTitle,
-                summary:       parsed.summary      || '',
-                keyPoints:     parsed.keyPoints    || [],
-                keyTakeaways:  parsed.keyTakeaways || [],
-                studyNotes:    parsed.studyNotes   || '',
-                subject:       parsed.subject      || null,
+                _id: record._id,
+                title: finalTitle,
+                summary: parsed.summary || '',
+                keyPoints: parsed.keyPoints || [],
+                keyTakeaways: parsed.keyTakeaways || [],
+                studyNotes: parsed.studyNotes || '',
+                subject: parsed.subject || null,
                 estimatedDuration: parsed.estimatedDuration || null,
-                difficulty:    parsed.difficulty   || null,
+                difficulty: parsed.difficulty || null,
                 pageCount,
                 keyPointCount,
                 minutesSaved,
-                accuracy:      98,
+                accuracy: 98,
                 sourceType,
                 sourceFileName,
-                status:        'ready',
+                status: 'ready',
             },
         });
 
@@ -2752,7 +2816,7 @@ export const getLectureSummaries = async (req, res) => {
         const filter = { userId: req.user._id, status: 'ready' };
         if (courseId) filter.courseId = courseId;
 
-        const skip  = (Number(page) - 1) * Number(limit);
+        const skip = (Number(page) - 1) * Number(limit);
         const total = await LectureSummary.countDocuments(filter);
 
         const records = await LectureSummary.find(filter)
@@ -2765,13 +2829,13 @@ export const getLectureSummaries = async (req, res) => {
             .lean();
 
         const formatted = records.map(r => {
-            const diffMs  = Date.now() - new Date(r.createdAt).getTime();
+            const diffMs = Date.now() - new Date(r.createdAt).getTime();
             const diffMin = Math.floor(diffMs / 60000);
-            const timeAgo = diffMin < 1     ? 'Just now'
-                : diffMin < 60    ? `${diffMin}m ago`
-                : diffMin < 1440  ? `${Math.floor(diffMin / 60)}h ago`
-                : diffMin < 10080 ? `${Math.floor(diffMin / 1440)}d ago`
-                : new Date(r.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+            const timeAgo = diffMin < 1 ? 'Just now'
+                : diffMin < 60 ? `${diffMin}m ago`
+                    : diffMin < 1440 ? `${Math.floor(diffMin / 60)}h ago`
+                        : diffMin < 10080 ? `${Math.floor(diffMin / 1440)}d ago`
+                            : new Date(r.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
             return { ...r, timeAgo, course: r.courseId?.title || null };
         });
 
@@ -2825,9 +2889,9 @@ export const getLectureSummaryStats = async (req, res) => {
             // Total lessons taught by this tutor
             (async () => {
                 try {
-                    const Tutor  = (await import('../models/Tutor.js')).default;
+                    const Tutor = (await import('../models/Tutor.js')).default;
                     const Course = (await import('../models/Course.js')).default;
-                    const tutor  = await Tutor.findOne({ userId }).select('_id').lean();
+                    const tutor = await Tutor.findOne({ userId }).select('_id').lean();
                     if (!tutor) return 0;
                     const courses = await Course.find({ tutorId: tutor._id }).select('_id').lean();
                     const courseIds = courses.map(c => c._id);
@@ -2839,27 +2903,29 @@ export const getLectureSummaryStats = async (req, res) => {
 
             LectureSummary.aggregate([
                 { $match: { userId: req.user._id, status: 'ready' } },
-                { $group: {
-                    _id: null,
-                    totalMinutesSaved: { $sum: '$minutesSaved' },
-                    avgAccuracy:       { $avg: '$accuracy' },
-                }},
+                {
+                    $group: {
+                        _id: null,
+                        totalMinutesSaved: { $sum: '$minutesSaved' },
+                        avgAccuracy: { $avg: '$accuracy' },
+                    }
+                },
             ]),
         ]);
 
         const totalMinutesSaved = aggStats[0]?.totalMinutesSaved || 0;
-        const avgAccuracy       = aggStats[0]?.avgAccuracy?.toFixed(1) || '98.0';
+        const avgAccuracy = aggStats[0]?.avgAccuracy?.toFixed(1) || '98.0';
 
         // AI Insights — topics students struggled with (from QuizAttempt low scores)
         let aiInsights = [];
         try {
-            const Tutor  = (await import('../models/Tutor.js')).default;
+            const Tutor = (await import('../models/Tutor.js')).default;
             const Course = (await import('../models/Course.js')).default;
-            const tutor  = await Tutor.findOne({ userId }).select('_id').lean();
+            const tutor = await Tutor.findOne({ userId }).select('_id').lean();
             if (tutor) {
-                const courses   = await Course.find({ tutorId: tutor._id }).select('_id').lean();
+                const courses = await Course.find({ tutorId: tutor._id }).select('_id').lean();
                 const courseIds = courses.map(c => c._id);
-                const lessons   = await Lesson.find({ courseId: { $in: courseIds } }).select('_id title').lean();
+                const lessons = await Lesson.find({ courseId: { $in: courseIds } }).select('_id title').lean();
                 const lessonIds = lessons.map(l => l._id);
 
                 const lowScores = await QuizAttempt.aggregate([
@@ -2872,10 +2938,10 @@ export const getLectureSummaryStats = async (req, res) => {
                 const lessonMap = lessons.reduce((m, l) => { m[l._id.toString()] = l.title; return m; }, {});
                 aiInsights = lowScores.map(s => ({
                     lessonId: s._id,
-                    title:    lessonMap[s._id.toString()] || 'Unknown Lesson',
+                    title: lessonMap[s._id.toString()] || 'Unknown Lesson',
                     avgScore: Math.round(s.avgScore),
-                    count:    s.count,
-                    message:  `Students struggled with this topic (avg ${Math.round(s.avgScore)}%) — Review recommended!`,
+                    count: s.count,
+                    message: `Students struggled with this topic (avg ${Math.round(s.avgScore)}%) — Review recommended!`,
                 }));
             }
         } catch { /* non-critical */ }
@@ -2885,7 +2951,7 @@ export const getLectureSummaryStats = async (req, res) => {
             stats: {
                 totalLectures,
                 summariesGenerated,
-                timeSaved:   totalMinutesSaved >= 60
+                timeSaved: totalMinutesSaved >= 60
                     ? `${(totalMinutesSaved / 60).toFixed(1)} hrs`
                     : `${totalMinutesSaved} mins`,
                 accuracy: `${avgAccuracy}%`,
@@ -2915,8 +2981,8 @@ export const getRelatedLectures = async (req, res) => {
 
         // Get other lessons from the same course
         const lessons = await Lesson.find({
-            courseId:  current.courseId,
-            _id:       { $ne: current.lessonId },
+            courseId: current.courseId,
+            _id: { $ne: current.lessonId },
             isPublished: true,
         })
             .select('title type content.duration')
@@ -2938,10 +3004,10 @@ export const getWeakTopics = async (req, res) => {
     try {
         const { courseId, limit = 10 } = req.query;
 
-        const Tutor  = (await import('../models/Tutor.js')).default;
+        const Tutor = (await import('../models/Tutor.js')).default;
         const Course = (await import('../models/Course.js')).default;
-        const User   = (await import('../models/User.js')).default;
-        const Topic  = (await import('../models/Topic.js')).default;
+        const User = (await import('../models/User.js')).default;
+        const Topic = (await import('../models/Topic.js')).default;
 
         const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id').lean();
         if (!tutor) return res.status(403).json({ success: false, message: 'Tutor profile not found' });
@@ -2964,22 +3030,22 @@ export const getWeakTopics = async (req, res) => {
         // ── Lessons ───────────────────────────────────────────────────
         const lessons = await Lesson.find({ courseId: { $in: courseIds } })
             .select('_id title courseId').lean();
-        const lessonIds  = lessons.map(l => l._id);
-        const lessonMap  = lessons.reduce((m, l) => { m[l._id.toString()] = l; return m; }, {});
+        const lessonIds = lessons.map(l => l._id);
+        const lessonMap = lessons.reduce((m, l) => { m[l._id.toString()] = l; return m; }, {});
 
         // ── QuizAttempt aggregation per lesson ────────────────────────
         const quizAgg = await QuizAttempt.aggregate([
             { $match: { lessonId: { $in: lessonIds } } },
             {
                 $group: {
-                    _id:           '$lessonId',
-                    avgScore:      { $avg: '$score' },
+                    _id: '$lessonId',
+                    avgScore: { $avg: '$score' },
                     totalAttempts: { $sum: 1 },
-                    passedCount:   { $sum: { $cond: ['$isPassed', 1, 0] } },
-                    failedCount:   { $sum: { $cond: ['$isPassed', 0, 1] } },
-                    minScore:      { $min: '$score' },
-                    maxScore:      { $max: '$score' },
-                    studentIds:    { $addToSet: '$studentId' },
+                    passedCount: { $sum: { $cond: ['$isPassed', 1, 0] } },
+                    failedCount: { $sum: { $cond: ['$isPassed', 0, 1] } },
+                    minScore: { $min: '$score' },
+                    maxScore: { $max: '$score' },
+                    studentIds: { $addToSet: '$studentId' },
                 },
             },
             { $sort: { avgScore: 1 } },
@@ -2988,31 +3054,31 @@ export const getWeakTopics = async (req, res) => {
 
         // ── Build weakTopics ──────────────────────────────────────────
         const weakTopics = quizAgg.map(q => {
-            const lesson   = lessonMap[q._id.toString()];
-            const cId      = lesson?.courseId?.toString();
-            const course   = courses.find(c => c._id.toString() === cId);
+            const lesson = lessonMap[q._id.toString()];
+            const cId = lesson?.courseId?.toString();
+            const course = courses.find(c => c._id.toString() === cId);
             const passRate = q.totalAttempts > 0 ? Math.round((q.passedCount / q.totalAttempts) * 100) : 0;
             const avgScore = Math.round(q.avgScore);
             const severity = avgScore < 40 ? 'critical' : avgScore < 60 ? 'warning' : 'moderate';
             const priority = avgScore < 40 ? 'High' : avgScore < 60 ? 'Medium' : 'Low';
 
             return {
-                lessonId:         q._id,
-                lessonTitle:      lesson?.title || 'Unknown Lesson',
-                courseId:         cId,
-                courseTitle:      course?.title || 'Unknown Course',
+                lessonId: q._id,
+                lessonTitle: lesson?.title || 'Unknown Lesson',
+                courseId: cId,
+                courseTitle: course?.title || 'Unknown Course',
                 avgScore,
                 passRate,
-                totalAttempts:    q.totalAttempts,
+                totalAttempts: q.totalAttempts,
                 studentsImpacted: (q.studentIds || []).length,
-                failedCount:      q.failedCount,
-                passedCount:      q.passedCount,
-                minScore:         Math.round(q.minScore),
-                maxScore:         Math.round(q.maxScore),
-                difficultyRank:   q.totalAttempts,
+                failedCount: q.failedCount,
+                passedCount: q.passedCount,
+                minScore: Math.round(q.minScore),
+                maxScore: Math.round(q.maxScore),
+                difficultyRank: q.totalAttempts,
                 severity,
                 priority,
-                studentIds:       q.studentIds || [],
+                studentIds: q.studentIds || [],
             };
         }).filter(t => t.avgScore < 75);
 
@@ -3021,10 +3087,10 @@ export const getWeakTopics = async (req, res) => {
             { $match: { courseId: { $in: courseIds }, status: 'active' } },
             {
                 $group: {
-                    _id:           '$courseId',
+                    _id: '$courseId',
                     totalStudents: { $sum: 1 },
-                    avgProgress:   { $avg: '$progress.percentage' },
-                    studentIds:    { $addToSet: '$studentId' },
+                    avgProgress: { $avg: '$progress.percentage' },
+                    studentIds: { $addToSet: '$studentId' },
                 },
             },
         ]);
@@ -3041,10 +3107,10 @@ export const getWeakTopics = async (req, res) => {
             { $match: { lessonId: { $in: lessonIds } } },
             {
                 $group: {
-                    _id:          '$studentId',
-                    avgScore:     { $avg: '$score' },
-                    totalAttempts:{ $sum: 1 },
-                    weakTopics:   { $addToSet: '$lessonId' },
+                    _id: '$studentId',
+                    avgScore: { $avg: '$score' },
+                    totalAttempts: { $sum: 1 },
+                    weakTopics: { $addToSet: '$lessonId' },
                 },
             },
             { $sort: { avgScore: 1 } },
@@ -3053,7 +3119,7 @@ export const getWeakTopics = async (req, res) => {
 
         // Fetch student user details
         const studentUserIds = studentScoreAgg.map(s => s._id);
-        const studentUsers   = await User.find({ _id: { $in: studentUserIds } })
+        const studentUsers = await User.find({ _id: { $in: studentUserIds } })
             .select('_id name profileImage').lean();
         const studentUserMap = studentUsers.reduce((m, u) => { m[u._id.toString()] = u; return m; }, {});
 
@@ -3065,7 +3131,7 @@ export const getWeakTopics = async (req, res) => {
             .filter(s => s.avgScore < 65)
             .slice(0, 8)
             .map(s => {
-                const user     = studentUserMap[s._id.toString()];
+                const user = studentUserMap[s._id.toString()];
                 const avgScore = Math.round(s.avgScore);
 
                 // Find weakest topic for this student
@@ -3075,13 +3141,13 @@ export const getWeakTopics = async (req, res) => {
                 const hoursSpent = Math.round((s.totalAttempts * 15) / 60 * 10) / 10; // rough estimate
 
                 return {
-                    studentId:    s._id,
-                    name:         user?.name         || 'Student',
-                    avatar:       user?.profileImage || null,
+                    studentId: s._id,
+                    name: user?.name || 'Student',
+                    avatar: user?.profileImage || null,
                     avgScore,
-                    weakTopic:    studentWeakLesson?.lessonTitle || 'Multiple Topics',
-                    hoursSpent:   `${hoursSpent} hrs`,
-                    totalAttempts:s.totalAttempts,
+                    weakTopic: studentWeakLesson?.lessonTitle || 'Multiple Topics',
+                    hoursSpent: `${hoursSpent} hrs`,
+                    totalAttempts: s.totalAttempts,
                 };
             });
 
@@ -3089,19 +3155,19 @@ export const getWeakTopics = async (req, res) => {
         // struggling <40, atRisk 40-59, caution 60-74, onTrack >=75
         let struggling = 0, atRisk = 0, caution = 0, onTrack = 0;
         studentScoreAgg.forEach(s => {
-            if      (s.avgScore < 40) struggling++;
+            if (s.avgScore < 40) struggling++;
             else if (s.avgScore < 60) atRisk++;
             else if (s.avgScore < 75) caution++;
-            else                      onTrack++;
+            else onTrack++;
         });
 
         // Convert to percentages
         const heatmapTotal = struggling + atRisk + caution + onTrack || 1;
         const heatmap = {
             struggling: Math.round((struggling / heatmapTotal) * 100),
-            atRisk:     Math.round((atRisk     / heatmapTotal) * 100),
-            caution:    Math.round((caution    / heatmapTotal) * 100),
-            onTrack:    Math.round((onTrack    / heatmapTotal) * 100),
+            atRisk: Math.round((atRisk / heatmapTotal) * 100),
+            caution: Math.round((caution / heatmapTotal) * 100),
+            onTrack: Math.round((onTrack / heatmapTotal) * 100),
         };
 
         // ── Monthly trend data (last 3 months) ────────────────────────
@@ -3111,26 +3177,26 @@ export const getWeakTopics = async (req, res) => {
         const trendAgg = await QuizAttempt.aggregate([
             {
                 $match: {
-                    lessonId:  { $in: lessonIds },
+                    lessonId: { $in: lessonIds },
                     createdAt: { $gte: threeMonthsAgo },
                 },
             },
             {
                 $group: {
                     _id: {
-                        year:  { $year: '$createdAt' },
+                        year: { $year: '$createdAt' },
                         month: { $month: '$createdAt' },
                     },
-                    avgScore:      { $avg: '$score' },
+                    avgScore: { $avg: '$score' },
                     totalAttempts: { $sum: 1 },
                 },
             },
             { $sort: { '_id.year': 1, '_id.month': 1 } },
         ]);
 
-        const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-        const trendData  = trendAgg.map(t => ({
-            month:    monthNames[t._id.month - 1],
+        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const trendData = trendAgg.map(t => ({
+            month: monthNames[t._id.month - 1],
             avgScore: Math.round(t.avgScore),
             attempts: t.totalAttempts,
         }));
@@ -3149,16 +3215,16 @@ export const getWeakTopics = async (req, res) => {
 
         // ── Course list for filter ────────────────────────────────────
         const courseList = courses.map(c => {
-            const cId      = c._id.toString();
-            const enrl     = enrollmentMap[cId] || {};
-            const weakCount= weakTopics.filter(t => t.courseId === cId).length;
+            const cId = c._id.toString();
+            const enrl = enrollmentMap[cId] || {};
+            const weakCount = weakTopics.filter(t => t.courseId === cId).length;
             return {
-                _id:          c._id,
-                title:        c.title,
-                totalStudents:enrl.totalStudents || 0,
-                avgProgress:  Math.round(enrl.avgProgress || 0),
+                _id: c._id,
+                title: c.title,
+                totalStudents: enrl.totalStudents || 0,
+                avgProgress: Math.round(enrl.avgProgress || 0),
                 weakCount,
-                healthScore:  Math.max(0, 100 - weakCount * 12),
+                healthScore: Math.max(0, 100 - weakCount * 12),
             };
         });
 
@@ -3191,7 +3257,7 @@ Return ONLY valid JSON (no markdown):
 `.trim();
 
                 const raw = await callGroqAI(prompt);
-                const s   = raw.indexOf('{'), e = raw.lastIndexOf('}') + 1;
+                const s = raw.indexOf('{'), e = raw.lastIndexOf('}') + 1;
                 aiRecommendations = JSON.parse(raw.slice(s, e));
             } catch { /* non-critical */ }
         }
@@ -3208,11 +3274,11 @@ Return ONLY valid JSON (no markdown):
             trendData,
             aiRecommendations,
             overallStats: {
-                atRiskCount:    atRiskStudents.length,
+                atRiskCount: atRiskStudents.length,
                 avgScore,
                 weakTopicCount: weakTopics.length,
                 totalStudents,
-                criticalCount:  weakTopics.filter(t => t.severity === 'critical').length,
+                criticalCount: weakTopics.filter(t => t.severity === 'critical').length,
             },
         });
 
@@ -3236,24 +3302,24 @@ export const getStudyPlanStudents = async (req, res) => {
     try {
         const { courseId } = req.query;
 
-        const Tutor  = (await import('../models/Tutor.js')).default;
+        const Tutor = (await import('../models/Tutor.js')).default;
         const Course = (await import('../models/Course.js')).default;
-        const User   = (await import('../models/User.js')).default;
+        const User = (await import('../models/User.js')).default;
 
         const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id').lean();
         if (!tutor) return res.status(403).json({ success: false, message: 'Tutor profile not found' });
 
         const courseFilter = { tutorId: tutor._id };
         if (courseId) courseFilter._id = courseId;
-        const courses    = await Course.find(courseFilter).select('_id title').lean();
-        const courseIds  = courses.map(c => c._id);
+        const courses = await Course.find(courseFilter).select('_id title').lean();
+        const courseIds = courses.map(c => c._id);
 
         if (courseIds.length === 0) {
             return res.status(200).json({ success: true, students: [], courses: [] });
         }
 
         // Get lessons
-        const lessons   = await Lesson.find({ courseId: { $in: courseIds } }).select('_id courseId').lean();
+        const lessons = await Lesson.find({ courseId: { $in: courseIds } }).select('_id courseId').lean();
         const lessonIds = lessons.map(l => l._id);
 
         // Get all enrolled students
@@ -3266,11 +3332,11 @@ export const getStudyPlanStudents = async (req, res) => {
             { $match: { lessonId: { $in: lessonIds } } },
             {
                 $group: {
-                    _id:           '$studentId',
-                    avgScore:      { $avg: '$score' },
+                    _id: '$studentId',
+                    avgScore: { $avg: '$score' },
                     totalAttempts: { $sum: 1 },
-                    failedCount:   { $sum: { $cond: ['$isPassed', 0, 1] } },
-                    weakLessons:   { $addToSet: '$lessonId' },
+                    failedCount: { $sum: { $cond: ['$isPassed', 0, 1] } },
+                    weakLessons: { $addToSet: '$lessonId' },
                 },
             },
         ]);
@@ -3290,7 +3356,7 @@ export const getStudyPlanStudents = async (req, res) => {
             if (!student || seen.has(student._id?.toString())) continue;
             seen.add(student._id.toString());
 
-            const quiz     = quizMap[student._id.toString()];
+            const quiz = quizMap[student._id.toString()];
             const avgScore = quiz ? Math.round(quiz.avgScore) : null;
 
             // Get weak topic names for this student
@@ -3301,26 +3367,26 @@ export const getStudyPlanStudents = async (req, res) => {
 
             const riskLevel = !avgScore ? 'unknown'
                 : avgScore < 40 ? 'critical'
-                : avgScore < 60 ? 'high'
-                : avgScore < 75 ? 'medium'
-                : 'low';
+                    : avgScore < 60 ? 'high'
+                        : avgScore < 75 ? 'medium'
+                            : 'low';
 
             // Get course for this enrollment
             const enrolledCourse = courses.find(c => c._id.toString() === enrl.courseId?.toString());
 
             students.push({
-                _id:          student._id,
-                name:         student.name,
-                email:        student.email,
-                avatar:       student.profileImage || null,
+                _id: student._id,
+                name: student.name,
+                email: student.email,
+                avatar: student.profileImage || null,
                 avgScore,
                 riskLevel,
-                weakTopics:   weakTopicNames,
-                totalAttempts:quiz?.totalAttempts || 0,
-                failedCount:  quiz?.failedCount   || 0,
-                course:       enrolledCourse?.title || null,
-                courseId:     enrl.courseId,
-                progress:     enrl.progress?.percentage || 0,
+                weakTopics: weakTopicNames,
+                totalAttempts: quiz?.totalAttempts || 0,
+                failedCount: quiz?.failedCount || 0,
+                course: enrolledCourse?.title || null,
+                courseId: enrl.courseId,
+                progress: enrl.progress?.percentage || 0,
             });
         }
 
@@ -3347,21 +3413,21 @@ export const generateStudyPlan = async (req, res) => {
 
         const {
             studentId,
-            weakTopics   = [],
+            weakTopics = [],
             durationWeeks = 2,
-            hoursPerDay   = 2,
-            difficulty    = 'moderate',
+            hoursPerDay = 2,
+            difficulty = 'moderate',
             courseId,
         } = req.body;
 
         if (!studentId) return res.status(400).json({ success: false, message: 'studentId is required' });
         if (!weakTopics.length) return res.status(400).json({ success: false, message: 'At least one weak topic is required' });
 
-        const Tutor  = (await import('../models/Tutor.js')).default;
-        const User   = (await import('../models/User.js')).default;
+        const Tutor = (await import('../models/Tutor.js')).default;
+        const User = (await import('../models/User.js')).default;
         const StudyPlan = (await import('../models/StudyPlan.js')).default;
 
-        const tutor   = await Tutor.findOne({ userId: req.user._id }).select('_id').lean();
+        const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id').lean();
         if (!tutor) return res.status(403).json({ success: false, message: 'Tutor profile not found' });
 
         const student = await User.findById(studentId).select('name email instituteId').lean();
@@ -3377,7 +3443,7 @@ export const generateStudyPlan = async (req, res) => {
             } catch { /* optional */ }
         }
 
-        const totalDays   = durationWeeks * 7;
+        const totalDays = durationWeeks * 7;
         const weeklyHours = hoursPerDay * 7;
 
         // ── AI Prompt ─────────────────────────────────────────────────
@@ -3439,38 +3505,38 @@ Rules:
         }
 
         // ── Compute stats ─────────────────────────────────────────────
-        const weeklyPlan     = parsed.weeklyPlan || [];
+        const weeklyPlan = parsed.weeklyPlan || [];
         const totalStudyMins = weeklyPlan.reduce((s, d) => s + (d.totalMinutes || 0), 0);
-        const totalStudyHours= Math.round(totalStudyMins / 60 * 10) / 10;
-        const topicsCount    = weeklyPlan.reduce((s, d) => s + (d.topics?.length || 0), 0);
+        const totalStudyHours = Math.round(totalStudyMins / 60 * 10) / 10;
+        const topicsCount = weeklyPlan.reduce((s, d) => s + (d.topics?.length || 0), 0);
 
         // ── Save to DB ────────────────────────────────────────────────
         const plan = await StudyPlan.create({
-            tutorId:        tutor._id,
+            tutorId: tutor._id,
             studentId,
-            courseId:       courseId || null,
-            instituteId:    student.instituteId || null,
-            title:          parsed.title || `${student.name}'s Study Plan`,
-            studentName:    student.name,
+            courseId: courseId || null,
+            instituteId: student.instituteId || null,
+            title: parsed.title || `${student.name}'s Study Plan`,
+            studentName: student.name,
             weakTopics,
-            durationWeeks:  Number(durationWeeks),
-            hoursPerDay:    Number(hoursPerDay),
+            durationWeeks: Number(durationWeeks),
+            hoursPerDay: Number(hoursPerDay),
             difficulty,
-            goal:           parsed.goal        || '',
-            summary:        parsed.summary     || '',
-            keyMilestones:  parsed.keyMilestones || [],
+            goal: parsed.goal || '',
+            summary: parsed.summary || '',
+            keyMilestones: parsed.keyMilestones || [],
             estimatedScore: parsed.estimatedScore || null,
             weeklyPlan,
-            totalDays:      weeklyPlan.length,
+            totalDays: weeklyPlan.length,
             totalStudyHours,
             topicsCount,
-            status:         'active',
+            status: 'active',
         });
 
         // ── Log AI usage ──────────────────────────────────────────────
         logAIUsage(req.user._id, 'analytics', {
-            type:      'study_plan',
-            planId:    plan._id,
+            type: 'study_plan',
+            planId: plan._id,
             studentId,
             weakTopics,
         });
@@ -3478,22 +3544,22 @@ Rules:
         res.status(200).json({
             success: true,
             plan: {
-                _id:            plan._id,
-                title:          plan.title,
-                studentName:    plan.studentName,
-                goal:           plan.goal,
-                summary:        plan.summary,
-                keyMilestones:  plan.keyMilestones,
+                _id: plan._id,
+                title: plan.title,
+                studentName: plan.studentName,
+                goal: plan.goal,
+                summary: plan.summary,
+                keyMilestones: plan.keyMilestones,
                 estimatedScore: plan.estimatedScore,
-                weeklyPlan:     plan.weeklyPlan,
-                totalDays:      plan.totalDays,
-                totalStudyHours:plan.totalStudyHours,
-                topicsCount:    plan.topicsCount,
-                durationWeeks:  plan.durationWeeks,
-                hoursPerDay:    plan.hoursPerDay,
-                difficulty:     plan.difficulty,
-                weakTopics:     plan.weakTopics,
-                createdAt:      plan.createdAt,
+                weeklyPlan: plan.weeklyPlan,
+                totalDays: plan.totalDays,
+                totalStudyHours: plan.totalStudyHours,
+                topicsCount: plan.topicsCount,
+                durationWeeks: plan.durationWeeks,
+                hoursPerDay: plan.hoursPerDay,
+                difficulty: plan.difficulty,
+                weakTopics: plan.weakTopics,
+                createdAt: plan.createdAt,
             },
         });
 
@@ -3511,7 +3577,7 @@ export const getStudyPlans = async (req, res) => {
     try {
         const { page = 1, limit = 10, studentId, status } = req.query;
 
-        const Tutor     = (await import('../models/Tutor.js')).default;
+        const Tutor = (await import('../models/Tutor.js')).default;
         const StudyPlan = (await import('../models/StudyPlan.js')).default;
 
         const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id').lean();
@@ -3519,9 +3585,9 @@ export const getStudyPlans = async (req, res) => {
 
         const filter = { tutorId: tutor._id };
         if (studentId) filter.studentId = studentId;
-        if (status)    filter.status    = status;
+        if (status) filter.status = status;
 
-        const skip  = (Number(page) - 1) * Number(limit);
+        const skip = (Number(page) - 1) * Number(limit);
         const total = await StudyPlan.countDocuments(filter);
 
         const plans = await StudyPlan.find(filter)
@@ -3529,32 +3595,32 @@ export const getStudyPlans = async (req, res) => {
             .skip(skip)
             .limit(Number(limit))
             .populate('studentId', 'name profileImage email')
-            .populate('courseId',  'title')
+            .populate('courseId', 'title')
             .select('-weeklyPlan') // exclude heavy field from list
             .lean();
 
         const formatted = plans.map(p => {
-            const diffMs  = Date.now() - new Date(p.createdAt).getTime();
+            const diffMs = Date.now() - new Date(p.createdAt).getTime();
             const diffMin = Math.floor(diffMs / 60000);
-            const timeAgo = diffMin < 1     ? 'Just now'
-                : diffMin < 60    ? `${diffMin}m ago`
-                : diffMin < 1440  ? `${Math.floor(diffMin / 60)}h ago`
-                : diffMin < 10080 ? `${Math.floor(diffMin / 1440)}d ago`
-                : new Date(p.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+            const timeAgo = diffMin < 1 ? 'Just now'
+                : diffMin < 60 ? `${diffMin}m ago`
+                    : diffMin < 1440 ? `${Math.floor(diffMin / 60)}h ago`
+                        : diffMin < 10080 ? `${Math.floor(diffMin / 1440)}d ago`
+                            : new Date(p.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
 
             return {
                 ...p,
                 timeAgo,
-                studentName:  p.studentId?.name         || p.studentName || 'Student',
-                studentAvatar:p.studentId?.profileImage || null,
-                course:       p.courseId?.title         || null,
+                studentName: p.studentId?.name || p.studentName || 'Student',
+                studentAvatar: p.studentId?.profileImage || null,
+                course: p.courseId?.title || null,
             };
         });
 
         res.status(200).json({
             success: true,
             total,
-            page:  Number(page),
+            page: Number(page),
             pages: Math.ceil(total / Number(limit)),
             plans: formatted,
         });
@@ -3571,7 +3637,7 @@ export const getStudyPlans = async (req, res) => {
 // @access  Private (tutor)
 export const getStudyPlanById = async (req, res) => {
     try {
-        const Tutor     = (await import('../models/Tutor.js')).default;
+        const Tutor = (await import('../models/Tutor.js')).default;
         const StudyPlan = (await import('../models/StudyPlan.js')).default;
 
         const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id').lean();
@@ -3579,7 +3645,7 @@ export const getStudyPlanById = async (req, res) => {
 
         const plan = await StudyPlan.findOne({ _id: req.params.id, tutorId: tutor._id })
             .populate('studentId', 'name profileImage email')
-            .populate('courseId',  'title')
+            .populate('courseId', 'title')
             .lean();
 
         if (!plan) return res.status(404).json({ success: false, message: 'Study plan not found' });
@@ -3596,7 +3662,7 @@ export const getStudyPlanById = async (req, res) => {
 // @access  Private (tutor)
 export const deleteStudyPlan = async (req, res) => {
     try {
-        const Tutor     = (await import('../models/Tutor.js')).default;
+        const Tutor = (await import('../models/Tutor.js')).default;
         const StudyPlan = (await import('../models/StudyPlan.js')).default;
 
         const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id').lean();
@@ -3626,16 +3692,16 @@ export const getRiskPrediction = async (req, res) => {
     try {
         const { courseId, limit = 30 } = req.query;
 
-        const Tutor  = (await import('../models/Tutor.js')).default;
+        const Tutor = (await import('../models/Tutor.js')).default;
         const Course = (await import('../models/Course.js')).default;
-        const User   = (await import('../models/User.js')).default;
+        const User = (await import('../models/User.js')).default;
 
         const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id').lean();
         if (!tutor) return res.status(403).json({ success: false, message: 'Tutor profile not found' });
 
         const courseFilter = { tutorId: tutor._id };
         if (courseId) courseFilter._id = courseId;
-        const courses   = await Course.find(courseFilter).select('_id title').lean();
+        const courses = await Course.find(courseFilter).select('_id title').lean();
         const courseIds = courses.map(c => c._id);
 
         if (courseIds.length === 0) {
@@ -3652,7 +3718,7 @@ export const getRiskPrediction = async (req, res) => {
         }
 
         // ── Lessons for these courses ─────────────────────────────────
-        const lessons   = await Lesson.find({ courseId: { $in: courseIds } }).select('_id title courseId').lean();
+        const lessons = await Lesson.find({ courseId: { $in: courseIds } }).select('_id title courseId').lean();
         const lessonIds = lessons.map(l => l._id);
         const lessonMap = lessons.reduce((m, l) => { m[l._id.toString()] = l; return m; }, {});
 
@@ -3685,13 +3751,13 @@ export const getRiskPrediction = async (req, res) => {
             { $match: { lessonId: { $in: lessonIds }, studentId: { $in: allStudentIds } } },
             {
                 $group: {
-                    _id:           '$studentId',
-                    avgScore:      { $avg: '$score' },
+                    _id: '$studentId',
+                    avgScore: { $avg: '$score' },
                     totalAttempts: { $sum: 1 },
-                    failedCount:   { $sum: { $cond: ['$isPassed', 0, 1] } },
-                    passedCount:   { $sum: { $cond: ['$isPassed', 1, 0] } },
-                    weakLessons:   { $addToSet: { $cond: [{ $eq: ['$isPassed', false] }, '$lessonId', null] } },
-                    lastAttempt:   { $max: '$createdAt' },
+                    failedCount: { $sum: { $cond: ['$isPassed', 0, 1] } },
+                    passedCount: { $sum: { $cond: ['$isPassed', 1, 0] } },
+                    weakLessons: { $addToSet: { $cond: [{ $eq: ['$isPassed', false] }, '$lessonId', null] } },
+                    lastAttempt: { $max: '$createdAt' },
                 },
             },
         ]);
@@ -3707,10 +3773,10 @@ export const getRiskPrediction = async (req, res) => {
             { $match: { assignmentId: { $in: assignmentIds }, studentId: { $in: allStudentIds } } },
             {
                 $group: {
-                    _id:           '$studentId',
-                    totalSubmitted:{ $sum: 1 },
-                    avgGrade:      { $avg: { $cond: [{ $eq: ['$status', 'graded'] }, '$grade', null] } },
-                    lateCount:     { $sum: { $cond: [{ $gt: ['$submittedAt', '$createdAt'] }, 1, 0] } },
+                    _id: '$studentId',
+                    totalSubmitted: { $sum: 1 },
+                    avgGrade: { $avg: { $cond: [{ $eq: ['$status', 'graded'] }, '$grade', null] } },
+                    lateCount: { $sum: { $cond: [{ $gt: ['$submittedAt', '$createdAt'] }, 1, 0] } },
                     ungradedCount: { $sum: { $cond: [{ $eq: ['$status', 'submitted'] }, 1, 0] } },
                 },
             },
@@ -3728,15 +3794,15 @@ export const getRiskPrediction = async (req, res) => {
         const totalAssignments = assignmentIds.length || 1;
 
         const students = allStudentIds.map(sId => {
-            const sid      = sId.toString();
-            const user     = userMap[sid];
-            const quiz     = quizMap[sid];
-            const sub      = submissionMap[sid];
-            const enrls    = enrollMap[sid] || [];
+            const sid = sId.toString();
+            const user = userMap[sid];
+            const quiz = quizMap[sid];
+            const sub = submissionMap[sid];
+            const enrls = enrollMap[sid] || [];
 
             // Quiz metrics
-            const avgScore    = quiz ? Math.round(quiz.avgScore)   : 0;
-            const passRate    = quiz ? Math.round((quiz.passedCount / quiz.totalAttempts) * 100) : 0;
+            const avgScore = quiz ? Math.round(quiz.avgScore) : 0;
+            const passRate = quiz ? Math.round((quiz.passedCount / quiz.totalAttempts) * 100) : 0;
             const quizEngaged = !!quiz;
 
             // Progress metrics
@@ -3746,44 +3812,44 @@ export const getRiskPrediction = async (req, res) => {
 
             // Submission metrics
             const submissionRate = sub ? Math.round((sub.totalSubmitted / totalAssignments) * 100) : 0;
-            const avgGrade       = sub?.avgGrade ? Math.round(sub.avgGrade) : null;
+            const avgGrade = sub?.avgGrade ? Math.round(sub.avgGrade) : null;
 
             // ── Risk score calculation (0-100) ────────────────────────
             // Low quiz score → high risk
-            const quizRiskComponent       = quizEngaged ? Math.max(0, 100 - avgScore)        : 70;
-            const passRateRiskComponent   = quizEngaged ? Math.max(0, 100 - passRate)        : 60;
-            const progressRiskComponent   = Math.max(0, 100 - avgProgress);
+            const quizRiskComponent = quizEngaged ? Math.max(0, 100 - avgScore) : 70;
+            const passRateRiskComponent = quizEngaged ? Math.max(0, 100 - passRate) : 60;
+            const progressRiskComponent = Math.max(0, 100 - avgProgress);
             const submissionRiskComponent = Math.max(0, 100 - Math.min(submissionRate, 100));
 
             const riskScore = Math.round(
-                quizRiskComponent       * 0.35 +
-                passRateRiskComponent   * 0.25 +
-                progressRiskComponent   * 0.20 +
+                quizRiskComponent * 0.35 +
+                passRateRiskComponent * 0.25 +
+                progressRiskComponent * 0.20 +
                 submissionRiskComponent * 0.20
             );
 
             // ── Risk level ────────────────────────────────────────────
             const riskLevel = riskScore >= 65 ? 'high'
                 : riskScore >= 40 ? 'medium'
-                : 'low';
+                    : 'low';
 
             // ── Dropout risk % ────────────────────────────────────────
             // Based on: low progress + low quiz engagement + low submission
             let dropoutScore = 0;
-            if (avgProgress < 20)      dropoutScore += 30;
-            if (!quizEngaged)          dropoutScore += 25;
-            if (submissionRate < 30)   dropoutScore += 25;
-            if (avgScore < 40)         dropoutScore += 20;
+            if (avgProgress < 20) dropoutScore += 30;
+            if (!quizEngaged) dropoutScore += 25;
+            if (submissionRate < 30) dropoutScore += 25;
+            if (avgScore < 40) dropoutScore += 20;
             const dropoutRisk = Math.min(100, dropoutScore);
 
             // ── Key risk factors ──────────────────────────────────────
             const keyFactors = [];
-            if (avgScore < 60 && quizEngaged)        keyFactors.push('Low Grades');
-            if (passRate < 50 && quizEngaged)        keyFactors.push('Low Pass Rate');
-            if (!quizEngaged)                        keyFactors.push('No Quiz Attempts');
-            if (avgProgress < 40)                    keyFactors.push('Low Engagement');
-            if (submissionRate < 50)                 keyFactors.push('Missing Assignments');
-            if (avgGrade != null && avgGrade < 50)   keyFactors.push('Poor Assignment Grades');
+            if (avgScore < 60 && quizEngaged) keyFactors.push('Low Grades');
+            if (passRate < 50 && quizEngaged) keyFactors.push('Low Pass Rate');
+            if (!quizEngaged) keyFactors.push('No Quiz Attempts');
+            if (avgProgress < 40) keyFactors.push('Low Engagement');
+            if (submissionRate < 50) keyFactors.push('Missing Assignments');
+            if (avgGrade != null && avgGrade < 50) keyFactors.push('Poor Assignment Grades');
 
             // Weak topics
             const weakTopicNames = (quiz?.weakLessons || [])
@@ -3796,65 +3862,65 @@ export const getRiskPrediction = async (req, res) => {
 
             // Course name
             const primaryEnrollment = enrls[0];
-            const primaryCourse     = courses.find(c => c._id.toString() === primaryEnrollment?.courseId?.toString());
+            const primaryCourse = courses.find(c => c._id.toString() === primaryEnrollment?.courseId?.toString());
 
             return {
-                studentId:      sId,
-                name:           user?.name         || 'Unknown Student',
-                email:          user?.email        || '',
-                avatar:         user?.profileImage || null,
+                studentId: sId,
+                name: user?.name || 'Unknown Student',
+                email: user?.email || '',
+                avatar: user?.profileImage || null,
                 riskScore,
                 riskLevel,
                 dropoutRisk,
-                avgScore:       quizEngaged ? avgScore : null,
-                passRate:       quizEngaged ? passRate : null,
+                avgScore: quizEngaged ? avgScore : null,
+                passRate: quizEngaged ? passRate : null,
                 avgProgress,
                 submissionRate,
                 avgGrade,
-                keyFactors:     keyFactors.slice(0, 4),
-                weakTopics:     weakTopicNames,
+                keyFactors: keyFactors.slice(0, 4),
+                weakTopics: weakTopicNames,
                 quizEngaged,
-                course:         primaryCourse?.title || null,
-                courseId:       primaryEnrollment?.courseId || null,
-                totalAttempts:  quiz?.totalAttempts || 0,
+                course: primaryCourse?.title || null,
+                courseId: primaryEnrollment?.courseId || null,
+                totalAttempts: quiz?.totalAttempts || 0,
             };
         })
-        .filter(s => !!userMap[s.studentId.toString()]) // only known users
-        .sort((a, b) => b.riskScore - a.riskScore)
-        .slice(0, Number(limit));
+            .filter(s => !!userMap[s.studentId.toString()]) // only known users
+            .sort((a, b) => b.riskScore - a.riskScore)
+            .slice(0, Number(limit));
 
         // ── Risk summary ──────────────────────────────────────────────
-        const highCount   = students.filter(s => s.riskLevel === 'high').length;
+        const highCount = students.filter(s => s.riskLevel === 'high').length;
         const mediumCount = students.filter(s => s.riskLevel === 'medium').length;
-        const lowCount    = students.filter(s => s.riskLevel === 'low').length;
-        const total       = students.length;
+        const lowCount = students.filter(s => s.riskLevel === 'low').length;
+        const total = students.length;
 
         const riskSummary = {
-            high:   highCount,
+            high: highCount,
             medium: mediumCount,
-            low:    lowCount,
+            low: lowCount,
             total,
-            highPct:   total > 0 ? Math.round((highCount   / total) * 100) : 0,
+            highPct: total > 0 ? Math.round((highCount / total) * 100) : 0,
             mediumPct: total > 0 ? Math.round((mediumCount / total) * 100) : 0,
-            lowPct:    total > 0 ? Math.round((lowCount    / total) * 100) : 0,
+            lowPct: total > 0 ? Math.round((lowCount / total) * 100) : 0,
         };
 
         // ── Heatmap ───────────────────────────────────────────────────
         const struggling = students.filter(s => s.riskScore >= 75).length;
-        const atRisk     = students.filter(s => s.riskScore >= 55 && s.riskScore < 75).length;
-        const caution    = students.filter(s => s.riskScore >= 35 && s.riskScore < 55).length;
-        const onTrack    = students.filter(s => s.riskScore < 35).length;
-        const hmTotal    = total || 1;
+        const atRisk = students.filter(s => s.riskScore >= 55 && s.riskScore < 75).length;
+        const caution = students.filter(s => s.riskScore >= 35 && s.riskScore < 55).length;
+        const onTrack = students.filter(s => s.riskScore < 35).length;
+        const hmTotal = total || 1;
 
         const heatmap = {
             struggling: Math.round((struggling / hmTotal) * 100),
-            atRisk:     Math.round((atRisk     / hmTotal) * 100),
-            caution:    Math.round((caution    / hmTotal) * 100),
-            onTrack:    Math.round((onTrack    / hmTotal) * 100),
+            atRisk: Math.round((atRisk / hmTotal) * 100),
+            caution: Math.round((caution / hmTotal) * 100),
+            onTrack: Math.round((onTrack / hmTotal) * 100),
             strugglingCount: struggling,
-            atRiskCount:     atRisk,
-            cautionCount:    caution,
-            onTrackCount:    onTrack,
+            atRiskCount: atRisk,
+            cautionCount: caution,
+            onTrackCount: onTrack,
         };
 
         // ── Overall dropout prediction ────────────────────────────────
@@ -3889,14 +3955,14 @@ export const getRiskPrediction = async (req, res) => {
                 }
 
                 return {
-                    studentId:  s.studentId,
-                    name:       s.name,
-                    avatar:     s.avatar,
-                    riskLevel:  s.riskLevel,
-                    riskScore:  s.riskScore,
+                    studentId: s.studentId,
+                    name: s.name,
+                    avatar: s.avatar,
+                    riskLevel: s.riskLevel,
+                    riskScore: s.riskScore,
                     message,
                     subText,
-                    extraTag:   s.keyFactors[1] || null,
+                    extraTag: s.keyFactors[1] || null,
                 };
             });
 
@@ -3920,16 +3986,16 @@ Return ONLY valid JSON array (no markdown):
 `.trim();
 
                 const raw = await callGroqAI(prompt);
-                const s   = raw.indexOf('['), e = raw.lastIndexOf(']') + 1;
+                const s = raw.indexOf('['), e = raw.lastIndexOf(']') + 1;
                 aiRecommendations = JSON.parse(raw.slice(s, e)).slice(0, 6);
             } catch { /* non-critical */ }
         }
 
         // ── Log ───────────────────────────────────────────────────────
         logAIUsage(req.user._id, 'analytics', {
-            type:      'risk_predictor',
-            total:     students.length,
-            highRisk:  highCount,
+            type: 'risk_predictor',
+            total: students.length,
+            highRisk: highCount,
         });
 
         res.status(200).json({
@@ -3966,24 +4032,24 @@ async function computeStudentRisk(studentId, courseIds) {
     ]);
 
     // ── Signals ───────────────────────────────────────────────────
-    const avgProgress    = enrollment.length
+    const avgProgress = enrollment.length
         ? enrollment.reduce((s, e) => s + (e.progress?.percentage || 0), 0) / enrollment.length
         : 0;
 
-    const avgQuizScore   = quizAttempts.length
+    const avgQuizScore = quizAttempts.length
         ? quizAttempts.reduce((s, q) => s + (q.score || 0), 0) / quizAttempts.length
         : 100;
 
-    const failedQuizzes  = quizAttempts.filter(q => q.score < 50).length;
-    const gradedSubs     = submissions.filter(s => s.status === 'graded');
-    const avgGrade       = gradedSubs.length
+    const failedQuizzes = quizAttempts.filter(q => q.score < 50).length;
+    const gradedSubs = submissions.filter(s => s.status === 'graded');
+    const avgGrade = gradedSubs.length
         ? gradedSubs.reduce((s, sub) => s + ((sub.grade / (sub.totalMarks || 100)) * 100), 0) / gradedSubs.length
         : 100;
-    const missedSubs     = submissions.filter(s => s.status === 'submitted' && !s.grade).length;
+    const missedSubs = submissions.filter(s => s.status === 'submitted' && !s.grade).length;
 
     // ── Risk score (0–100, higher = more at risk) ─────────────────
     let score = 0;
-    if (avgProgress < 20)  score += 30;
+    if (avgProgress < 20) score += 30;
     else if (avgProgress < 50) score += 15;
 
     if (avgQuizScore < 40) score += 30;
@@ -4001,10 +4067,10 @@ async function computeStudentRisk(studentId, courseIds) {
 
     // ── Causes ────────────────────────────────────────────────────
     const causes = [];
-    if (avgQuizScore < 60)  causes.push('Weak Grades');
-    if (avgProgress  < 40)  causes.push('Poor Attendance');
+    if (avgQuizScore < 60) causes.push('Weak Grades');
+    if (avgProgress < 40) causes.push('Poor Attendance');
     if (failedQuizzes >= 2) causes.push('Weak Topics');
-    if (missedSubs   >= 2)  causes.push('Demotivation');
+    if (missedSubs >= 2) causes.push('Demotivation');
 
     return { score, riskLevel, avgProgress, avgQuizScore, avgGrade, failedQuizzes, missedSubs, causes };
 }
@@ -4015,16 +4081,16 @@ async function computeStudentRisk(studentId, courseIds) {
 // @access  Private (tutor)
 export const getDropoutRiskAnalysis = async (req, res) => {
     try {
-        const Tutor      = (await import('../models/Tutor.js')).default;
-        const Course     = (await import('../models/Course.js')).default;
+        const Tutor = (await import('../models/Tutor.js')).default;
+        const Course = (await import('../models/Course.js')).default;
         const Enrollment = (await import('../models/Enrollment.js')).default;
-        const User       = (await import('../models/User.js')).default;
+        const User = (await import('../models/User.js')).default;
 
         const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id').lean();
         if (!tutor) return res.status(403).json({ success: false, message: 'Tutor profile not found' });
 
         // Tutor's courses
-        const courses   = await Course.find({ tutorId: tutor._id, status: 'published' }).select('_id title').lean();
+        const courses = await Course.find({ tutorId: tutor._id, status: 'published' }).select('_id title').lean();
         const courseIds = courses.map(c => c._id);
 
         if (courseIds.length === 0) {
@@ -4050,18 +4116,18 @@ export const getDropoutRiskAnalysis = async (req, res) => {
             students.slice(0, 50).map(async (student) => {
                 const risk = await computeStudentRisk(student._id, courseIds);
                 return {
-                    _id:          student._id,
-                    name:         student.name || 'Student',
-                    email:        student.email || '',
-                    avatar:       student.avatar || null,
-                    riskLevel:    risk.riskLevel,
-                    riskScore:    risk.score,
-                    avgProgress:  Math.round(risk.avgProgress),
+                    _id: student._id,
+                    name: student.name || 'Student',
+                    email: student.email || '',
+                    avatar: student.avatar || null,
+                    riskLevel: risk.riskLevel,
+                    riskScore: risk.score,
+                    avgProgress: Math.round(risk.avgProgress),
                     avgQuizScore: Math.round(risk.avgQuizScore),
-                    avgGrade:     Math.round(risk.avgGrade),
-                    failedQuizzes:risk.failedQuizzes,
-                    missedSubs:   risk.missedSubs,
-                    causes:       risk.causes,
+                    avgGrade: Math.round(risk.avgGrade),
+                    failedQuizzes: risk.failedQuizzes,
+                    missedSubs: risk.missedSubs,
+                    causes: risk.causes,
                 };
             })
         );
@@ -4070,10 +4136,10 @@ export const getDropoutRiskAnalysis = async (req, res) => {
         results.sort((a, b) => b.riskScore - a.riskScore);
 
         // ── Overview counts ───────────────────────────────────────
-        const high   = results.filter(s => s.riskLevel === 'High').length;
+        const high = results.filter(s => s.riskLevel === 'High').length;
         const medium = results.filter(s => s.riskLevel === 'Medium').length;
-        const low    = results.filter(s => s.riskLevel === 'Low').length;
-        const total  = results.length;
+        const low = results.filter(s => s.riskLevel === 'Low').length;
+        const total = results.length;
 
         // ── Causes breakdown (aggregate across all students) ──────
         const causeCount = {};
@@ -4089,36 +4155,36 @@ export const getDropoutRiskAnalysis = async (req, res) => {
             const detail = mainCause === 'Weak Grades'
                 ? `scored ${s.avgQuizScore}% in recent quizzes`
                 : mainCause === 'Poor Attendance'
-                ? `progress only ${s.avgProgress}% complete`
-                : mainCause === 'Weak Topics'
-                ? `failed ${s.failedQuizzes} quizzes`
-                : `missed ${s.missedSubs} submissions`;
+                    ? `progress only ${s.avgProgress}% complete`
+                    : mainCause === 'Weak Topics'
+                        ? `failed ${s.failedQuizzes} quizzes`
+                        : `missed ${s.missedSubs} submissions`;
             return {
-                studentId:   s._id,
-                name:        s.name,
-                avatar:      s.avatar,
-                riskLevel:   s.riskLevel,
+                studentId: s._id,
+                name: s.name,
+                avatar: s.avatar,
+                riskLevel: s.riskLevel,
                 mainCause,
                 detail,
-                timeAgo:     'Recently',
+                timeAgo: 'Recently',
             };
         });
 
         // ── AI-generated action plans ─────────────────────────────
         const highRiskNames = results.filter(s => s.riskLevel === 'High').slice(0, 3).map(s => s.name);
         let actionPlans = [
-            { action: 'Alert Parents of all At-Risk Students', priority: 'high',   count: high + medium },
-            { action: 'Schedule Remedial Classes for Weak Grades & Topics',        priority: 'high',   count: high },
-            { action: 'Assign Study Plans to Improve Grades',                      priority: 'medium', count: medium },
-            { action: 'Offer Counseling Sessions for Demotivated Students',        priority: 'low',    count: low },
+            { action: 'Alert Parents of all At-Risk Students', priority: 'high', count: high + medium },
+            { action: 'Schedule Remedial Classes for Weak Grades & Topics', priority: 'high', count: high },
+            { action: 'Assign Study Plans to Improve Grades', priority: 'medium', count: medium },
+            { action: 'Offer Counseling Sessions for Demotivated Students', priority: 'low', count: low },
         ];
 
         // ── Weekly trend (mock based on real data — last 3 weeks) ─
         // In production, store weekly snapshots; here we approximate
         const trend = [
-            { week: '1week ago',  total: Math.max(0, total - 5), high: Math.max(0, high - 2), medium: Math.max(0, medium - 1) },
+            { week: '1week ago', total: Math.max(0, total - 5), high: Math.max(0, high - 2), medium: Math.max(0, medium - 1) },
             { week: '2weeks ago', total: Math.max(0, total - 2), high: Math.max(0, high - 1), medium },
-            { week: 'This week',  total, high, medium },
+            { week: 'This week', total, high, medium },
         ];
 
         // Log usage
@@ -4128,16 +4194,16 @@ export const getDropoutRiskAnalysis = async (req, res) => {
             success: true,
             overview: {
                 high, medium, low, total,
-                highPct:   total ? Math.round((high   / total) * 100) : 0,
+                highPct: total ? Math.round((high / total) * 100) : 0,
                 mediumPct: total ? Math.round((medium / total) * 100) : 0,
-                lowPct:    total ? Math.round((low    / total) * 100) : 0,
+                lowPct: total ? Math.round((low / total) * 100) : 0,
             },
-            students:        results,
+            students: results,
             causesBreakdown,
             alerts,
             actionPlans,
             trend,
-            courses:         courses.map(c => ({ _id: c._id, title: c.title })),
+            courses: courses.map(c => ({ _id: c._id, title: c.title })),
         });
 
     } catch (error) {
@@ -4152,14 +4218,14 @@ export const getDropoutRiskAnalysis = async (req, res) => {
 // @access  Private (tutor)
 export const getStudentDropoutRisk = async (req, res) => {
     try {
-        const Tutor      = (await import('../models/Tutor.js')).default;
-        const Course     = (await import('../models/Course.js')).default;
-        const User       = (await import('../models/User.js')).default;
+        const Tutor = (await import('../models/Tutor.js')).default;
+        const Course = (await import('../models/Course.js')).default;
+        const User = (await import('../models/User.js')).default;
 
         const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id').lean();
         if (!tutor) return res.status(403).json({ success: false, message: 'Tutor profile not found' });
 
-        const courses   = await Course.find({ tutorId: tutor._id }).select('_id title').lean();
+        const courses = await Course.find({ tutorId: tutor._id }).select('_id title').lean();
         const courseIds = courses.map(c => c._id);
 
         const student = await User.findById(req.params.studentId).select('name email avatar').lean();
@@ -4187,17 +4253,17 @@ Write a 2-3 sentence personalized recommendation for the tutor on how to help th
         res.status(200).json({
             success: true,
             student: {
-                _id:    student._id,
-                name:   student.name,
-                email:  student.email,
+                _id: student._id,
+                name: student.name,
+                email: student.email,
                 avatar: student.avatar,
             },
             risk: {
                 ...risk,
-                riskScore:    risk.score,
-                avgProgress:  Math.round(risk.avgProgress),
+                riskScore: risk.score,
+                avgProgress: Math.round(risk.avgProgress),
                 avgQuizScore: Math.round(risk.avgQuizScore),
-                avgGrade:     Math.round(risk.avgGrade),
+                avgGrade: Math.round(risk.avgGrade),
             },
             recommendation,
         });
@@ -4233,7 +4299,7 @@ export const getStudentSharedNotes = async (req, res) => {
         const filter = { 'sharedToCourses.courseId': { $in: enrolledCourseIds } };
         if (courseId) filter['sharedToCourses.courseId'] = courseId;
 
-        const skip  = (Number(page) - 1) * Number(limit);
+        const skip = (Number(page) - 1) * Number(limit);
         const total = await SimplifiedNote.countDocuments(filter);
 
         const notes = await SimplifiedNote.find(filter)
@@ -4246,13 +4312,13 @@ export const getStudentSharedNotes = async (req, res) => {
             .lean();
 
         const formatted = notes.map(n => {
-            const diffMs  = Date.now() - new Date(n.createdAt).getTime();
+            const diffMs = Date.now() - new Date(n.createdAt).getTime();
             const diffMin = Math.floor(diffMs / 60000);
-            const timeAgo = diffMin < 1     ? 'Just now'
-                : diffMin < 60    ? `${diffMin}m ago`
-                : diffMin < 1440  ? `${Math.floor(diffMin / 60)}h ago`
-                : diffMin < 10080 ? `${Math.floor(diffMin / 1440)}d ago`
-                : new Date(n.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+            const timeAgo = diffMin < 1 ? 'Just now'
+                : diffMin < 60 ? `${diffMin}m ago`
+                    : diffMin < 1440 ? `${Math.floor(diffMin / 60)}h ago`
+                        : diffMin < 10080 ? `${Math.floor(diffMin / 1440)}d ago`
+                            : new Date(n.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
 
             return {
                 _id: n._id,
@@ -4298,7 +4364,7 @@ export const getStudentLectureSummaries = async (req, res) => {
         const filter = { courseId: { $in: enrolledCourseIds }, status: 'ready' };
         if (courseId) filter.courseId = courseId;
 
-        const skip  = (Number(page) - 1) * Number(limit);
+        const skip = (Number(page) - 1) * Number(limit);
         const total = await LectureSummary.countDocuments(filter);
 
         const records = await LectureSummary.find(filter)
@@ -4312,13 +4378,13 @@ export const getStudentLectureSummaries = async (req, res) => {
             .lean();
 
         const formatted = records.map(r => {
-            const diffMs  = Date.now() - new Date(r.createdAt).getTime();
+            const diffMs = Date.now() - new Date(r.createdAt).getTime();
             const diffMin = Math.floor(diffMs / 60000);
-            const timeAgo = diffMin < 1     ? 'Just now'
-                : diffMin < 60    ? `${diffMin}m ago`
-                : diffMin < 1440  ? `${Math.floor(diffMin / 60)}h ago`
-                : diffMin < 10080 ? `${Math.floor(diffMin / 1440)}d ago`
-                : new Date(r.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+            const timeAgo = diffMin < 1 ? 'Just now'
+                : diffMin < 60 ? `${diffMin}m ago`
+                    : diffMin < 1440 ? `${Math.floor(diffMin / 60)}h ago`
+                        : diffMin < 10080 ? `${Math.floor(diffMin / 1440)}d ago`
+                            : new Date(r.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
 
             return {
                 ...r,
@@ -4372,8 +4438,8 @@ export const getMyStudyPlans = async (req, res) => {
         const StudyPlan = (await import('../models/StudyPlan.js')).default;
 
         const filter = { studentId: req.user._id };
-        const skip   = (Number(page) - 1) * Number(limit);
-        const total  = await StudyPlan.countDocuments(filter);
+        const skip = (Number(page) - 1) * Number(limit);
+        const total = await StudyPlan.countDocuments(filter);
 
         const plans = await StudyPlan.find(filter)
             .sort({ createdAt: -1 })
@@ -4392,13 +4458,13 @@ export const getMyStudyPlans = async (req, res) => {
                 tutorName = tutorUser?.name || 'Tutor';
             }
 
-            const diffMs  = Date.now() - new Date(p.createdAt).getTime();
+            const diffMs = Date.now() - new Date(p.createdAt).getTime();
             const diffMin = Math.floor(diffMs / 60000);
-            const timeAgo = diffMin < 1     ? 'Just now'
-                : diffMin < 60    ? `${diffMin}m ago`
-                : diffMin < 1440  ? `${Math.floor(diffMin / 60)}h ago`
-                : diffMin < 10080 ? `${Math.floor(diffMin / 1440)}d ago`
-                : new Date(p.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+            const timeAgo = diffMin < 1 ? 'Just now'
+                : diffMin < 60 ? `${diffMin}m ago`
+                    : diffMin < 1440 ? `${Math.floor(diffMin / 60)}h ago`
+                        : diffMin < 10080 ? `${Math.floor(diffMin / 1440)}d ago`
+                            : new Date(p.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
 
             return {
                 _id: p._id,
@@ -4460,14 +4526,14 @@ export const getStudentWeakTopics = async (req, res) => {
             { $match: { studentId: req.user._id, lessonId: { $in: lessonIds } } },
             {
                 $group: {
-                    _id:           '$lessonId',
-                    avgScore:      { $avg: '$score' },
+                    _id: '$lessonId',
+                    avgScore: { $avg: '$score' },
                     totalAttempts: { $sum: 1 },
-                    passedCount:   { $sum: { $cond: ['$isPassed', 1, 0] } },
-                    failedCount:   { $sum: { $cond: ['$isPassed', 0, 1] } },
-                    minScore:      { $min: '$score' },
-                    maxScore:      { $max: '$score' },
-                    lastAttempt:   { $max: '$createdAt' },
+                    passedCount: { $sum: { $cond: ['$isPassed', 1, 0] } },
+                    failedCount: { $sum: { $cond: ['$isPassed', 0, 1] } },
+                    minScore: { $min: '$score' },
+                    maxScore: { $max: '$score' },
+                    lastAttempt: { $max: '$createdAt' },
                 },
             },
             { $sort: { avgScore: 1 } },
@@ -4476,31 +4542,31 @@ export const getStudentWeakTopics = async (req, res) => {
         const weakTopics = quizAgg
             .filter(q => q.avgScore < 75)
             .map(q => {
-                const lesson   = lessonMap[q._id.toString()];
-                const cId      = lesson?.courseId?.toString();
-                const course   = courseMap[cId];
+                const lesson = lessonMap[q._id.toString()];
+                const cId = lesson?.courseId?.toString();
+                const course = courseMap[cId];
                 const avgScore = Math.round(q.avgScore);
                 const severity = avgScore < 40 ? 'critical' : avgScore < 60 ? 'warning' : 'moderate';
 
                 return {
-                    lessonId:      q._id,
-                    lessonTitle:   lesson?.title || 'Unknown',
-                    courseId:      cId,
-                    courseTitle:   course?.title || 'Unknown',
+                    lessonId: q._id,
+                    lessonTitle: lesson?.title || 'Unknown',
+                    courseId: cId,
+                    courseTitle: course?.title || 'Unknown',
                     avgScore,
                     totalAttempts: q.totalAttempts,
-                    passedCount:   q.passedCount,
-                    failedCount:   q.failedCount,
-                    minScore:      Math.round(q.minScore),
-                    maxScore:      Math.round(q.maxScore),
+                    passedCount: q.passedCount,
+                    failedCount: q.failedCount,
+                    minScore: Math.round(q.minScore),
+                    maxScore: Math.round(q.maxScore),
                     severity,
-                    lastAttempt:   q.lastAttempt,
+                    lastAttempt: q.lastAttempt,
                 };
             });
 
         // Overall stats
         const allScores = quizAgg.map(q => q.avgScore);
-        const avgScore  = allScores.length > 0 ? Math.round(allScores.reduce((s, x) => s + x, 0) / allScores.length) : 0;
+        const avgScore = allScores.length > 0 ? Math.round(allScores.reduce((s, x) => s + x, 0) / allScores.length) : 0;
         const totalAttempts = quizAgg.reduce((s, q) => s + q.totalAttempts, 0);
 
         // AI recommendations
@@ -4527,7 +4593,7 @@ Return ONLY valid JSON (no markdown):
 `.trim();
 
                 const raw = await callGroqAI(prompt);
-                const s   = raw.indexOf('{'), e = raw.lastIndexOf('}') + 1;
+                const s = raw.indexOf('{'), e = raw.lastIndexOf('}') + 1;
                 aiRecommendations = JSON.parse(raw.slice(s, e));
             } catch { /* non-critical */ }
         }
@@ -4570,7 +4636,7 @@ export const getExamSuspicionReview = async (req, res) => {
 
         // Formatting data for the Review UI
         const timeline = [];
-        
+
         // Add proctoring events to timeline
         (attempt.proctoringEvents || []).forEach(ev => {
             timeline.push({
@@ -4602,11 +4668,11 @@ export const getExamSuspicionReview = async (req, res) => {
 
         // 🔥 FIX: Extract all unique AI issues dynamically based on exact details
         const keyIssuesSet = new Set();
-        
+
         if (attempt.tabSwitchCount > 0) {
             keyIssuesSet.add(`Frequent screen switching (${attempt.tabSwitchCount} times)`);
         }
-        
+
         (attempt.proctoringEvents || []).forEach(e => {
             if (e.eventType === 'multiple_faces') {
                 keyIssuesSet.add('Multiple people detected in frame');
@@ -4749,11 +4815,11 @@ export const checkPlagiarism = async (req, res) => {
         if (!GROQ_API_KEY) return res.status(500).json({ success: false, message: 'Groq API key not configured' });
 
         // ── 1. Get input text ─────────────────────────────────────────
-        let rawText      = '';
+        let rawText = '';
         let sourceFileName = null;
 
         if (req.file) {
-            rawText        = await extractTextFromBuffer(req.file.buffer, req.file.mimetype, req.file.originalname);
+            rawText = await extractTextFromBuffer(req.file.buffer, req.file.mimetype, req.file.originalname);
             sourceFileName = req.file.originalname;
         } else {
             rawText = (req.body.text || '').trim();
@@ -4764,8 +4830,8 @@ export const checkPlagiarism = async (req, res) => {
         }
 
         const {
-            studentName    = 'Student',
-            subject        = '',
+            studentName = 'Student',
+            subject = '',
             assignmentTitle = sourceFileName?.replace(/\.[^.]+$/, '') || 'Assignment',
         } = req.body;
 
@@ -4854,10 +4920,10 @@ Rules:
 
         // ── 3. Sanitize & compute ─────────────────────────────────────
         const plagiarismScore = Math.min(100, Math.max(0, Number(result.plagiarismScore) || 0));
-        const originalScore   = 100 - plagiarismScore;
-        const paraphrased     = Math.min(plagiarismScore, Math.max(0, Number(result.paraphrasedScore) || 0));
-        const exactMatch      = plagiarismScore - paraphrased;
-        const sourcesFound    = (result.sources || []).length;
+        const originalScore = 100 - plagiarismScore;
+        const paraphrased = Math.min(plagiarismScore, Math.max(0, Number(result.paraphrasedScore) || 0));
+        const exactMatch = plagiarismScore - paraphrased;
+        const sourcesFound = (result.sources || []).length;
 
         const sanitized = {
             reportId,
@@ -4868,22 +4934,22 @@ Rules:
             plagiarismScore,
             originalScore,
             paraphrasedScore: paraphrased,
-            exactMatchScore:  Math.max(0, exactMatch),
-            riskLevel:    result.riskLevel    || 'Low',
-            grade:        result.grade        || 'B',
-            verdict:      result.verdict      || 'Acceptable',
+            exactMatchScore: Math.max(0, exactMatch),
+            riskLevel: result.riskLevel || 'Low',
+            grade: result.grade || 'B',
+            verdict: result.verdict || 'Acceptable',
             sourcesFound,
-            sources:              (result.sources              || []).slice(0, 4),
-            sentences:            (result.sentences            || []).slice(0, 6),
-            highlightedSegments:  (result.highlightedSegments  || []).slice(0, 4),
-            aiSuggestions:        (result.aiSuggestions        || []).slice(0, 3),
-            summary:       result.summary || '',
-            rawText:       rawText.slice(0, 3000),
+            sources: (result.sources || []).slice(0, 4),
+            sentences: (result.sentences || []).slice(0, 6),
+            highlightedSegments: (result.highlightedSegments || []).slice(0, 4),
+            aiSuggestions: (result.aiSuggestions || []).slice(0, 3),
+            summary: result.summary || '',
+            rawText: rawText.slice(0, 3000),
         };
 
         // ── 4. Log ────────────────────────────────────────────────────
         logAIUsage(req.user._id, 'analytics', {
-            type:          'plagiarism_check',
+            type: 'plagiarism_check',
             reportId,
             plagiarismScore,
             sourcesFound,
@@ -4943,7 +5009,7 @@ Do not wrap in markdown or quotes. Return only the plain string text.`;
 // @access  Private (tutor)
 export const getCourseBuilderStats = async (req, res) => {
     try {
-        const Tutor  = (await import('../models/Tutor.js')).default;
+        const Tutor = (await import('../models/Tutor.js')).default;
         const Course = (await import('../models/Course.js')).default;
 
         const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id').lean();
@@ -4958,16 +5024,16 @@ export const getCourseBuilderStats = async (req, res) => {
 
         // Stats
         const totalCourses = await Course.countDocuments({ tutorId: tutor._id });
-        const aiGenCount   = await AIUsageLog.countDocuments({ userId: req.user._id, action: 'course_builder' });
+        const aiGenCount = await AIUsageLog.countDocuments({ userId: req.user._id, action: 'course_builder' });
 
         const formatted = recentCourses.map(c => {
-            const diffMs  = Date.now() - new Date(c.createdAt).getTime();
+            const diffMs = Date.now() - new Date(c.createdAt).getTime();
             const diffMin = Math.floor(diffMs / 60000);
-            const timeAgo = diffMin < 1     ? 'Just now'
-                : diffMin < 60    ? `${diffMin}m ago`
-                : diffMin < 1440  ? `${Math.floor(diffMin / 60)}h ago`
-                : diffMin < 10080 ? `${Math.floor(diffMin / 1440)}d ago`
-                : new Date(c.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+            const timeAgo = diffMin < 1 ? 'Just now'
+                : diffMin < 60 ? `${diffMin}m ago`
+                    : diffMin < 1440 ? `${Math.floor(diffMin / 60)}h ago`
+                        : diffMin < 10080 ? `${Math.floor(diffMin / 1440)}d ago`
+                            : new Date(c.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
             return { ...c, timeAgo };
         });
 
@@ -4999,20 +5065,20 @@ export const checkSubjectiveAnswer = async (req, res) => {
         const {
             question,
             studentAnswer,
-            idealAnswer   = '',
-            maxMarks      = 10,
-            subject       = '',
-            gradeLevel    = '',
+            idealAnswer = '',
+            maxMarks = 10,
+            subject = '',
+            gradeLevel = '',
         } = req.body;
 
-        if (!question?.trim())       return res.status(400).json({ success: false, message: 'Question is required' });
-        if (!studentAnswer?.trim())  return res.status(400).json({ success: false, message: 'Student answer is required' });
+        if (!question?.trim()) return res.status(400).json({ success: false, message: 'Question is required' });
+        if (!studentAnswer?.trim()) return res.status(400).json({ success: false, message: 'Student answer is required' });
 
         const prompt = `
 You are an expert academic evaluator grading a student's subjective answer.
 
 Question: "${question.trim()}"
-${subject    ? `Subject: ${subject}` : ''}
+${subject ? `Subject: ${subject}` : ''}
 ${gradeLevel ? `Grade Level: ${gradeLevel}` : ''}
 Ideal Answer: "${idealAnswer?.trim() || 'Not provided — evaluate based on factual correctness and completeness.'}"
 Student Answer: "${studentAnswer.trim()}"
@@ -5052,23 +5118,23 @@ Evaluate thoroughly across 4 dimensions. Return ONLY valid JSON (no markdown, no
 
         // Sanitize
         const sanitized = {
-            grade:               result.grade               || 'B',
-            marksAwarded:        Math.min(Number(result.marksAwarded || 0), maxMarks),
-            percentage:          Math.min(100, Math.max(0, Number(result.percentage || 0))),
-            overallFeedback:     result.overallFeedback     || '',
+            grade: result.grade || 'B',
+            marksAwarded: Math.min(Number(result.marksAwarded || 0), maxMarks),
+            percentage: Math.min(100, Math.max(0, Number(result.percentage || 0))),
+            overallFeedback: result.overallFeedback || '',
             informationRetained: Math.min(100, Math.max(0, Number(result.informationRetained || 0))),
-            difficulty:          result.difficulty          || 'Balanced',
-            gradeLevelAssessment:result.gradeLevelAssessment|| gradeLevel || 'General',
-            dimensions:          result.dimensions          || {},
-            conceptTags:         result.conceptTags         || [],
-            tips:                result.tips                || '',
-            strengths:           result.strengths           || [],
-            improvements:        result.improvements        || [],
+            difficulty: result.difficulty || 'Balanced',
+            gradeLevelAssessment: result.gradeLevelAssessment || gradeLevel || 'General',
+            dimensions: result.dimensions || {},
+            conceptTags: result.conceptTags || [],
+            tips: result.tips || '',
+            strengths: result.strengths || [],
+            improvements: result.improvements || [],
         };
 
         logAIUsage(req.user._id, 'analytics', {
-            type:     'subjective_check',
-            subject:  subject || 'General',
+            type: 'subjective_check',
+            subject: subject || 'General',
             maxMarks,
         });
 
@@ -5095,16 +5161,16 @@ export const getReportStudents = async (req, res) => {
     try {
         const { courseId } = req.query;
 
-        const Tutor  = (await import('../models/Tutor.js')).default;
+        const Tutor = (await import('../models/Tutor.js')).default;
         const Course = (await import('../models/Course.js')).default;
-        const User   = (await import('../models/User.js')).default;
+        const User = (await import('../models/User.js')).default;
 
         const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id').lean();
         if (!tutor) return res.status(403).json({ success: false, message: 'Tutor profile not found' });
 
         const courseFilter = { tutorId: tutor._id };
         if (courseId) courseFilter._id = courseId;
-        const courses   = await Course.find(courseFilter).select('_id title level').lean();
+        const courses = await Course.find(courseFilter).select('_id title level').lean();
         const courseIds = courses.map(c => c._id);
 
         if (courseIds.length === 0) {
@@ -5116,7 +5182,7 @@ export const getReportStudents = async (req, res) => {
             .populate('studentId', 'name email profileImage')
             .lean();
 
-        const seen     = new Set();
+        const seen = new Set();
         const students = [];
 
         for (const enrl of enrollments) {
@@ -5126,13 +5192,13 @@ export const getReportStudents = async (req, res) => {
 
             const course = courses.find(c => c._id.toString() === enrl.courseId?.toString());
             students.push({
-                _id:      s._id,
-                name:     s.name,
-                email:    s.email,
-                avatar:   s.profileImage || null,
-                course:   course?.title  || 'Unknown Course',
+                _id: s._id,
+                name: s.name,
+                email: s.email,
+                avatar: s.profileImage || null,
+                course: course?.title || 'Unknown Course',
                 courseId: enrl.courseId,
-                level:    course?.level  || '',
+                level: course?.level || '',
                 progress: enrl.progress?.percentage || 0,
             });
         }
@@ -5164,21 +5230,21 @@ export const generateReport = async (req, res) => {
         if (!GROQ_API_KEY) return res.status(500).json({ success: false, message: 'Groq API key not configured' });
 
         const {
-            reportType         = 'student',
-            studentIds         = [],
+            reportType = 'student',
+            studentIds = [],
             courseId,
             highlightStrengths = true,
             title,
-            quickSelection     = '',
+            quickSelection = '',
         } = req.body;
 
         if (reportType === 'student' && (!studentIds || studentIds.length === 0)) {
             return res.status(400).json({ success: false, message: 'Select at least one student' });
         }
 
-        const Tutor  = (await import('../models/Tutor.js')).default;
+        const Tutor = (await import('../models/Tutor.js')).default;
         const Course = (await import('../models/Course.js')).default;
-        const User   = (await import('../models/User.js')).default;
+        const User = (await import('../models/User.js')).default;
         const GeneratedReport = (await import('../models/GeneratedReport.js')).default;
 
         const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id').lean();
@@ -5195,11 +5261,11 @@ export const generateReport = async (req, res) => {
         // Fetch courses
         const courseFilter = { tutorId: tutor._id };
         if (courseId) courseFilter._id = courseId;
-        const courses    = await Course.find(courseFilter).select('_id title level').lean();
-        const courseIds  = courses.map(c => c._id);
+        const courses = await Course.find(courseFilter).select('_id title level').lean();
+        const courseIds = courses.map(c => c._id);
 
         // Lessons
-        const lessons   = await Lesson.find({ courseId: { $in: courseIds } }).select('_id title courseId').lean();
+        const lessons = await Lesson.find({ courseId: { $in: courseIds } }).select('_id title courseId').lean();
         const lessonIds = lessons.map(l => l._id);
         const lessonMap = lessons.reduce((m, l) => { m[l._id.toString()] = l; return m; }, {});
 
@@ -5208,13 +5274,13 @@ export const generateReport = async (req, res) => {
             { $match: { lessonId: { $in: lessonIds }, studentId: { $in: selectedIds.map(id => new mongoose.Types.ObjectId(id)) } } },
             {
                 $group: {
-                    _id:         '$studentId',
-                    avgScore:    { $avg: '$score' },
-                    attempts:    { $sum: 1 },
+                    _id: '$studentId',
+                    avgScore: { $avg: '$score' },
+                    attempts: { $sum: 1 },
                     passedCount: { $sum: { $cond: ['$isPassed', 1, 0] } },
                     weakLessons: { $addToSet: { $cond: [{ $eq: ['$isPassed', false] }, '$lessonId', null] } },
                     // Per-lesson scores for skill breakdown
-                    lessonScores:{ $push: { lessonId: '$lessonId', score: '$score' } },
+                    lessonScores: { $push: { lessonId: '$lessonId', score: '$score' } },
                 },
             },
         ]);
@@ -5225,7 +5291,7 @@ export const generateReport = async (req, res) => {
             { $match: { courseId: { $in: courseIds }, studentId: { $in: selectedIds.map(id => new mongoose.Types.ObjectId(id)) } } },
             {
                 $group: {
-                    _id:         '$studentId',
+                    _id: '$studentId',
                     avgProgress: { $avg: '$progress.percentage' },
                 },
             },
@@ -5241,9 +5307,9 @@ export const generateReport = async (req, res) => {
             { $match: { assignmentId: { $in: assignmentIds }, studentId: { $in: selectedIds.map(id => new mongoose.Types.ObjectId(id)) }, status: 'graded' } },
             {
                 $group: {
-                    _id:      '$studentId',
+                    _id: '$studentId',
                     avgGrade: { $avg: '$grade' },
-                    count:    { $sum: 1 },
+                    count: { $sum: 1 },
                 },
             },
         ]);
@@ -5251,14 +5317,14 @@ export const generateReport = async (req, res) => {
 
         // ── Build per-student data ──────────────────────────────────
         const studentDataList = selectedIds.map(sid => {
-            const user    = userMap[sid];
-            const quiz    = quizMap[sid];
-            const enrl    = enrollMap[sid];
-            const sub     = subMap[sid];
+            const user = userMap[sid];
+            const quiz = quizMap[sid];
+            const enrl = enrollMap[sid];
+            const sub = subMap[sid];
 
-            const avgScore   = quiz ? Math.round(quiz.avgScore)   : 0;
-            const progress   = enrl ? Math.round(enrl.avgProgress) : 0;
-            const avgGrade   = sub  ? Math.round(sub.avgGrade)    : null;
+            const avgScore = quiz ? Math.round(quiz.avgScore) : 0;
+            const progress = enrl ? Math.round(enrl.avgProgress) : 0;
+            const avgGrade = sub ? Math.round(sub.avgGrade) : null;
 
             const weakTopics = (quiz?.weakLessons || [])
                 .filter(Boolean)
@@ -5285,16 +5351,16 @@ export const generateReport = async (req, res) => {
 
             return {
                 studentId: sid,
-                name:      user?.name    || 'Student',
-                email:     user?.email   || '',
-                avatar:    user?.profileImage || null,
+                name: user?.name || 'Student',
+                email: user?.email || '',
+                avatar: user?.profileImage || null,
                 avgScore,
                 progress,
                 avgGrade,
                 grade,
                 weakTopics,
                 skillBreakdown,
-                attempts:  quiz?.attempts || 0,
+                attempts: quiz?.attempts || 0,
             };
         });
 
@@ -5345,14 +5411,14 @@ Generate one entry per student in the same order as provided.
         const mergedStudents = studentDataList.map((sd, i) => {
             const aiStudent = aiResult.students?.[i] || {};
             return {
-                studentId:      sd.studentId,
-                name:           sd.name,
-                avatar:         sd.avatar,
-                avgScore:       sd.avgScore,
-                progress:       sd.progress,
-                grade:          sd.grade,
-                strengths:      aiStudent.strengths    || [],
-                weaknesses:     aiStudent.weaknesses   || sd.weakTopics,
+                studentId: sd.studentId,
+                name: sd.name,
+                avatar: sd.avatar,
+                avgScore: sd.avgScore,
+                progress: sd.progress,
+                grade: sd.grade,
+                strengths: aiStudent.strengths || [],
+                weaknesses: aiStudent.weaknesses || sd.weakTopics,
                 skillBreakdown: sd.skillBreakdown,
                 recommendation: aiStudent.recommendation || '',
             };
@@ -5362,24 +5428,24 @@ Generate one entry per student in the same order as provided.
 
         // Save to DB
         const report = await GeneratedReport.create({
-            tutorId:           tutor._id,
-            instituteId:       users[0]?.instituteId || null,
+            tutorId: tutor._id,
+            instituteId: users[0]?.instituteId || null,
             reportType,
-            title:             reportTitle,
-            studentIds:        selectedIds,
-            studentNames:      mergedStudents.map(s => s.name),
-            courseId:          courseId || null,
-            courseName:        courseName || '',
+            title: reportTitle,
+            studentIds: selectedIds,
+            studentNames: mergedStudents.map(s => s.name),
+            courseId: courseId || null,
+            courseName: courseName || '',
             highlightStrengths,
             quickSelection,
-            summary:           aiResult.summary || '',
-            students:          mergedStudents,
-            status:            'ready',
+            summary: aiResult.summary || '',
+            students: mergedStudents,
+            status: 'ready',
         });
 
         logAIUsage(req.user._id, 'analytics', {
-            type:       'report_gen',
-            reportId:   report._id,
+            type: 'report_gen',
+            reportId: report._id,
             reportType,
             studentCount: selectedIds.length,
         });
@@ -5387,14 +5453,14 @@ Generate one entry per student in the same order as provided.
         res.status(200).json({
             success: true,
             report: {
-                _id:               report._id,
-                title:             reportTitle,
+                _id: report._id,
+                title: reportTitle,
                 reportType,
-                summary:           aiResult.summary || '',
-                students:          mergedStudents,
+                summary: aiResult.summary || '',
+                students: mergedStudents,
                 highlightStrengths,
                 courseName,
-                createdAt:         report.createdAt,
+                createdAt: report.createdAt,
             },
         });
 
@@ -5410,7 +5476,7 @@ Generate one entry per student in the same order as provided.
 // @access  Private (tutor)
 export const getRecentReports = async (req, res) => {
     try {
-        const Tutor  = (await import('../models/Tutor.js')).default;
+        const Tutor = (await import('../models/Tutor.js')).default;
         const GeneratedReport = (await import('../models/GeneratedReport.js')).default;
 
         const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id').lean();
@@ -5423,20 +5489,20 @@ export const getRecentReports = async (req, res) => {
             .lean();
 
         const formatted = reports.map(r => {
-            const diffMs  = Date.now() - new Date(r.createdAt).getTime();
+            const diffMs = Date.now() - new Date(r.createdAt).getTime();
             const diffMin = Math.floor(diffMs / 60000);
-            const timeAgo = diffMin < 1     ? 'Just now'
-                : diffMin < 60    ? `${diffMin} mins ago`
-                : diffMin < 1440  ? `${Math.floor(diffMin / 60)} hrs ago`
-                : diffMin < 10080 ? `${Math.floor(diffMin / 1440)} days ago`
-                : new Date(r.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+            const timeAgo = diffMin < 1 ? 'Just now'
+                : diffMin < 60 ? `${diffMin} mins ago`
+                    : diffMin < 1440 ? `${Math.floor(diffMin / 60)} hrs ago`
+                        : diffMin < 10080 ? `${Math.floor(diffMin / 1440)} days ago`
+                            : new Date(r.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
 
             return { ...r, timeAgo };
         });
 
         // Stats
-        const totalReports    = await GeneratedReport.countDocuments({ tutorId: tutor._id });
-        const studentReports  = await GeneratedReport.countDocuments({ tutorId: tutor._id, reportType: 'student' });
+        const totalReports = await GeneratedReport.countDocuments({ tutorId: tutor._id });
+        const studentReports = await GeneratedReport.countDocuments({ tutorId: tutor._id, reportType: 'student' });
 
         res.status(200).json({
             success: true,
@@ -5460,7 +5526,7 @@ export const getRecentReports = async (req, res) => {
 // @access  Private (tutor)
 export const deleteReport = async (req, res) => {
     try {
-        const Tutor  = (await import('../models/Tutor.js')).default;
+        const Tutor = (await import('../models/Tutor.js')).default;
         const GeneratedReport = (await import('../models/GeneratedReport.js')).default;
 
         const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id').lean();
@@ -5479,10 +5545,10 @@ export const deleteReport = async (req, res) => {
 
 // ── Helper: timeAgo ───────────────────────────────────────────────────────────
 function timeAgo(date) {
-    const diffMs  = Date.now() - new Date(date).getTime();
+    const diffMs = Date.now() - new Date(date).getTime();
     const diffMin = Math.floor(diffMs / 60000);
-    if (diffMin < 1)    return 'Just now';
-    if (diffMin < 60)   return diffMin + ' mins ago';
+    if (diffMin < 1) return 'Just now';
+    if (diffMin < 60) return diffMin + ' mins ago';
     if (diffMin < 1440) return Math.floor(diffMin / 60) + ' hr ago';
     return Math.floor(diffMin / 1440) + 'd ago';
 }
@@ -5491,9 +5557,9 @@ function timeAgo(date) {
 function deriveRiskLevel(attempt) {
     if (attempt.aiRiskLevel && attempt.aiRiskLevel !== 'Safe') return attempt.aiRiskLevel;
     const tabCount = attempt.tabSwitchCount || 0;
-    const events   = attempt.proctoringEvents || [];
+    const events = attempt.proctoringEvents || [];
     const highEvts = events.filter(e => e.severity === 'high').length;
-    const medEvts  = events.filter(e => e.severity === 'medium').length;
+    const medEvts = events.filter(e => e.severity === 'medium').length;
     if (highEvts >= 2 || tabCount >= 5) return 'Cheating Detected';
     if (highEvts >= 1 || medEvts >= 2 || tabCount >= 3) return 'Suspicious Detected';
     if (tabCount >= 1 || events.length >= 1) return 'Low Confidence Detected';
@@ -5508,8 +5574,8 @@ function extractKeyIssues(attempt) {
     evtTypes.forEach(t => {
         if (t === 'unauthorized_object') issues.push('Unauthorized object detected');
         else if (t === 'multiple_faces') issues.push('Multiple faces detected');
-        else if (t === 'no_face')        issues.push('No face detected');
-        else if (t === 'audio_anomaly')  issues.push('Audio anomaly detected');
+        else if (t === 'no_face') issues.push('No face detected');
+        else if (t === 'audio_anomaly') issues.push('Audio anomaly detected');
     });
     return issues;
 }
@@ -5523,19 +5589,19 @@ export const getProctoringAlerts = async (req, res) => {
         const { riskFilter, examFilter, sortBy = 'latest' } = req.query;
 
         // ── Get tutor's exams ─────────────────────────────────────
-        const Tutor  = (await import('../models/Tutor.js')).default;
+        const Tutor = (await import('../models/Tutor.js')).default;
         const Course = (await import('../models/Course.js')).default;
 
         const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id').lean();
         if (!tutor) return res.status(403).json({ success: false, message: 'Tutor profile not found' });
 
-        const courses   = await Course.find({ tutorId: tutor._id }).select('_id').lean();
+        const courses = await Course.find({ tutorId: tutor._id }).select('_id').lean();
         const courseIds = courses.map(c => c._id);
 
         const examFilter_ = { courseId: { $in: courseIds }, status: 'published' };
         if (examFilter) examFilter_._id = examFilter;
 
-        const exams   = await Exam.find(examFilter_).select('_id title type').lean();
+        const exams = await Exam.find(examFilter_).select('_id title type').lean();
         const examIds = exams.map(e => e._id);
         const examMap = exams.reduce((m, e) => { m[e._id.toString()] = e; return m; }, {});
 
@@ -5555,28 +5621,28 @@ export const getProctoringAlerts = async (req, res) => {
 
         // ── Enrich with risk level ────────────────────────────────
         const enriched = attempts.map(a => {
-            const riskLevel      = deriveRiskLevel(a);
-            const keyIssues      = extractKeyIssues(a);
+            const riskLevel = deriveRiskLevel(a);
+            const keyIssues = extractKeyIssues(a);
             const violationsCount = (a.tabSwitchCount || 0) + (a.proctoringEvents || []).length;
-            const exam           = examMap[a.examId?.toString()];
+            const exam = examMap[a.examId?.toString()];
             return {
-                _id:             a._id,
-                studentId:       a.studentId?._id,
-                studentName:     a.studentId?.name || 'Student',
-                studentAvatar:   a.studentId?.avatar || null,
-                examId:          a.examId,
-                examName:        exam?.title || 'Unknown Exam',
+                _id: a._id,
+                studentId: a.studentId?._id,
+                studentName: a.studentId?.name || 'Student',
+                studentAvatar: a.studentId?.avatar || null,
+                examId: a.examId,
+                examName: exam?.title || 'Unknown Exam',
                 riskLevel,
-                riskScore:       a.aiRiskScore || 0,
+                riskScore: a.aiRiskScore || 0,
                 keyIssues,
                 violationsCount,
-                tabSwitchCount:  a.tabSwitchCount || 0,
+                tabSwitchCount: a.tabSwitchCount || 0,
                 proctoringEvents: a.proctoringEvents || [],
-                score:           a.score,
-                totalQuestions:  a.answers?.length || 0,
-                timeSpent:       a.timeSpent || 0,
-                submittedAt:     a.submittedAt,
-                timeAgo:         timeAgo(a.submittedAt),
+                score: a.score,
+                totalQuestions: a.answers?.length || 0,
+                timeSpent: a.timeSpent || 0,
+                submittedAt: a.submittedAt,
+                timeAgo: timeAgo(a.submittedAt),
             };
         });
 
@@ -5593,13 +5659,13 @@ export const getProctoringAlerts = async (req, res) => {
         }
 
         // ── Summary counts ────────────────────────────────────────
-        const cheating     = enriched.filter(a => a.riskLevel === 'Cheating Detected').length;
-        const suspicious   = enriched.filter(a => a.riskLevel === 'Suspicious Detected').length;
-        const lowConf      = enriched.filter(a => a.riskLevel === 'Low Confidence Detected').length;
-        const safe         = enriched.filter(a => a.riskLevel === 'Safe').length;
-        const total        = enriched.length;
-        const flagged      = cheating + suspicious + lowConf;
-        const flaggedPct   = total > 0 ? Math.round((flagged / total) * 100) : 0;
+        const cheating = enriched.filter(a => a.riskLevel === 'Cheating Detected').length;
+        const suspicious = enriched.filter(a => a.riskLevel === 'Suspicious Detected').length;
+        const lowConf = enriched.filter(a => a.riskLevel === 'Low Confidence Detected').length;
+        const safe = enriched.filter(a => a.riskLevel === 'Safe').length;
+        const total = enriched.length;
+        const flagged = cheating + suspicious + lowConf;
+        const flaggedPct = total > 0 ? Math.round((flagged / total) * 100) : 0;
         const totalTimeProctored = Math.round(enriched.reduce((s, a) => s + (a.timeSpent || 0), 0) / 60); // hours
 
         // ── Recent sessions (latest 5 flagged) ───────────────────
@@ -5607,13 +5673,13 @@ export const getProctoringAlerts = async (req, res) => {
             .filter(a => a.riskLevel !== 'Safe')
             .slice(0, 5)
             .map(a => ({
-                _id:           a._id,
-                studentName:   a.studentName,
+                _id: a._id,
+                studentName: a.studentName,
                 studentAvatar: a.studentAvatar,
-                examName:      a.examName,
-                riskLevel:     a.riskLevel,
+                examName: a.examName,
+                riskLevel: a.riskLevel,
                 violationsCount: a.violationsCount,
-                timeAgo:       a.timeAgo,
+                timeAgo: a.timeAgo,
             }));
 
         // Log usage
@@ -5622,9 +5688,9 @@ export const getProctoringAlerts = async (req, res) => {
         res.status(200).json({
             success: true,
             summary: { cheating, suspicious, lowConfidence: lowConf, safe, total, flagged, flaggedPct, activeExams: exams.length, totalTimeProctored },
-            alerts:         filtered,
+            alerts: filtered,
             recentSessions,
-            exams:          exams.map(e => ({ _id: e._id, title: e.title })),
+            exams: exams.map(e => ({ _id: e._id, title: e.title })),
         });
 
     } catch (error) {
@@ -5648,8 +5714,8 @@ export const generateProctoringAISummary = async (req, res) => {
 
         if (!attempt) return res.status(404).json({ success: false, message: 'Attempt not found' });
 
-        const riskLevel  = deriveRiskLevel(attempt);
-        const keyIssues  = extractKeyIssues(attempt);
+        const riskLevel = deriveRiskLevel(attempt);
+        const keyIssues = extractKeyIssues(attempt);
         const violations = (attempt.tabSwitchCount || 0) + (attempt.proctoringEvents || []).length;
 
         const prompt = `
@@ -5707,18 +5773,18 @@ export const generateAICourse = async (req, res) => {
 
         const {
             topic,
-            subject        = '',
-            gradeLevel     = '',
-            difficulty     = 'balanced',
-            sections       = {},
+            subject = '',
+            gradeLevel = '',
+            difficulty = 'balanced',
+            sections = {},
             categoryId,        // ← tutor must pass this
-            price          = 0,
+            price = 0,
         } = req.body;
 
-        if (!topic?.trim())    return res.status(400).json({ success: false, message: 'Course topic is required' });
-        if (!categoryId)       return res.status(400).json({ success: false, message: 'categoryId is required to save course' });
+        if (!topic?.trim()) return res.status(400).json({ success: false, message: 'Course topic is required' });
+        if (!categoryId) return res.status(400).json({ success: false, message: 'categoryId is required to save course' });
 
-        const Tutor  = (await import('../models/Tutor.js')).default;
+        const Tutor = (await import('../models/Tutor.js')).default;
         const Course = (await import('../models/Course.js')).default;
         const Lesson = (await import('../models/Lesson.js')).default;
 
@@ -5726,19 +5792,19 @@ export const generateAICourse = async (req, res) => {
         if (!tutor) return res.status(403).json({ success: false, message: 'Tutor profile not found' });
 
         const selectedSections = {
-            visualLessons:        sections.visualLessons        !== false,
-            practiceQuizzes:      sections.practiceQuizzes      !== false,
-            flashcards:           sections.flashcards           !== false,
-            assignments:          sections.assignments          !== false,
-            conceptSummaries:     sections.conceptSummaries     !== false,
+            visualLessons: sections.visualLessons !== false,
+            practiceQuizzes: sections.practiceQuizzes !== false,
+            flashcards: sections.flashcards !== false,
+            assignments: sections.assignments !== false,
+            conceptSummaries: sections.conceptSummaries !== false,
             formativeAssessments: sections.formativeAssessments !== false,
-            includeAIChatbot:     sections.includeAIChatbot     === true,
+            includeAIChatbot: sections.includeAIChatbot === true,
         };
 
-        const difficultyLabel = difficulty === 'easy'     ? 'Easy (Beginner-friendly)'
-            : difficulty === 'focused'  ? 'Focused (Deep dive into specific topics)'
-            : difficulty === 'advanced' ? 'Advanced (Expert level)'
-            : 'Balanced (Mixed Difficulty)';
+        const difficultyLabel = difficulty === 'easy' ? 'Easy (Beginner-friendly)'
+            : difficulty === 'focused' ? 'Focused (Deep dive into specific topics)'
+                : difficulty === 'advanced' ? 'Advanced (Expert level)'
+                    : 'Balanced (Mixed Difficulty)';
 
         const sectionsList = Object.entries(selectedSections)
             .filter(([, v]) => v)
@@ -5750,7 +5816,7 @@ export const generateAICourse = async (req, res) => {
 You are an expert curriculum designer. Create a comprehensive course structure.
 
 Course Topic: "${topic.trim()}"
-${subject    ? `Subject: ${subject}`             : ''}
+${subject ? `Subject: ${subject}` : ''}
 ${gradeLevel ? `Target Grade Level: ${gradeLevel}` : ''}
 Difficulty: ${difficultyLabel}
 Include Sections: ${sectionsList}
@@ -5822,43 +5888,43 @@ Rules:
         const mongoose = (await import('mongoose')).default;
 
         const modulesWithIds = (parsed.modules || []).map((mod, mIdx) => ({
-            _id:         new mongoose.Types.ObjectId(),
-            title:       mod.title       || `Module ${mIdx + 1}`,
+            _id: new mongoose.Types.ObjectId(),
+            title: mod.title || `Module ${mIdx + 1}`,
             description: mod.description || '',
-            order:       mIdx,
+            order: mIdx,
         }));
 
         // ── Create Course (same as manual createCourse) ───────────────
         const levelMap = {
-            easy:     'beginner',
+            easy: 'beginner',
             balanced: 'intermediate',
-            focused:  'intermediate',
+            focused: 'intermediate',
             advanced: 'advanced',
         };
 
         const course = await Course.create({
-            title:           parsed.title            || topic,
-            description:     parsed.description      || '',
+            title: parsed.title || topic,
+            description: parsed.description || '',
             categoryId,
-            tutorId:         tutor._id,
+            tutorId: tutor._id,
             instituteId,
-            createdBy:       req.user._id,
-            price:           Number(price)           || 0,
-            isFree:          Number(price) === 0,
-            level:           levelMap[difficulty]    || 'beginner',
-            language:        'English',
-            duration:        0,
-            whatYouWillLearn:(parsed.whatYouWillLearn|| []).slice(0, 6),
-            requirements:    (parsed.requirements    || []).slice(0, 4),
-            modules:         modulesWithIds,
-            status:          'published',
-            isAIGenerated:   true,
-            visibility:      instituteId ? 'institute' : 'public',
+            createdBy: req.user._id,
+            price: Number(price) || 0,
+            isFree: Number(price) === 0,
+            level: levelMap[difficulty] || 'beginner',
+            language: 'English',
+            duration: 0,
+            whatYouWillLearn: (parsed.whatYouWillLearn || []).slice(0, 6),
+            requirements: (parsed.requirements || []).slice(0, 4),
+            modules: modulesWithIds,
+            status: 'published',
+            isAIGenerated: true,
+            visibility: instituteId ? 'institute' : 'public',
             audience: {
-                scope:       instituteId ? 'institute' : 'global',
+                scope: instituteId ? 'institute' : 'global',
                 instituteId: instituteId || null,
-                batchIds:    [],
-                studentIds:  [],
+                batchIds: [],
+                studentIds: [],
             },
         });
 
@@ -5867,8 +5933,8 @@ Rules:
         let globalOrder = 0;
 
         for (let mIdx = 0; mIdx < (parsed.modules || []).length; mIdx++) {
-            const mod        = parsed.modules[mIdx];
-            const moduleDoc  = modulesWithIds[mIdx];
+            const mod = parsed.modules[mIdx];
+            const moduleDoc = modulesWithIds[mIdx];
 
             for (let lIdx = 0; lIdx < (mod.lessons || []).length; lIdx++) {
                 const aiLesson = mod.lessons[lIdx];
@@ -5879,45 +5945,45 @@ Rules:
 
                 if (lessonType === 'video') {
                     content = {
-                        videoUrl:    '',          // tutor will add later
-                        duration:    0,
+                        videoUrl: '',          // tutor will add later
+                        duration: 0,
                         attachments: [],
                     };
                 } else if (lessonType === 'quiz') {
                     // Build proper quiz content
                     const questions = (aiLesson.quizQuestions || []).map(q => ({
-                        question:    q.question    || '',
-                        options:     (q.options    || []).map(opt => ({
-                            text:      opt.text      || '',
+                        question: q.question || '',
+                        options: (q.options || []).map(opt => ({
+                            text: opt.text || '',
                             isCorrect: opt.isCorrect || false,
                         })),
                         explanation: q.explanation || '',
-                        points:      q.points      || 1,
+                        points: q.points || 1,
                     }));
 
                     content = {
                         quiz: {
-                            title:              aiLesson.title || 'Quiz',
-                            description:        aiLesson.description || '',
-                            passingScore:       70,
-                            timeLimit:          null,
-                            shuffleQuestions:   false,
-                            shuffleOptions:     false,
+                            title: aiLesson.title || 'Quiz',
+                            description: aiLesson.description || '',
+                            passingScore: 70,
+                            timeLimit: null,
+                            shuffleQuestions: false,
+                            shuffleOptions: false,
                             showCorrectAnswers: true,
-                            allowRetake:        true,
-                            maxAttempts:        null,
+                            allowRetake: true,
+                            maxAttempts: null,
                             questions,
-                            totalPoints:        questions.reduce((s, q) => s + q.points, 0),
+                            totalPoints: questions.reduce((s, q) => s + q.points, 0),
                         },
                         attachments: [],
                     };
                 } else {
                     // document type — reading, notes, flashcards, summary
                     content = {
-                        documents:   [],
+                        documents: [],
                         attachments: [{
                             name: `${aiLesson.title} — AI Generated Notes`,
-                            url:  '',  // tutor will upload actual file later
+                            url: '',  // tutor will upload actual file later
                             type: 'text/plain',
                         }].filter(a => false), // start empty, tutor uploads
                         attachments: [],
@@ -5926,14 +5992,14 @@ Rules:
 
                 try {
                     const lesson = await Lesson.create({
-                        courseId:    course._id,
-                        moduleId:    moduleDoc._id,
-                        title:       aiLesson.title        || `Lesson ${lIdx + 1}`,
-                        description: aiLesson.description  || '',
-                        type:        lessonType,
+                        courseId: course._id,
+                        moduleId: moduleDoc._id,
+                        title: aiLesson.title || `Lesson ${lIdx + 1}`,
+                        description: aiLesson.description || '',
+                        type: lessonType,
                         content,
-                        order:       globalOrder++,
-                        isFree:      aiLesson.isFree       || (mIdx === 0 && lIdx === 0),
+                        order: globalOrder++,
+                        isFree: aiLesson.isFree || (mIdx === 0 && lIdx === 0),
                         isPublished: true,
                     });
                     createdLessons.push(lesson);
@@ -5946,8 +6012,8 @@ Rules:
 
         // ── Log AI usage ──────────────────────────────────────────────
         logAIUsage(req.user._id, 'analytics', {
-            type:         'course_builder',
-            courseId:     course._id,
+            type: 'course_builder',
+            courseId: course._id,
             topic,
             gradeLevel,
             lessonsCount: createdLessons.length,
@@ -5956,35 +6022,35 @@ Rules:
         res.status(200).json({
             success: true,
             course: {
-                _id:             course._id,
-                title:           course.title,
-                description:     course.description,
-                isAIGenerated:   true,
-                status:          course.status,
-                level:           course.level,
-                whatYouWillLearn:course.whatYouWillLearn,
-                modules:         modulesWithIds.map((mod, i) => ({
+                _id: course._id,
+                title: course.title,
+                description: course.description,
+                isAIGenerated: true,
+                status: course.status,
+                level: course.level,
+                whatYouWillLearn: course.whatYouWillLearn,
+                modules: modulesWithIds.map((mod, i) => ({
                     ...mod,
                     lessons: createdLessons
                         .filter(l => l.moduleId.toString() === mod._id.toString())
                         .map(l => ({
-                            _id:         l._id,
-                            title:       l.title,
-                            type:        l.type,
+                            _id: l._id,
+                            title: l.title,
+                            type: l.type,
                             description: l.description,
-                            isFree:      l.isFree,
-                            order:       l.order,
+                            isFree: l.isFree,
+                            order: l.order,
                         })),
                 })),
                 estimatedDuration: parsed.estimatedDuration || '',
-                targetAudience:    parsed.targetAudience    || '',
+                targetAudience: parsed.targetAudience || '',
                 topic,
                 subject,
                 gradeLevel,
                 difficulty,
-                sections:          selectedSections,
-                lessonsCreated:    createdLessons.length,
-                createdAt:         course.createdAt,
+                sections: selectedSections,
+                lessonsCreated: createdLessons.length,
+                createdAt: course.createdAt,
             },
         });
 
@@ -6000,7 +6066,7 @@ export const getRecentAICourses = async (req, res) => {
     try {
         const { limit = 10 } = req.query;
 
-        const Tutor  = (await import('../models/Tutor.js')).default;
+        const Tutor = (await import('../models/Tutor.js')).default;
         const Course = (await import('../models/Course.js')).default;
 
         const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id').lean();
@@ -6014,33 +6080,33 @@ export const getRecentAICourses = async (req, res) => {
             .lean();
 
         const formatted = courses.map(c => {
-            const diffMs  = Date.now() - new Date(c.createdAt).getTime();
+            const diffMs = Date.now() - new Date(c.createdAt).getTime();
             const diffMin = Math.floor(diffMs / 60000);
-            const timeAgo = diffMin < 1     ? 'Just now'
-                : diffMin < 60    ? `${diffMin}m ago`
-                : diffMin < 1440  ? `${Math.floor(diffMin / 60)}h ago`
-                : diffMin < 10080 ? `${Math.floor(diffMin / 1440)}d ago`
-                : new Date(c.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+            const timeAgo = diffMin < 1 ? 'Just now'
+                : diffMin < 60 ? `${diffMin}m ago`
+                    : diffMin < 1440 ? `${Math.floor(diffMin / 60)}h ago`
+                        : diffMin < 10080 ? `${Math.floor(diffMin / 1440)}d ago`
+                            : new Date(c.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
 
             return {
-                _id:          c._id,
-                title:        c.title,
-                description:  c.description,
-                gradeLevel:   c.gradeLevel  || '',   // Course model mein nahi hai — empty string fallback
-                subject:      c.subject     || '',   // Same
-                level:        c.level       || '',
-                status:       c.status,
-                moduleCount:  c.modules?.length || 0,
-                isAIGenerated:true,
+                _id: c._id,
+                title: c.title,
+                description: c.description,
+                gradeLevel: c.gradeLevel || '',   // Course model mein nahi hai — empty string fallback
+                subject: c.subject || '',   // Same
+                level: c.level || '',
+                status: c.status,
+                moduleCount: c.modules?.length || 0,
+                isAIGenerated: true,
                 timeAgo,
-                createdAt:    c.createdAt,
+                createdAt: c.createdAt,
             };
         });
 
         // ── Stats ─────────────────────────────────────────────────────
-        const total     = await Course.countDocuments({ tutorId: tutor._id, isAIGenerated: true });
+        const total = await Course.countDocuments({ tutorId: tutor._id, isAIGenerated: true });
         const timeSaved = Math.round(total * 0.7);
-        const shareCount= Math.round(total * 35.7);
+        const shareCount = Math.round(total * 35.7);
 
         res.status(200).json({
             success: true,
@@ -6059,7 +6125,7 @@ export const getRecentAICourses = async (req, res) => {
 
 export const deleteAICourse = async (req, res) => {
     try {
-        const Tutor  = (await import('../models/Tutor.js')).default;
+        const Tutor = (await import('../models/Tutor.js')).default;
         const Course = (await import('../models/Course.js')).default;
 
         const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id').lean();
@@ -6091,3 +6157,179 @@ export const deleteAICourse = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to delete course' });
     }
 };
+
+
+// @desc    Super Admin Agentic Chat (God Mode)
+// @route   POST /api/ai/superadmin-coordinator
+export const superAdminCoordinatorChat = async (req, res) => {
+    try {
+        const { message, history = [] } = req.body;
+
+        if (!message) {
+            return res.status(400).json({ success: false, message: 'Message is required' });
+        }
+
+        const User = (await import('../models/User.js')).default;
+        const Institute = (await import('../models/Institute.js')).default;
+        const Course = (await import('../models/Course.js')).default;
+        const Enrollment = (await import('../models/Enrollment.js')).default;
+        const { agentTools } = await import('../services/aiAgentTools.js');
+
+        const totalStudents = await User.countDocuments({ role: 'student' });
+        const totalTutors = await User.countDocuments({ role: 'tutor' });
+        const totalInstitutes = await Institute.countDocuments();
+
+        const thirtyDaysFromNow = new Date();
+        thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
+
+        const expiringInstitutes = await Institute.find({
+            subscriptionExpiresAt: { $lt: thirtyDaysFromNow, $gt: new Date() },
+            isActive: true
+        }).select('name subscriptionExpiresAt contactEmail');
+
+        const expiringListStr = expiringInstitutes.length > 0
+            ? expiringInstitutes.map(inst => `- ${inst.name} (Contact: ${inst.contactEmail}, Expires On: ${new Date(inst.subscriptionExpiresAt).toLocaleDateString()})`).join('\n')
+            : 'No institutes are expiring in the next 30 days.';
+
+        const suspendedInstitutesCount = await Institute.countDocuments({ isActive: false });
+        const blockedUsersCount = await User.countDocuments({ isBlocked: true });
+
+        const totalActiveCourses = await Course.countDocuments({ status: 'published' });
+        const totalEnrollments = await Enrollment.countDocuments();
+
+        const platformState = `LIVE STATS: Students=${totalStudents}, Tutors=${totalTutors}, Institutes=${totalInstitutes}, Courses(published)=${totalActiveCourses}, Enrollments=${totalEnrollments}, SuspendedInstitutes=${suspendedInstitutesCount}, BlockedUsers=${blockedUsersCount}. EXPIRING(30days): ${expiringListStr}`;
+
+        const systemPrompt = {
+            role: 'system',
+            content: `You are the Sapience LMS Super Admin AI Coordinator - an elite, agentic AI assistant designed exclusively for the platform owner/super admin.
+You monitor the entire SaaS platform's health and provide deeply analytical, operational, and actionable advice.
+
+${platformState}
+
+THINKING PROCESS & STRICT LIMITATIONS:
+1. Is it a QUESTION looking for data? -> USE READ-ONLY TOOLS. DO NOT GENERATE JSON ACTION BLOCKS.
+2. Is it a DIRECT COMMAND? -> Use tools to find the ID, then output the JSON Action Block.
+3. BULK OR MULTIPLE COMMANDS: You can ONLY generate MAXIMUM ONE (1) JSON action block per response. If the admin asks to perform multiple actions (e.g., "Block user A and Suspend Institute B"), politely refuse. Ask them to process one action at a time.
+4. DATA LIMITATION AWARENESS: Tools like getUsersList and searchInstitutes only return the top 10-15 results to save bandwidth. NEVER claim that these are "all" the records. Always clarify that you are showing a limited preview.
+5. GHOST TARGET PREVENTION: NEVER output a JSON action block if you cannot find the exact, valid 24-character hex MongoDB ID. If a user or institute is not found, apologize and stop.
+
+READ-ONLY TOOLS (BACKGROUND API CALLS):
+- searchUsers(query): Find user details by name/email.
+- getUsersList(role, status): Get a list of users (Max 15).
+- getInstituteDetails(instituteName): Get ONE institute's full details.
+- searchInstitutes(status): Search/List multiple institutes (Max 10).
+- getCourseMetrics(courseName): Enrollment stats for a course.
+- getLiveRadar(): See all active live sessions RIGHT NOW.
+- checkSystemAlerts(): Get expiring subscriptions & AI quota alerts.
+- searchExams(query): Exam pass rates.
+
+DESTRUCTIVE ACTIONS (STRICT UI BUTTON TRIGGERS):
+You DO NOT have the power to execute blocks or suspensions. You can ONLY stage them for the admin's approval.
+NEVER say "Executing the action...". Instead, say "I have staged the action for your approval."
+
+When explicitly commanded to block/unblock a user or suspend/activate an institute:
+1. Search first to get the valid 24-character hex ID.
+2. At the VERY END of your response, output ONE EXACT Markdown JSON block (and nothing else after it):
+
+\`\`\`json
+{
+  "action": "block_user",
+  "targetId": "<real_mongo_id>",
+  "operation": "Block"
+}
+\`\`\`
+
+3. Allowed "action" names: 'suspend_institute', 'block_user'.
+4. Allowed "operation" names: 'Block', 'Unblock', 'Suspend', 'Activate'.`
+        };
+
+        // Filter out ANY previous assistant tool call messages - they cause Groq 400 bad request formatting errors
+        const formattedHistory = [];
+        for (const msg of history.slice(-4)) {
+            if (msg.role === 'user') {
+                formattedHistory.push({ role: 'user', content: String(msg.content).slice(0, 800) });
+            } else if (msg.role === 'assistant' || msg.role === 'coordinator' || msg.role === 'tutor') {
+                // If it has a json action block, strip it so the model doesn't over-generate action blocks
+                let cleanContent = String(msg.content).replace(/```json[\s\S]*?```/g, '').trim();
+                if (cleanContent) {
+                    formattedHistory.push({ role: 'assistant', content: cleanContent.slice(0, 800) });
+                }
+            }
+        }
+
+        const messages = [
+            systemPrompt,
+            ...formattedHistory,
+            { role: 'user', content: message }
+        ];
+
+        const responseText = await callOpenAIWithTools(messages, agentTools);
+
+        res.status(200).json({
+            success: true,
+            reply: responseText,
+            platformStateFootprint: {
+                totalStudents, totalTutors, totalInstitutes, totalActiveCourses, expiringInstitutesCount: expiringInstitutes.length
+            }
+        });
+
+    } catch (error) {
+        console.error('superAdminCoordinatorChat error:', error.message);
+        res.status(500).json({ success: false, message: error.message || 'Failed to process AI Super Admin Chat' });
+    }
+};
+
+// @desc    Execute AI Generated Action (God Mode Button)
+// @route   POST /api/ai/execute-action
+
+// @desc    Execute AI Generated Action (God Mode Button)
+// @route   POST /api/ai/execute-action
+export const executeAIAction = async (req, res) => {
+    try {
+        const { action, targetId } = req.body;
+
+        if (!action || !targetId) {
+            return res.status(400).json({ success: false, message: 'Action and Target ID are required' });
+        }
+
+        // 🌟 CRITICAL FIX: Validate ObjectId before querying DB to prevent CastError crashes
+        if (!mongoose.Types.ObjectId.isValid(targetId)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid Target ID format. The AI failed to provide a valid MongoDB ID.'
+            });
+        }
+
+        const User = (await import('../models/User.js')).default;
+        const Institute = (await import('../models/Institute.js')).default;
+
+        let resultMsg = "Action executed successfully";
+
+        if (action === "suspend_institute") {
+            const institute = await Institute.findById(targetId);
+            if (!institute) return res.status(404).json({ success: false, message: 'Institute not found' });
+            institute.isActive = !institute.isActive; // Toggle
+            await institute.save();
+            resultMsg = `Institute ${institute.name} has been ${institute.isActive ? 'activated' : 'suspended'}.`;
+        }
+        else if (action === "block_user") {
+            const user = await User.findById(targetId);
+            if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+            user.isBlocked = !user.isBlocked; // Toggle status
+            await user.save();
+
+            resultMsg = `User ${user.name} has been ${user.isBlocked ? 'blocked' : 'unblocked'}.`;
+        }
+        else {
+            return res.status(400).json({ success: false, message: 'Unknown action type requested' });
+        }
+
+        res.status(200).json({ success: true, message: resultMsg });
+
+    } catch (error) {
+        console.error('executeAIAction error:', error);
+        res.status(500).json({ success: false, message: 'Failed to execute AI action' });
+    }
+};
+

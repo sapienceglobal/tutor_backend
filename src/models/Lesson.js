@@ -54,6 +54,7 @@ const lessonSchema = new mongoose.Schema({
     // Video Content
     videoUrl: String,
     duration: Number, // in seconds
+    videoSize: Number, // in bytes
 
     // Document Content
     documents: [documentSchema],

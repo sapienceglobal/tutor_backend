@@ -72,6 +72,32 @@ const paymentSchema = new mongoose.Schema({
         type: Date,
         default: null,
     },
+    // --- FINANCIAL SETTLEMENT FIELDS (NEW) ---
+    platformFee: {
+        type: Number,
+        default: 0,
+        // Platform ka commission (e.g., 10% of amount)
+    },
+    instituteEarnings: {
+        type: Number,
+        default: 0,
+        // Institute ka actual cut (amount - platformFee)
+    },
+    isSettled: {
+        type: Boolean,
+        default: false,
+        // True agar Superadmin ne institute ko ye paisa bank me bhej diya hai
+    },
+    settledAt: {
+        type: Date,
+        default: null,
+        // Payout kab kiya tha
+    },
+    payoutReferenceId: {
+        type: String,
+        default: null,
+        // RazorpayX ya bank transfer ka transaction ID jab settlement kiya
+    },
     createdAt: {
         type: Date,
         default: Date.now,

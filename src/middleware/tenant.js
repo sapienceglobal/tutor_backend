@@ -47,29 +47,4 @@ export const resolveTenant = async (req, res, next) => {
     }
 };
 
-/**
- * Middleware to restrict access based on the tenant's active features
- * @param {string} featureKey - The feature key from Institute.features (e.g. 'hlsStreaming', 'aiFeatures')
- */
-export const requireFeature = (featureKey) => {
-    return (req, res, next) => {
-        // Superadmins have access to everything to test things
-        if (req.user && req.user.role === 'superadmin') {
-            return next();
-        }
 
-        if (!req.tenant) {
-            return res.status(403).json({ success: false, message: 'Invalid tenant context. Cannot verify feature access.' });
-        }
-
-        const features = req.tenant.features || {};
-        if (!features[featureKey]) {
-            return res.status(403).json({
-                success: false,
-                message: `Upgrade Required: Your institute's current subscription plan does not include access to '${featureKey}'.`
-            });
-        }
-
-        next();
-    };
-};

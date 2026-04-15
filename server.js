@@ -17,6 +17,7 @@ import lessonCommentRoutes from './src/routes/lessonCommentRoutes.js';
 import enrollmentRoutes from './src/routes/enrollments.js';
 import progressRoutes from './src/routes/progress.js';
 import dashboardRoutes from './src/routes/Tutor/dashboard.js';
+import tutorLiveSessionRoutes from './src/routes/Tutor/liveSession.js';
 import studentDashboardRoutes from './src/routes/Student/dashboard.js';
 import adminRoutes from './src/routes/admin.js';
 
@@ -62,6 +63,20 @@ import { verifyApiKey } from './src/middleware/apiKey.js';
 import { auditMiddleware } from './src/middleware/auditMiddleware.js';
 import settingsRouter from './src/routes/settingsRoutes.js';
 import subscriptionRoutes from './src/routes/subscriptionRoutes.js';
+
+import financeRoutes from './src/routes/financeRoutes.js';
+import monitoringRoutes from './src/routes/monitoringRoutes.js';
+import superadminCourseRoutes from './src/routes/superadminCourseRoutes.js';
+import superadminLiveRoutes from './src/routes/superadminLiveRoutes.js';
+import superadminBatchRoutes from './src/routes/superadminBatchRoutes.js';
+import superadminAttendanceRoutes from './src/routes/superadminAttendanceRoutes.js';
+import superadminAssignmentRoutes from './src/routes/superadminAssignmentRoutes.js';
+import superadminUserRoutes from './src/routes/superadminUserRoutes.js';
+import superadminExamRoutes from './src/routes/superadminExamRoutes.js';
+import superadminIntegrationRoutes from './src/routes/superadminIntegrationRoutes.js';
+import superadminReportRoutes from './src/routes/superadminReportRoutes.js';
+import superadminCommunicationRoutes from './src/routes/superadminCommunicationRoutes.js';
+import superadminSecurityRoutes from './src/routes/superadminSecurityRoutes.js';
 
 // Initialize express app
 const app = express();
@@ -160,6 +175,7 @@ app.use('/api/lessons', lessonRoutes);
 app.use('/api/enrollments', enrollmentRoutes);
 app.use('/api/progress', progressRoutes);
 app.use('/api/tutor/dashboard', dashboardRoutes);
+app.use('/api/tutor/live-session', tutorLiveSessionRoutes);
 app.use('/api/student/dashboard', studentDashboardRoutes);
 app.use('/api/admin', adminRoutes);
 
@@ -210,6 +226,19 @@ app.use('/api/proxy/superadmin', superadminSettingsRoutes);
 // Direct admin routes (for proxy requests)
 app.use('/api/admin/invites', inviteRoutes);
 app.use('/api/subscriptions', subscriptionRoutes)
+app.use('/api/superadmin/finance', financeRoutes);
+app.use('/api/superadmin/monitoring', monitoringRoutes);
+app.use('/api/superadmin/courses', superadminCourseRoutes);
+app.use('/api/superadmin/live-classes', superadminLiveRoutes);
+app.use('/api/superadmin/batches', superadminBatchRoutes);
+app.use('/api/superadmin/attendance', superadminAttendanceRoutes);
+app.use('/api/superadmin/assignments', superadminAssignmentRoutes);
+app.use('/api/superadmin/users', superadminUserRoutes);
+app.use('/api/superadmin/exams', superadminExamRoutes);
+app.use('/api/superadmin/integrations', superadminIntegrationRoutes);
+app.use('/api/superadmin/reports', superadminReportRoutes);
+app.use('/api/superadmin/communication', superadminCommunicationRoutes);
+app.use('/api/superadmin/security', superadminSecurityRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

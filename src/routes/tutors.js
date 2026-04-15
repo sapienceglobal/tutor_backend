@@ -1,7 +1,7 @@
 import express from 'express';
 import { protect, authorize, optionalAuth } from '../middleware/auth.js';
 import { resolveTenant } from '../middleware/tenant.js';
-import { checkFeatureAccess } from '../middleware/subscriptionMiddleware.js';
+import { requireLimit } from '../middleware/subscriptionMiddleware.js';
 import {
     getAllTutors,
     createTutor,
@@ -44,7 +44,7 @@ router.get('/', optionalAuth, getAllTutors);
 router.get('/category/:categoryId', optionalAuth, getTutorsByCategory);
 
 // Protected routes (Tutor only)
-router.post('/', protect, authorize('tutor'), checkFeatureAccess('manageTutors'), createTutor);
+router.post('/', protect, authorize('tutor'), requireLimit('tutors'), createTutor);
 // router.get('/profile'...) is duplicate, removed
 router.patch('/:id', protect, authorize('tutor'), updateTutor);
 router.delete('/:id', protect, authorize('tutor'), deleteTutor);

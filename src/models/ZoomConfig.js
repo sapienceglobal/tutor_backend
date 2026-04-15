@@ -37,7 +37,7 @@ const zoomConfigSchema = new mongoose.Schema({
 });
 
 // Encrypt clientSecret before save
-zoomConfigSchema.pre('save', function (next) {
+zoomConfigSchema.pre('save', function () {
     if (this.isModified('clientSecret') && this.clientSecret && !this.clientSecret.startsWith('enc:')) {
         try {
             const iv = crypto.randomBytes(IV_LENGTH);
@@ -49,7 +49,7 @@ zoomConfigSchema.pre('save', function (next) {
             console.error('Encryption error:', err);
         }
     }
-    next();
+    
 });
 
 // Decrypt method

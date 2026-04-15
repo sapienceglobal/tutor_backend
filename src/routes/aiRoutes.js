@@ -56,12 +56,20 @@ import {
     getProctoringAlerts, generateProctoringAISummary,
     generateAICourse,
     getRecentAICourses, deleteAICourse,
+    superAdminCoordinatorChat, executeAIAction
 } from '../controllers/aiController.js';
-import { protect, admin ,requireFeature} from '../middleware/auth.js';
+import { protect, admin } from '../middleware/auth.js';
+import { requireFeature } from '../middleware/subscriptionMiddleware.js';
 import { fileUpload } from '../utils/cloudinary.js';
 
 const router = express.Router();
-requireFeature('aiFeatures')
+
+// ── Super Admin Agent (MUST be before requireFeature — superadmin has no instituteId) ──
+router.post('/superadmin-coordinator', protect, admin, superAdminCoordinatorChat);
+router.post('/execute-action', protect, admin, executeAIAction);
+
+// All routes below require aiFeatures subscription
+router.use(requireFeature('aiFeatures'));
 
 // Chat Session Routes (Industry Standard UI)
 
