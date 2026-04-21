@@ -1,5 +1,8 @@
 import { v2 as cloudinary } from 'cloudinary';
 import multer from 'multer';
+import fs from 'fs';       
+import path from 'path';    
+import os from 'os';
 import { Readable } from 'stream';
 
 const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
@@ -16,31 +19,30 @@ cloudinary.config({
     api_secret: apiSecret,
 });
 
-// Multer memory storage
-const storage = multer.memoryStorage();
+// 🌟 CHANGE 1: Disk Storage instead of Memory Storage
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        // Save safely to server's temporary directory
+        cb(null, os.tmpdir());
+    },
+    filename: function (req, file, cb) {
+        // Create a unique filename to prevent overwriting
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+    }
+});
+
 const upload = multer({
     storage: storage,
-    // CHANGE 1: Increased limit to 500MB (Video needs more space)
-    limits: { fileSize: 500 * 1024 * 1024 },
+    limits: { fileSize: 500 * 1024 * 1024 }, // ✅ Ab 500MB safe hai kyunki ye RAM mein nahi jayega!
     fileFilter: (req, file, cb) => {
         const allowedMimes = [
-            // Images
             'image/jpeg', 'image/png', 'image/webp',
-            // Documents
-            'application/pdf',
-            'application/msword',
+            'application/pdf', 'application/msword',
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'application/vnd.ms-powerpoint',
-            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-            'application/vnd.ms-excel',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            // CHANGE 2: Added Video Mime Types
-            'video/mp4',
-            'video/mpeg',
-            'video/quicktime', // .mov
-            'video/x-msvideo', // .avi
-            'video/webm',
-            'video/x-matroska' // .mkv
+            'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'video/mp4', 'video/mpeg', 'video/quicktime', 'video/x-msvideo', 'video/webm', 'video/x-matroska'
         ];
 
         if (!allowedMimes.includes(file.mimetype)) {
@@ -51,42 +53,34 @@ const upload = multer({
 });
 
 // Helper: upload buffer to Cloudinary
-const uploadToCloudinary = (buffer, folder, resourceType = 'auto') =>
-    new Promise((resolve, reject) => {
-        if (!cloudinary.config().cloud_name) {
-            return reject(new Error("Cloudinary not configured"));
-        }
+// 🌟 CHANGE 2: Simpler Cloudinary Upload from Disk
+const uploadToCloudinary = async (filePath, folder, resourceType = 'auto') => {
+    if (!cloudinary.config().cloud_name) {
+        throw new Error("Cloudinary not configured");
+    }
 
-        const uploadStream = cloudinary.uploader.upload_stream(
-            {
-                folder: folder,
-                resource_type: resourceType,
-                // Image hai to optimize karo, Video/File hai to mat chedo
-                transformation: resourceType === 'image' ? [
-                    { width: 500, height: 500, crop: 'limit' },
-                    { quality: 'auto' },
-                ] : undefined,
-            },
-            (error, result) => {
-                if (error) return reject(error);
-                resolve(result);
-            }
-        );
-        Readable.from(buffer).pipe(uploadStream);
+    return await cloudinary.uploader.upload(filePath, {
+        folder: folder,
+        resource_type: resourceType,
+        transformation: resourceType === 'image' ? [
+            { width: 500, height: 500, crop: 'limit' },
+            { quality: 'auto' },
+        ] : undefined,
     });
+};
 
-// Controller: Upload image
+// 🌟 CHANGE 3: Controllers with Automatic Garbage Collection (Cleanup)
 export const uploadImage = async (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({ success: false, message: 'No file uploaded' });
         }
 
-        const result = await uploadToCloudinary(
-            req.file.buffer,
-            'tutor_management/profiles',
-            'image'
-        );
+        // Upload from disk path
+        const result = await uploadToCloudinary(req.file.path, 'tutor_management/profiles', 'image');
+
+        // 🧹 Cleanup: Delete from server disk immediately after upload
+        fs.unlinkSync(req.file.path);
 
         res.status(200).json({
             success: true,
@@ -95,33 +89,27 @@ export const uploadImage = async (req, res) => {
             publicId: result.public_id,
         });
     } catch (error) {
+        // Safe Cleanup even if upload fails
+        if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
         console.error('Upload error:', error);
         res.status(500).json({ success: false, message: error.message || 'Upload failed' });
     }
 };
 
-// Controller: Upload file (PDF, DOC, Video, etc.)
 export const uploadFile = async (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({ success: false, message: 'No file uploaded' });
         }
 
-
-        // CHANGE 3: Auto-detect resource type (Video vs Raw File)
-        // Agar MIME type 'video/' se start hota hai to 'video', nahi to 'raw'
         const resourceType = req.file.mimetype.startsWith('video/') ? 'video' : 'raw';
+        const folder = resourceType === 'video' ? 'tutor_management/videos' : 'tutor_management/documents';
 
-        // Folder structure thoda clean kar diya (videos alag, docs alag)
-        const folder = resourceType === 'video'
-            ? 'tutor_management/videos'
-            : 'tutor_management/documents';
+        // Upload from disk path
+        const result = await uploadToCloudinary(req.file.path, folder, resourceType);
 
-        const result = await uploadToCloudinary(
-            req.file.buffer,
-            folder,
-            resourceType
-        );
+        // 🧹 Cleanup: Delete from server disk immediately after upload
+        fs.unlinkSync(req.file.path);
 
         res.status(200).json({
             success: true,
@@ -131,10 +119,12 @@ export const uploadFile = async (req, res) => {
             originalName: req.file.originalname,
             format: result.format,
             size: result.bytes,
-            duration: result.duration || 0, // Video duration (seconds) Cloudinary return karta hai
-            resourceType: resourceType // Frontend ko pata chale kya upload hua
+            duration: result.duration || 0,
+            resourceType: resourceType
         });
     } catch (error) {
+        // Safe Cleanup even if upload fails
+        if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
         console.error('File upload error:', error);
         res.status(500).json({
             success: false,

@@ -40,6 +40,7 @@ router.get('/students', getAllStudents);
 router.get('/courses', getAllCourses);
 router.post('/courses', createAdminCourse);
 router.put('/courses/:id', updateAdminCourse);
+router.put('/courses/:id/status', updateCourseStatus);
 
 router.post('/users', createUser);
 // System Settings (Admin Only)

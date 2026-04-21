@@ -26,9 +26,10 @@ const submissionSchema = new mongoose.Schema({
         type: String // Text-based submission (optional if they just attach files)
     },
     attachments: [{
-        name: String,
-        url: String,
-        type: String
+        name: { type: String },
+        url: { type: String },
+        // Keep field name as `type` for API compatibility; wrap it to avoid Mongoose type-key collision.
+        type: { type: String }
     }],
     status: {
         type: String,

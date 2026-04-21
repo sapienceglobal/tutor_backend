@@ -72,9 +72,11 @@ const assignmentSchema = new mongoose.Schema({
         points: { type: Number, required: true }
     }],
     attachments: [{
-        name: String,
-        url: String,
-        type: String
+        name: { type: String },
+        url: { type: String },
+        // Keep field name as `type` for API compatibility; wrap it so Mongoose does not treat
+        // the entire attachment object as a primitive schema type.
+        type: { type: String }
     }],
     status: {
         type: String,

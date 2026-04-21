@@ -24,6 +24,10 @@ const reviewSchema = new mongoose.Schema({
         minlength: [10, 'Comment must be at least 10 characters'],
         maxlength: [500, 'Comment cannot exceed 500 characters'],
     },
+    embedding: { 
+        type: [Number], 
+        index: true 
+    },
     // Helpful votes
     helpfulVotes: [{
         type: mongoose.Schema.Types.ObjectId,

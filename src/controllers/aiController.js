@@ -6206,6 +6206,12 @@ You monitor the entire SaaS platform's health and provide deeply analytical, ope
 
 ${platformState}
 
+DATABASE SCHEMA MAP (For runDynamicAnalytics):
+- User: { _id, name, email, role: 'student'|'tutor'|'admin', isBlocked: boolean, createdAt: date }
+- Institute: { _id, name, isActive: boolean, subscriptionPlan: string, createdAt: date }
+- Course: { _id, title, category, price: number, status: 'published'|'draft', createdAt: date }
+- Enrollment: { _id, studentId, courseId, amountPaid: number, enrolledAt: date }
+
 THINKING PROCESS & STRICT LIMITATIONS:
 1. Is it a QUESTION looking for data? -> USE READ-ONLY TOOLS. DO NOT GENERATE JSON ACTION BLOCKS.
 2. Is it a DIRECT COMMAND? -> Use tools to find the ID, then output the JSON Action Block.
@@ -6222,6 +6228,8 @@ READ-ONLY TOOLS (BACKGROUND API CALLS):
 - getLiveRadar(): See all active live sessions RIGHT NOW.
 - checkSystemAlerts(): Get expiring subscriptions & AI quota alerts.
 - searchExams(query): Exam pass rates.
+- runDynamicAnalytics(modelName, pipeline): 🌟 Use this ONLY for complex reports (e.g., "Total revenue", "Top 5 courses by price"). Provide a strict MongoDB aggregation pipeline.
+- searchSemanticInsights(searchQuery): 🌟 RAG Tool. Use this ONLY for reading emotions, patterns, or qualitative feedback from reviews (e.g., "Why are ratings dropping?").
 
 DESTRUCTIVE ACTIONS (STRICT UI BUTTON TRIGGERS):
 You DO NOT have the power to execute blocks or suspensions. You can ONLY stage them for the admin's approval.
@@ -6333,3 +6341,70 @@ export const executeAIAction = async (req, res) => {
     }
 };
 
+
+// @desc    Generate Proactive Daily AI Report (For Cron Job)
+export const generateDailyAIReport = async () => {
+    try {
+        console.log("🤖 AI Cron Agent: Waking up to generate daily report...");
+        
+        const User = (await import('../models/User.js')).default;
+        const Institute = (await import('../models/Institute.js')).default;
+        const Enrollment = (await import('../models/Enrollment.js')).default;
+        const { agentTools } = await import('../services/aiAgentTools.js');
+
+        // Basic snapshot fetch karte hain
+        const totalStudents = await User.countDocuments({ role: 'student' });
+        const totalInstitutes = await Institute.countDocuments();
+        
+        const platformState = `DAILY SNAPSHOT: Total Students=${totalStudents}, Total Institutes=${totalInstitutes}.`;
+
+        const systemPrompt = {
+            role: 'system',
+            content: `You are the Sapience LMS AI Coordinator.
+Your task is to generate a proactive "Daily Morning Briefing" for the Super Admin.
+${platformState}
+
+INSTRUCTIONS:
+1. Use your tools (like checkSystemAlerts, searchInstitutes) to check if any institutes are expiring soon or suspended.
+2. Write a crisp, motivating 3-4 line summary. 
+3. Address the Super Admin with a "Good Morning!". 
+4. Highlight any immediate action items (e.g., "1 institute is expiring today").
+5. DO NOT generate JSON action blocks. Keep it strictly conversational and informative.`
+        };
+
+        const messages = [
+            systemPrompt,
+            { role: 'user', content: "Generate today's morning briefing and check for critical system alerts." }
+        ];
+
+        // Tumhara existing OpenAI helper use kar rahe hain
+        const responseText = await callOpenAIWithTools(messages, agentTools);
+        return responseText;
+        
+    } catch (error) {
+        console.error("Cron AI Error:", error.message);
+        return null;
+    }
+};
+
+// @desc    Get AI Generated Daily Briefings
+// @route   GET /api/ai/briefings
+export const getAIBriefings = async (req, res) => {
+    try {
+        const Notification = (await import('../models/Notification.js')).default;
+        
+        // Sirf wahi notifications laao jo AI ne generate ki hain
+        const briefings = await Notification.find({
+            userId: req.user._id, 
+            title: "🧠 AI Morning Briefing" // Exact match with cron job title
+        })
+        .sort({ createdAt: -1 }) // Sabse nayi pehle
+        .limit(30) // Last 30 days
+        .lean();
+
+        res.status(200).json({ success: true, briefings });
+    } catch (error) {
+        console.error('getAIBriefings error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch AI briefings' });
+    }
+};

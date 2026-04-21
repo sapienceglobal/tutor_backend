@@ -4,6 +4,10 @@ import Course from '../models/Course.js';
 import Enrollment from '../models/Enrollment.js';
 import LiveSession from '../models/LiveSession.js';
 import { Exam, ExamAttempt } from '../models/Exam.js';
+import Review from '../models/Review.js';
+import OpenAI from 'openai';
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // --- Groq Tool Definitions ---
 export const agentTools = [
@@ -115,6 +119,35 @@ export const agentTools = [
                 required: ["role", "status"]
             }
         }
+    },// 🌟 DYNAMIC ANALYTICS TOOL
+    {
+        type: "function",
+        function: {
+            name: "runDynamicAnalytics",
+            description: "Execute a read-only MongoDB aggregation pipeline for complex analytics (e.g., revenue calculation, grouping, sorting). Use ONLY for complex queries that fixed tools cannot answer. Pipeline must be a valid JSON array string.",
+            parameters: {
+                type: "object",
+                properties: {
+                    modelName: { type: "string", enum: ["User", "Institute", "Course", "Enrollment"], description: "The mongoose collection to query." },
+                    pipeline: { type: "string", description: "Stringified JSON array of the aggregation pipeline." }
+                },
+                required: ["modelName", "pipeline"]
+            }
+        }
+    },// 🌟 RAG DYNAMIC INSIGHTS TOOL
+    {
+        type: "function",
+        function: {
+            name: "searchSemanticInsights",
+            description: "Perform a vector search on student reviews/feedback to answer qualitative questions like 'What do students like about the Flutter course?' or 'Why are students complaining?'",
+            parameters: {
+                type: "object",
+                properties: {
+                    searchQuery: { type: "string", description: "The core intent to search for (e.g., 'audio quality issues', 'great teaching style')" }
+                },
+                required: ["searchQuery"]
+            }
+        }
     },
 ];
 
@@ -134,7 +167,9 @@ export const executeAgentTool = async (functionName, argsString) => {
             case 'getLiveRadar': return await getLiveRadar();
             case 'checkSystemAlerts': return await checkSystemAlerts();
             case 'searchExams': return await searchExams(args.query);
-           
+            case 'runDynamicAnalytics': return await runDynamicAnalytics(args.modelName, args.pipeline);
+            case 'searchSemanticInsights': return await searchSemanticInsights(args.searchQuery);
+
 
             default: return JSON.stringify({ error: `Function ${functionName} not handled.` });
         }
@@ -226,4 +261,97 @@ async function getUsersList(role, status) {
     return JSON.stringify(users.map(u => ({
         id: u._id, name: u.name, email: u.email, role: u.role, isBlocked: u.isBlocked
     })));
+}
+// 🌟 NAYA FUNCTION: Safe Dynamic Aggregation Engine
+async function runDynamicAnalytics(modelName, pipelineStr) {
+    try {
+        // Parse the pipeline provided by AI
+        let pipeline = JSON.parse(pipelineStr);
+
+        if (!Array.isArray(pipeline)) {
+            return JSON.stringify({ error: "Pipeline must be an array." });
+        }
+
+        // 🛡️ SECURITY CHECK: Block destructive stages
+        const hasForbiddenStages = pipeline.some(stage => {
+            const stageKeys = Object.keys(stage);
+            return stageKeys.includes('$out') || stageKeys.includes('$merge');
+        });
+
+        if (hasForbiddenStages) {
+            return JSON.stringify({ error: "SECURITY ALERT: $out and $merge stages are strictly forbidden." });
+        }
+
+        // 🚀 PERFORMANCE CHECK: Force a limit if the AI forgot, to prevent memory crashes
+        const hasLimit = pipeline.some(stage => Object.keys(stage).includes('$limit'));
+        if (!hasLimit) {
+            pipeline.push({ $limit: 15 }); // Max 15 results for token safety
+        }
+
+        // 🔄 Dynamic Model Selection
+        let Model;
+        switch (modelName) {
+            case 'User': Model = User; break;
+            case 'Institute': Model = Institute; break;
+            case 'Course': Model = Course; break;
+            case 'Enrollment': Model = Enrollment; break;
+            default: return JSON.stringify({ error: "Invalid model name restricted by security policy." });
+        }
+
+        // ⚡ Execute Query
+        const results = await Model.aggregate(pipeline);
+
+        if (results.length === 0) return JSON.stringify({ message: "No data found for this query." });
+
+        return JSON.stringify(results);
+
+    } catch (err) {
+        console.error("Dynamic Analytics Error:", err);
+        return JSON.stringify({ error: `Aggregation failed: ${err.message}` });
+    }
+}
+
+// 🌟 THE RAG ENGINE: Vector Search
+async function searchSemanticInsights(searchQuery) {
+    try {
+        console.log(`🧠 Generating Embedding for query: "${searchQuery}"`);
+
+        // 1. Sawaal (query) ko vector mein convert karo
+        const embeddingRes = await openai.embeddings.create({
+            model: "text-embedding-3-small",
+            input: searchQuery,
+            encoding_format: "float",
+        });
+
+        const queryVector = embeddingRes.data[0].embedding;
+
+        // 2. MongoDB Atlas Vector Search chalangao
+        const results = await Review.aggregate([
+            {
+                $vectorSearch: {
+                    index: "review_vector_index", // Isko hum MongoDB dashboard mein banayenge
+                    path: "embedding",
+                    queryVector: queryVector,
+                    numCandidates: 100,
+                    limit: 15 // Top 15 sabse relevant reviews layega
+                }
+            },
+            {
+                $project: {
+                    comment: 1, // Agar field ka naam 'reviewText' hai toh wo likhna
+                    rating: 1,
+                    score: { $meta: "vectorSearchScore" } // Relevance score
+                }
+            }
+        ]);
+
+        if (results.length === 0) {
+            return JSON.stringify({ message: "No relevant reviews or feedback found." });
+        }
+
+        return JSON.stringify(results);
+    } catch (error) {
+        console.error("Vector Search Error:", error);
+        return JSON.stringify({ error: "Failed to perform semantic search." });
+    }
 }

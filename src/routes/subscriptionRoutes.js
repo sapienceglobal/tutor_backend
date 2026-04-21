@@ -4,16 +4,16 @@ import { protect, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// 1. Sabse pehle token verify karo aur req.user set karo
+// 1. Sabse pehle token verify karo aur req.user set karo (Ye sabpe apply hoga)
 router.use(protect); 
 
-// 2. Phir check karo ki user superadmin hai ya nahi
-router.use(authorize('superadmin')); 
 
-// Ab in routes me baar-baar protect/authorize likhne ki zaroorat nahi
+// 2. GET route sab logged-in users ke liye open hai (Tutors & Admins can see plans)
 router.get('/', getPlans);
-router.post('/', createPlan);
-router.put('/:id', updatePlan);
-router.delete('/:id', deletePlan);
+
+// 3. POST, PUT, DELETE par specifically superadmin ka tala (lock) laga diya
+router.post('/', authorize('superadmin'), createPlan);
+router.put('/:id', authorize('superadmin'), updatePlan);
+router.delete('/:id', authorize('superadmin'), deletePlan);
 
 export default router;

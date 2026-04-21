@@ -3,6 +3,8 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import { initAICronJobs } from './src/services/aiCronJob.js';
+import mongoose from 'mongoose'; 
 
 // Import routes
 import connectDB from './src/config/database.js';
@@ -80,9 +82,10 @@ import superadminSecurityRoutes from './src/routes/superadminSecurityRoutes.js';
 
 // Initialize express app
 const app = express();
-
+const PORT = process.env.PORT || 4000;
 // Connect to database
 connectDB();
+
 
 // Middleware — CSP: unsafe-eval removed for security; use nonce for inline scripts if needed
 app.use(helmet({
@@ -257,11 +260,23 @@ app.use((req, res) => {
     });
 });
 
-// Start server
-const PORT = process.env.PORT || 4000;
 
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📡 API: http://localhost:${PORT}/api`);
+// Start server & Cron Jobs
+
+mongoose.connection.once('open', () => {
+    console.log("✅ MongoDB Connection Confirmed.");
+    
+    // 🌟 Start the AI Cron Agent only AFTER DB is completely ready
+    initAICronJobs();
+
+    // Start listening to API requests
+    app.listen(PORT, '0.0.0.0', () => {
+        console.log(`🚀 Server running on port ${PORT}`);
+        console.log(`📡 API: http://localhost:${PORT}/api`);
+    });
+});
+
+mongoose.connection.on('error', (err) => {
+    console.error("❌ MongoDB Error:", err);
 });
 

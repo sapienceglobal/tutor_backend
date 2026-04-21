@@ -4,7 +4,10 @@ import Enrollment from '../models/Enrollment.js';
 import { createNotification } from './notificationController.js';
 import mongoose from 'mongoose';
 import Tutor from '../models/Tutor.js';
+import OpenAI from 'openai';
 
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 // @desc    Create a review
 // @route   POST /api/reviews
 export const createReview = async (req, res) => {
@@ -62,12 +65,26 @@ export const createReview = async (req, res) => {
             });
         }
 
-        // Create review
+   // 🌟 1. Generate Vector Embedding for the review comment (Non-blocking)
+        let embedding = [];
+        try {
+            const embeddingRes = await openai.embeddings.create({
+                model: "text-embedding-3-small",
+                input: comment.trim(),
+                encoding_format: "float",
+            });
+            embedding = embeddingRes.data[0].embedding;
+        } catch (embedError) {
+            console.error('⚠️ OpenAI Embedding failed (Review still saving):', embedError.message);
+        }
+
+        // 🌟 2. Create review with embedding
         const review = await Review.create({
             courseId,
             studentId: req.user.id,
             rating,
             comment: comment.trim(),
+            ...(embedding.length > 0 && { embedding }) // Save vector if generated successfully
         });
 
         // Populate student info
@@ -216,9 +233,23 @@ export const updateReview = async (req, res) => {
             });
         }
 
-        // Update review
+      // Update review
         if (rating) review.rating = rating;
-        if (comment) review.comment = comment.trim();
+        if (comment) {
+            review.comment = comment.trim();
+            // 🌟 Re-generate Embedding because comment changed
+            try {
+                const embeddingRes = await openai.embeddings.create({
+                    model: "text-embedding-3-small",
+                    input: comment.trim(),
+                    encoding_format: "float",
+                });
+                review.embedding = embeddingRes.data[0].embedding;
+            } catch (embedError) {
+                console.error('⚠️ OpenAI Update Embedding failed:', embedError.message);
+            }
+        }
+        
         review.isEdited = true;
         review.editedAt = new Date();
 

@@ -108,3 +108,55 @@ export const requireLimit = (resourceType) => {
         }
     };
 };
+
+/**
+ * 🌟 NEW: Consumes AI Credits for a tenant.
+ * Protects against API abuse and bankruptcy!
+ * Use this in your AI routes. Example: consumeAICredits(1)
+ */
+export const consumeAICredits = (cost = 1) => {
+    return async (req, res, next) => {
+        try {
+            // Superadmins aur jinke paas tenant nahi hai (e.g., public routes), unhe bypass karo
+            if (req.user && req.user.role === 'superadmin') {
+                return next();
+            }
+
+            if (!req.tenant) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Institute context missing for AI usage.'
+                });
+            }
+
+            const currentCredits = req.tenant.features?.aiCreditsPerMonth || 0;
+
+            // 1. Check if they have enough credits
+            if (currentCredits < cost) {
+                return res.status(403).json({
+                    success: false,
+                    featureLocked: true,
+                    creditExhausted: true,
+                    message: `AI Credits exhausted! This action requires ${cost} credits, but your institute only has ${currentCredits} left. Please ask your Admin to upgrade or top-up.`
+                });
+            }
+
+            // 2. Deduct the credits (Using $inc to prevent race conditions when multiple tutors click at once)
+            await Institute.findByIdAndUpdate(
+                req.tenant._id,
+                { $inc: { 'features.aiCreditsPerMonth': -cost } }
+            );
+
+            // Update the req object so subsequent controllers have fresh data if needed
+            req.tenant.features.aiCreditsPerMonth -= cost;
+
+            next();
+        } catch (error) {
+            console.error('AI Credit consumption error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to process AI request. Please try again.'
+            });
+        }
+    };
+};
