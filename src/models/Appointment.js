@@ -37,6 +37,11 @@ const appointmentSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
+  sessionType: {
+    type: String,
+    enum: ['online_live'],
+    default: 'online_live'
+  },
   createdAt: {
     type: Date,
     default: Date.now

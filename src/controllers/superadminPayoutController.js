@@ -13,9 +13,26 @@ export const getGlobalPayouts = async (req, res) => {
         }
 
         // Fetch requests (Populating tutor info, assuming tutor ref points to a User/Tutor collection with name & email)
-        const payouts = await PayoutRequest.find(query)
-            .populate('tutorId', 'name email profileImage')
+        let payouts = await PayoutRequest.find(query)
+            .populate({
+                path: 'tutorId',
+                populate: {
+                    path: 'userId',
+                    select: 'name email profileImage'
+                }
+            })
             .sort({ createdAt: -1 });
+
+        // Map userId fields to tutorId to match frontend expectations
+        payouts = payouts.map(payout => {
+            const payoutObj = payout.toObject();
+            if (payoutObj.tutorId && payoutObj.tutorId.userId) {
+                payoutObj.tutorId.name = payoutObj.tutorId.userId.name;
+                payoutObj.tutorId.email = payoutObj.tutorId.userId.email;
+                payoutObj.tutorId.profileImage = payoutObj.tutorId.userId.profileImage;
+            }
+            return payoutObj;
+        });
 
         // Calculate Real KPIs directly from DB
         const pendingAgg = await PayoutRequest.aggregate([

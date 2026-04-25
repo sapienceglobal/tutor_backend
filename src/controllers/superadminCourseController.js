@@ -19,11 +19,28 @@ export const getAllCourses = async (req, res) => {
             ];
         }
 
-        const courses = await Course.find(query)
-            .populate('tutorId', 'name email profileImage')
+        let courses = await Course.find(query)
+            .populate({
+                path: 'tutorId',
+                populate: {
+                    path: 'userId',
+                    select: 'name email profileImage'
+                }
+            })
             .populate('instituteId', 'name subdomain')
             .populate('categoryId', 'name') // Assuming you have a Category model
             .sort({ createdAt: -1 });
+
+        // Map userId fields to tutorId to match frontend expectations
+        courses = courses.map(course => {
+            const courseObj = course.toObject();
+            if (courseObj.tutorId && courseObj.tutorId.userId) {
+                courseObj.tutorId.name = courseObj.tutorId.userId.name;
+                courseObj.tutorId.email = courseObj.tutorId.userId.email;
+                courseObj.tutorId.profileImage = courseObj.tutorId.userId.profileImage;
+            }
+            return courseObj;
+        });
 
         // Calculate Global KPIs
         const totalCourses = await Course.countDocuments();

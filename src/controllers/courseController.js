@@ -132,7 +132,10 @@ export const getAllCourses = async (req, res) => {
 
     // Filter out courses with unverified/blocked tutors
     courses = courses.filter(course => {
-      const isTutorVerified = course.tutorId && course.tutorId.isVerified;
+      const isIndependent = course.tutorId && !course.tutorId.instituteId;
+      // Independent global tutors can have their courses discovered instantly.
+      // Institute tutors still need to be verified by their institute admin.
+      const isTutorVerified = isIndependent || (course.tutorId && course.tutorId.isVerified);
       const isUserBlocked = course.tutorId && course.tutorId.userId && course.tutorId.userId.isBlocked;
       return isTutorVerified && !isUserBlocked;
     });
@@ -399,15 +402,27 @@ export const createCourse = async (req, res) => {
         message: 'Institute policy blocks global publishing for institute tutors',
       });
     }
-    const settings = await Settings.findOne();
-    const autoApprove = !settings || settings.autoApproveCourses !== false;
+    // Independent/global tutors have no institute admin to approve them
+    // → always auto-publish and force global visibility.
+    const isIndependentTutor = !tutor.instituteId;
+    
+    if (isIndependentTutor) {
+      audience.scope = AUDIENCE_SCOPES.GLOBAL;
+      audience.instituteId = null;
+    }
+
+    const isGlobal = audience.scope === AUDIENCE_SCOPES.GLOBAL;
+    const resolvedInstituteId = isGlobal ? null : (audience.instituteId || tutor.instituteId || null);
+
+    const autoApprove = isIndependentTutor || !settings || settings.autoApproveCourses !== false;
+
     const course = await Course.create({
       title,
       description,
       thumbnail,
       categoryId,
       tutorId: tutor._id,
-      instituteId: audience.scope === AUDIENCE_SCOPES.GLOBAL ? null : (audience.instituteId || tutor.instituteId || null),
+      instituteId: resolvedInstituteId,
       createdBy: req.user.id,
       status: autoApprove ? 'published' : 'pending',
       isAIGenerated: req.body.isAIGenerated || false,
@@ -418,7 +433,8 @@ export const createCourse = async (req, res) => {
       modules: modules || [],
       requirements: requirements || [],
       whatYouWillLearn: whatYouWillLearn || [],
-      visibility: audience.scope === AUDIENCE_SCOPES.GLOBAL ? 'public' : 'institute',
+      visibility: isGlobal ? 'public' : 'institute',
+      visibilityScope: isGlobal ? 'global' : 'institute',
       audience,
     });
 
@@ -434,7 +450,9 @@ export const createCourse = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: 'Course created successfully',
+      message: autoApprove
+        ? 'Course created and published successfully!'
+        : 'Course submitted for review. It will be visible after admin approval.',
       course: populatedCourse,
     });
   } catch (error) {
@@ -476,12 +494,19 @@ export const updateCourse = async (req, res) => {
       'audience',
     ];
 
+    let publishMessage = 'Course updated successfully';
+
     // Intercept Publish Request based on Admin Auto-Approve Setting
     if (req.body.status === 'published') {
       const settings = await Settings.findOne();
-      if (settings && settings.autoApproveCourses === false) {
-        // Force status to pending if auto-approve is disabled
+      const isIndependentTutor = !course.tutorId?.instituteId;
+      
+      if (!isIndependentTutor && settings && settings.autoApproveCourses === false) {
+        // Force status to pending if auto-approve is disabled for institute tutors
         req.body.status = 'pending';
+        publishMessage = 'Course submitted for review. It will be visible after admin approval.';
+      } else {
+        publishMessage = 'Course published successfully!';
       }
     }
 
@@ -564,7 +589,7 @@ export const updateCourse = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: 'Course updated successfully',
+      message: publishMessage,
       course: updatedCourse,
     });
   } catch (error) {

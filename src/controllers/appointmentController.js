@@ -3,6 +3,8 @@ import Tutor from '../models/Tutor.js';
 import ScheduleAppointment from '../models/Appointment_Schedule.js';
 import User from '../models/User.js';
 
+const buildLiveClassLink = (appointmentId) => `https://meet.jit.si/tutorapp-live-${appointmentId}`;
+
 // @desc    Get all appointments for logged-in user
 // @route   GET /api/appointments
 export const getMyAppointments = async (req, res) => {
@@ -120,12 +122,19 @@ export const getAppointmentById = async (req, res) => {
 // @route   POST /api/appointments
 export const createAppointment = async (req, res) => {
   try {
-    const { tutorId, dateTime, duration, notes } = req.body;
+    const { tutorId, dateTime, duration, notes, sessionType } = req.body;
 
     if (!tutorId || !dateTime) {
       return res.status(400).json({
         success: false,
         message: 'Tutor ID and date/time are required'
+      });
+    }
+
+    if (sessionType && sessionType !== 'online_live') {
+      return res.status(400).json({
+        success: false,
+        message: 'Only online live class booking is supported'
       });
     }
 
@@ -170,8 +179,14 @@ export const createAppointment = async (req, res) => {
       dateTime,
       duration: appointmentDuration,
       amount,
-      notes: notes || ''
+      notes: notes || '',
+      sessionType: 'online_live'
     });
+
+    if (!appointment.meetingLink) {
+      appointment.meetingLink = buildLiveClassLink(appointment._id);
+      await appointment.save();
+    }
 
     // Update tutor's students count
     tutor.studentsCount += 1;
@@ -195,7 +210,7 @@ export const createAppointment = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: 'Appointment booked successfully',
+      message: 'Live class booked successfully',
       appointment: populatedAppointment
     });
   } catch (error) {
@@ -244,6 +259,9 @@ export const updateAppointment = async (req, res) => {
         });
       }
       appointment.status = status;
+      if (status === 'confirmed' && !appointment.meetingLink) {
+        appointment.meetingLink = buildLiveClassLink(appointment._id);
+      }
     }
 
     if (dateTime && isStudent && appointment.status === 'pending') {

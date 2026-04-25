@@ -10,9 +10,8 @@ const visibilityScopeSchema = new mongoose.Schema({
   instituteId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Institute',
-    required: function () {
-      return this.visibilityScope === 'institute';
-    },
+    required: false,   // Per-model schemas (e.g. Course) control their own required logic
+    default: null,
     index: true
   },
   createdBy: {
@@ -177,9 +176,11 @@ visibilityScopeSchema.methods = {
 
 // Middleware for automatic scope validation
 visibilityScopeSchema.pre('save', function () {
-  // Validate instituteId is present when scope is institute
+  // Auto-correct: if scope says 'institute' but no instituteId is available,
+  // downgrade to 'global' to avoid a hard crash for independent tutors.
   if (this.visibilityScope === 'institute' && !this.instituteId) {
-    throw new Error('instituteId is required when visibilityScope is institute');
+    console.warn('[VisibilityScope] visibilityScope=institute but no instituteId — auto-correcting to global');
+    this.visibilityScope = 'global';
   }
 
   // Clear allowedInstitutes if not institute scope

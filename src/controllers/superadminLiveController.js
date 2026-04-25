@@ -6,11 +6,28 @@ import LiveSession from '../models/LiveSession.js';
 export const getLiveRadar = async (req, res) => {
     try {
         // Fetch ONLY ongoing sessions
-        const activeSessions = await LiveSession.find({ status: 'ongoing' })
-            .populate('tutorId', 'name email profileImage')
+        let activeSessions = await LiveSession.find({ status: 'ongoing' })
+            .populate({
+                path: 'tutorId',
+                populate: {
+                    path: 'userId',
+                    select: 'name email profileImage'
+                }
+            })
             .populate('instituteId', 'name subdomain')
             .populate('courseId', 'title')
             .sort({ startedAt: -1 });
+
+        // Map userId fields to tutorId to match frontend expectations
+        activeSessions = activeSessions.map(session => {
+            const sessionObj = session.toObject();
+            if (sessionObj.tutorId && sessionObj.tutorId.userId) {
+                sessionObj.tutorId.name = sessionObj.tutorId.userId.name;
+                sessionObj.tutorId.email = sessionObj.tutorId.userId.email;
+                sessionObj.tutorId.profileImage = sessionObj.tutorId.userId.profileImage;
+            }
+            return sessionObj;
+        });
 
         // Calculate KPIs
         const totalActiveStreams = activeSessions.length;

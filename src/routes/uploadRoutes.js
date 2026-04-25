@@ -42,14 +42,17 @@ const localVideoUpload = multer({
 // @route   POST /api/upload/image
 // @desc    Upload an image
 // @access  Private (Tutor/Admin)
-router.post('/image', protect, authorize('tutor', 'admin'), upload.single('image'), (req, res) => {
+router.post('/image', protect, authorize('tutor', 'admin', 'student'), upload.single('image'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, message: 'No file uploaded' });
   }
 
+  const imageUrl = String(req.file.path || '').replace(/^http:\/\//i, 'https://');
+
   res.json({
     success: true,
-    imageUrl: req.file.path,
+    imageUrl,
+    url: imageUrl,
     cloudinaryId: req.file.filename,
   });
 });
@@ -59,14 +62,17 @@ router.post('/image', protect, authorize('tutor', 'admin'), upload.single('image
 // @access  Private (Tutor/Admin)
 import { fileUpload } from '../utils/cloudinary.js';
 
-router.post('/file', protect, authorize('tutor', 'admin'), fileUpload.single('file'), (req, res) => {
+router.post('/file', protect, authorize('tutor', 'admin', 'student'), fileUpload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, message: 'No file uploaded' });
   }
 
+  const fileUrl = String(req.file.path || '').replace(/^http:\/\//i, 'https://');
+
   res.json({
     success: true,
-    fileUrl: req.file.path,
+    fileUrl,
+    url: fileUrl,
     name: req.file.originalname,
     type: req.file.mimetype,
     cloudinaryId: req.file.filename,

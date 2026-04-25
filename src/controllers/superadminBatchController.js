@@ -17,11 +17,28 @@ export const getGlobalBatches = async (req, res) => {
         }
 
         // Fetch batches with relations
-        const batches = await Batch.find(query)
+        let batches = await Batch.find(query)
             .populate('courseId', 'title thumbnail')
-            .populate('tutorId', 'name email profileImage')
+            .populate({
+                path: 'tutorId',
+                populate: {
+                    path: 'userId',
+                    select: 'name email profileImage'
+                }
+            })
             .populate('instituteId', 'name subdomain')
             .sort({ createdAt: -1 });
+
+        // Map userId fields to tutorId to match frontend expectations
+        batches = batches.map(batch => {
+            const batchObj = batch.toObject();
+            if (batchObj.tutorId && batchObj.tutorId.userId) {
+                batchObj.tutorId.name = batchObj.tutorId.userId.name;
+                batchObj.tutorId.email = batchObj.tutorId.userId.email;
+                batchObj.tutorId.profileImage = batchObj.tutorId.userId.profileImage;
+            }
+            return batchObj;
+        });
 
         // ─── Calculate Global KPIs ───
         const totalBatches = await Batch.countDocuments();
