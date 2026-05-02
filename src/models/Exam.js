@@ -13,8 +13,14 @@ const examQuestionSchema = new mongoose.Schema({
   },
   questionType: {
     type: String,
-    enum: ['mcq', 'numeric', 'match_the_following', 'passage_based'],
+    enum: ['mcq', 'numeric', 'match_the_following', 'passage_based', 'subjective'],
     default: 'mcq',
+  },
+  type: {
+    type: String,
+  },
+  idealAnswer: {
+    type: String,
   },
   options: [{
     text: {

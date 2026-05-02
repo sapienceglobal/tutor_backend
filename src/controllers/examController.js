@@ -294,7 +294,10 @@ export const createExam = async (req, res) => {
       hideSolutions,
       sections,
       isAdaptive,
-      batchId
+      batchId,
+      isProctoringEnabled,
+      isAudioProctoringEnabled,
+      strictTabSwitching,
     } = req.body;
 
     if (!courseId) {
@@ -345,6 +348,9 @@ export const createExam = async (req, res) => {
     const questionsToProcess = questions || [];
     const cleanedQuestions = questionsToProcess.map(q => {
       const { _id, ...questionWithoutId } = q;
+      if (questionWithoutId.type && !questionWithoutId.questionType) {
+        questionWithoutId.questionType = questionWithoutId.type;
+      }
       return questionWithoutId;
     });
 
@@ -411,6 +417,9 @@ export const createExam = async (req, res) => {
       isFree: isFree || false,
       sections: sections || [],
       isAdaptive: isAdaptive || false,
+      isProctoringEnabled: isProctoringEnabled || false,
+      isAudioProctoringEnabled: isAudioProctoringEnabled || false,
+      strictTabSwitching: strictTabSwitching || false,
       audience,
     });
 
@@ -462,6 +471,7 @@ export const updateExam = async (req, res) => {
       'maxAttempts', 'startDate', 'endDate', 'isScheduled', 'status', 'isPublished',
       'negativeMarking', 'passingPercentage', 'isFree', 'sections', 'isAdaptive',
       'batchId', 'audience',
+      'isProctoringEnabled', 'isAudioProctoringEnabled', 'strictTabSwitching',
     ];
 
     allowedUpdates.forEach(field => {
@@ -470,6 +480,9 @@ export const updateExam = async (req, res) => {
         if (field === 'questions' && Array.isArray(req.body[field])) {
           exam[field] = req.body[field].map(q => {
             const { _id, ...questionWithoutId } = q;
+            if (questionWithoutId.type && !questionWithoutId.questionType) {
+              questionWithoutId.questionType = questionWithoutId.type;
+            }
             return questionWithoutId;
           });
         } else {

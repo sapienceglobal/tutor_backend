@@ -1,7 +1,7 @@
 import { createNotification } from './notificationController.js';
 // @desc    Generate AI Study Plan
 // @route   POST /api/ai/generate-study-plan
-export const generateStudyPlan = async (req, res) => {
+export const studentGnerateStudyPlan = async (req, res) => {
     try {
         const { performanceData, courses, goals } = req.body;
 

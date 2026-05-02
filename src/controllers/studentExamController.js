@@ -26,7 +26,7 @@ export const getExamHistory = async (req, res) => {
         const attempts = await ExamAttempt.find({ studentId })
             .populate({
                 path: 'examId',
-                select: 'title courseId totalQuestions duration',
+                select: 'title courseId totalQuestions duration showResultImmediately',
                 populate: {
                     path: 'courseId',
                     select: 'title'
@@ -50,17 +50,21 @@ export const getExamHistory = async (req, res) => {
         }
 
         // Format attempts for frontend
-        const formattedAttempts = filteredAttempts.map(attempt => ({
-            _id: attempt._id,
-            examId: attempt.examId._id,
-            examTitle: attempt.examId.title,
-            courseTitle: attempt.examId.courseId?.title || 'Unknown Course',
-            score: attempt.score,
-            totalMarks: attempt.totalMarks || attempt.examId?.totalQuestions || 0,
-            submittedAt: attempt.submittedAt,
-            date: attempt.submittedAt,
-            isPassed: attempt.isPassed
-        }));
+        const formattedAttempts = filteredAttempts.map(attempt => {
+            const showResult = attempt.examId?.showResultImmediately !== false;
+            return {
+                _id: attempt._id,
+                examId: attempt.examId._id,
+                examTitle: attempt.examId.title,
+                courseTitle: attempt.examId.courseId?.title || 'Unknown Course',
+                score: showResult ? attempt.score : null,
+                totalMarks: attempt.totalMarks || attempt.examId?.totalQuestions || 0,
+                submittedAt: attempt.submittedAt,
+                date: attempt.submittedAt,
+                isPassed: showResult ? attempt.isPassed : null,
+                status: showResult ? 'Published' : 'Pending'
+            };
+        });
 
         res.status(200).json({
             success: true,
@@ -502,10 +506,14 @@ export const getAttemptDetails = async (req, res) => {
         const studentId = req.user.id;
 
         const attempt = await ExamAttempt.findOne({ _id: id, studentId })
-            .populate('examId', 'title totalMarks passingPercentage passingMarks duration totalQuestions questions showCorrectAnswers hideSolutions');
+            .populate('examId', 'title totalMarks passingPercentage passingMarks duration totalQuestions questions showCorrectAnswers hideSolutions showResultImmediately');
 
         if (!attempt) {
             return res.status(404).json({ success: false, message: 'Result not found' });
+        }
+
+        if (attempt.examId.showResultImmediately === false) {
+            return res.status(403).json({ success: false, message: 'Results are hidden by the tutor and will be published later.' });
         }
 
         const detailedAnalysis = buildAttemptQuestionResults({

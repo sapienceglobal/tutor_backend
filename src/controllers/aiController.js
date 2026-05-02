@@ -4737,19 +4737,18 @@ export const getExamSuspicionReview = async (req, res) => {
 // @desc    Evaluate student's subjective answer using AI
 // @route   POST /api/ai/evaluate-subjective
 // @access  Private (tutor)
-export const evaluateSubjectiveAnswer = async (req, res) => {
+export const evaluateSubjectiveAnswer = async (question, idealAnswer, studentAnswer, maxPoints = 1) => {
     try {
-        const { question, answer } = req.body;
-
-        if (!question || !answer) {
-            return res.status(400).json({ success: false, message: 'Question and student answer are required' });
+        if (!question || !studentAnswer) {
+            return { isCorrect: false, pointsEarned: 0, feedback: 'Question and student answer are required' };
         }
 
         const prompt = `You are an expert academic evaluator. Your task is to evaluate a student's subjective answer against the provided question. 
 Act objectively, critically, and supportively. Provide a detailed assessment mapping to Key Concepts, Clarity, Examples, and Depth of Knowledge.
 
 Question: "${question}"
-Student's Answer: "${answer}"
+Ideal Answer: "${idealAnswer || 'None provided'}"
+Student's Answer: "${studentAnswer}"
 
 Provide a JSON object with EXACTLY this structure:
 {
@@ -4776,20 +4775,24 @@ Provide a JSON object with EXACTLY this structure:
     "tips": [
         "Ask for specific terms next time.",
         "Suggest more real-world examples."
-    ]
+    ],
+    "isCorrect": true,
+    "pointsEarned": <a number between 0 and ${maxPoints} based on quality>
 }
 Ensure the output is strictly valid JSON without markdown wrapping.`;
 
         const aiResponseText = await groqService.generateCompletion(prompt, true, "llama-3.3-70b-versatile");
         const evaluation = JSON.parse(aiResponseText);
 
-        res.status(200).json({
-            success: true,
+        return {
+            isCorrect: evaluation.isCorrect || false,
+            pointsEarned: evaluation.pointsEarned || 0,
+            feedback: evaluation.feedback || 'Evaluated successfully.',
             data: evaluation
-        });
+        };
     } catch (error) {
         console.error('Evaluate Subjective Answer error:', error);
-        res.status(500).json({ success: false, message: 'AI failed to evaluate the answer' });
+        return { isCorrect: false, pointsEarned: 0, feedback: 'AI failed to evaluate the answer' };
     }
 };
 

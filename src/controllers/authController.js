@@ -17,14 +17,14 @@ import Invite from '../models/Invite.js';
 // Generate JWT Token
 const generateToken = (id, role) => {
   return jwt.sign({ id, role }, process.env.JWT_SECRET, {
-    expiresIn: '30d'
+    expiresIn: '24h'
   });
 };
 
 // Generate refresh token (long-lived)
 const generateRefreshToken = (id) => {
   return jwt.sign({ id, type: 'refresh' }, process.env.JWT_SECRET, {
-    expiresIn: '30d'
+    expiresIn: '24h'
   });
 };
 

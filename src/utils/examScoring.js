@@ -105,8 +105,9 @@ export const buildAttemptQuestionResults = ({ exam, attempt }) => {
     (attempt?.answers || []).map((answer) => [String(answer.questionId), answer])
   );
 
-  const canViewCorrectAnswer = true;
-  const canViewSolution = true;
+  // Respect tutor-configured visibility toggles
+  const canViewCorrectAnswer = exam?.showCorrectAnswers !== false;
+  const canViewSolution = exam?.hideSolutions !== true;
 
   return (exam?.questions || []).map((question, index) => {
     const studentAnswer = answerMap.get(String(question._id));

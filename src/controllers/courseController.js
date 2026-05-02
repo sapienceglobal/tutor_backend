@@ -491,7 +491,7 @@ export const updateCourse = async (req, res) => {
       'title', 'description', 'thumbnail', 'categoryId',
       'price', 'level', 'duration', 'language', 'modules',
       'requirements', 'whatYouWillLearn', 'status', 'visibility',
-      'audience',
+      'audience', 'enrollmentSettings',
     ];
 
     let publishMessage = 'Course updated successfully';

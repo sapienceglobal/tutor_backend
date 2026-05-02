@@ -58,6 +58,7 @@ import {
     superAdminCoordinatorChat, executeAIAction,
     getAIBriefings
 } from '../controllers/aiController.js';
+import { studentGnerateStudyPlan, getQuickRecommendations } from '../controllers/aiStudyPlanController.js';
 import { protect, admin, authorize } from '../middleware/auth.js';
 // 🌟 Naya consumeAICredits import kar liya
 import { requireFeature, consumeAICredits } from '../middleware/subscriptionMiddleware.js';
@@ -65,6 +66,10 @@ import { fileUpload } from '../utils/cloudinary.js';
 
 const router = express.Router();
 
+
+
+router.post('/generate-study-plan',protect, studentGnerateStudyPlan);
+router.get('/quick-recommendations',protect, getQuickRecommendations);
 // ── Super Admin Agent (MUST be before requireFeature — superadmin has no instituteId) ──
 router.post('/superadmin-coordinator', protect, authorize('superadmin'), superAdminCoordinatorChat);
 router.post('/execute-action', protect, authorize('superadmin'), executeAIAction);
