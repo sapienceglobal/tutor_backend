@@ -4,6 +4,8 @@ import PDFDocument from 'pdfkit';
 import Payment from '../models/Payment.js';
 import Course from '../models/Course.js';
 import Enrollment from '../models/Enrollment.js';
+import SubscriptionPlan from '../models/SubscriptionPlan.js';
+import Institute from '../models/Institute.js';
 import { createNotification } from './notificationController.js';
 
 // Lazy Razorpay initialization (only when payment endpoints are called)
@@ -165,6 +167,40 @@ export const verifyPayment = async (req, res) => {
                     data: { courseId: payment.courseId },
                 });
             }
+        } else if (payment.type === 'subscription_renewal' && payment.instituteId && payment.planId) {
+            // Fetch the plan
+            const plan = await SubscriptionPlan.findById(payment.planId);
+            if (plan) {
+                // Calculate new expiry date based on billingCycle
+                const currentDate = new Date();
+                let expiryDate = new Date(currentDate);
+                
+                if (plan.billingCycle === 'monthly') {
+                    expiryDate.setMonth(expiryDate.getMonth() + 1);
+                } else if (plan.billingCycle === 'yearly') {
+                    expiryDate.setFullYear(expiryDate.getFullYear() + 1);
+                } else {
+                    expiryDate = null; // Lifetime
+                }
+
+                // Update Institute
+                await Institute.findByIdAndUpdate(payment.instituteId, {
+                    subscriptionPlan: plan.name,
+                    subscriptionExpiresAt: expiryDate,
+                    features: {
+                        ...plan.features, // Spread new plan features
+                        manageTutors: true, // Keep defaults active
+                        manageStudents: true
+                    }
+                });
+
+                await createNotification({
+                    userId: payment.studentId, // the admin who paid
+                    type: 'fee_paid',
+                    title: '🚀 Subscription Upgraded!',
+                    message: `Your institute has successfully upgraded to the ${plan.name} plan.`,
+                });
+            }
         } else if (payment.type === 'institute_fee') {
              await createNotification({
                  userId: payment.studentId,
@@ -315,10 +351,22 @@ export const generateInvoice = async (req, res) => {
 // @access  Private
 export const renewSubscription = async (req, res) => {
     try {
-        const { planAmount, planName, instituteId } = req.body;
+        const { planId, instituteId } = req.body;
 
-        if (!planAmount || planAmount <= 0) {
-            return res.status(400).json({ success: false, message: 'Valid plan amount is required' });
+        if (!planId) {
+            return res.status(400).json({ success: false, message: 'planId is required' });
+        }
+
+        const plan = await SubscriptionPlan.findById(planId);
+        if (!plan) {
+            return res.status(404).json({ success: false, message: 'Plan not found' });
+        }
+
+        const planAmount = plan.price;
+        const planName = plan.name;
+
+        if (planAmount <= 0) {
+            return res.status(400).json({ success: false, message: 'This is a free plan, no payment needed' });
         }
 
         const amountInPaise = Math.round(planAmount * 100);
@@ -340,7 +388,9 @@ export const renewSubscription = async (req, res) => {
         await Payment.create({
             studentId: req.user.id,
             instituteId: instituteId || null,
+            planId: plan._id,
             amount: planAmount,
+            title: `Upgrade to ${planName}`,
             currency: 'INR',
             razorpayOrderId: order.id,
             status: 'created',

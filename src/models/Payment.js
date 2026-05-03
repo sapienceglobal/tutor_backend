@@ -17,6 +17,11 @@ const paymentSchema = new mongoose.Schema({
         ref: 'Institute',
         default: null,
     },
+    planId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'SubscriptionPlan',
+        default: null,
+    },
     type: {
         type: String,
         enum: ['course_purchase', 'subscription_renewal', 'institute_fee'],

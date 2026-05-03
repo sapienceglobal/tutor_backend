@@ -15,7 +15,7 @@ const router = express.Router();
 router.use(protect);
 
 router.post('/create-order', authorize('student'), createOrder);
-router.post('/verify', authorize('student'), verifyPayment);
+router.post('/verify', authorize('student', 'admin'), verifyPayment);
 router.get('/my-payments', authorize('student'), getMyPayments);
 router.get('/all', authorize('student'), getAllMyPayments);
 router.get('/:id/invoice', authorize('student'), generateInvoice);

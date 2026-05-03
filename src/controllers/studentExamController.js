@@ -1,6 +1,7 @@
 import { Exam, ExamAttempt } from '../models/Exam.js';
 import Course from '../models/Course.js';
 import Enrollment from '../models/Enrollment.js';
+import Batch from '../models/Batch.js';
 import mongoose from 'mongoose';
 import {
     buildAttemptQuestionResults,
@@ -11,6 +12,12 @@ import { getForUser as getEntitlementsForUser } from '../services/entitlementSer
 import { evaluateAccess } from '../services/accessPolicy.js';
 import { emitLearningEvent } from '../services/learningEventService.js';
 import { evaluateSubjectiveAnswer } from './aiController.js';
+
+const isStudentInExamBatch = async (exam, studentId, enrollment = null) => {
+    if (!exam.batchId) return true;
+    if (enrollment?.batchId?.toString() === exam.batchId.toString()) return true;
+    return Boolean(await Batch.exists({ _id: exam.batchId, students: studentId }));
+};
 
 // @desc    Get all exam attempts for analytics
 // @route   GET /api/student/exams/history-all
@@ -187,6 +194,23 @@ export const getExamById = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Exam not found or not available' });
         }
 
+        let enrollment = null;
+        if (exam.courseId && (!exam.isFree || exam.batchId)) {
+            enrollment = await Enrollment.findOne({
+                studentId: req.user.id,
+                courseId: exam.courseId,
+                status: 'active',
+            });
+
+            if (!exam.isFree && !enrollment) {
+                return res.status(403).json({ success: false, message: 'You must be enrolled in the course to take this exam' });
+            }
+
+            if (exam.batchId && !(await isStudentInExamBatch(exam, req.user.id, enrollment))) {
+                return res.status(403).json({ success: false, message: 'This exam is not available for your batch' });
+            }
+        }
+
         if (featureFlags.audienceEnforceV2) {
             const entitlements = await getEntitlementsForUser(req.user);
             const accessDecision = evaluateAccess({
@@ -297,16 +321,16 @@ export const submitExam = async (req, res) => {
         if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
 
         let enrollment = null;
-        if (!exam.isFree) {
+        if (!exam.isFree || exam.batchId) {
             enrollment = await Enrollment.findOne({
                 studentId,
                 courseId: exam.courseId,
                 status: 'active',
             });
-            if (!enrollment) {
+            if (!exam.isFree && !enrollment) {
                 return res.status(403).json({ success: false, message: 'You must be enrolled in the course to take this exam' });
             }
-            if (exam.batchId && enrollment.batchId?.toString() !== exam.batchId.toString()) {
+            if (exam.batchId && !(await isStudentInExamBatch(exam, studentId, enrollment))) {
                 return res.status(403).json({ success: false, message: 'This exam is not available for your batch' });
             }
         }
@@ -612,6 +636,36 @@ export const checkCanAttempt = async (req, res) => {
 
         if (!exam) {
             return res.status(404).json({ success: false, message: 'Exam not found' });
+        }
+
+        let enrollment = null;
+        if (exam.courseId && (!exam.isFree || exam.batchId)) {
+            enrollment = await Enrollment.findOne({
+                studentId: req.user.id,
+                courseId: exam.courseId,
+                status: 'active',
+            });
+            if (!exam.isFree && !enrollment) {
+                return res.status(403).json({ success: false, canAttempt: false, message: 'You must be enrolled in the course to take this exam' });
+            }
+            if (exam.batchId && !(await isStudentInExamBatch(exam, req.user.id, enrollment))) {
+                return res.status(403).json({ success: false, canAttempt: false, message: 'This exam is not available for your batch' });
+            }
+        }
+
+        if (featureFlags.audienceEnforceV2) {
+            const entitlements = await getEntitlementsForUser(req.user);
+            const accessDecision = evaluateAccess({
+                resource: exam,
+                entitlements,
+                requireEnrollment: !exam.isFree,
+                requirePayment: !exam.isFree,
+                isFree: exam.isFree,
+                courseId: exam.courseId,
+            });
+            if (!accessDecision.allowed) {
+                return res.status(403).json({ success: false, canAttempt: false, message: 'Exam is not available in your current audience scope' });
+            }
         }
 
         const existingAttempts = await ExamAttempt.countDocuments({

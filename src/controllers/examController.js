@@ -1,6 +1,7 @@
 import { Exam, ExamAttempt } from '../models/Exam.js';
 import Course from '../models/Course.js';
 import Enrollment from '../models/Enrollment.js';
+import Batch from '../models/Batch.js';
 import mongoose from 'mongoose';
 import {
   buildAttemptQuestionResults,
@@ -36,6 +37,12 @@ const resolveExamAudience = ({ body, tenant, fallbackBatchId = null, fallbackIns
     requireInstituteId: false,
     allowEmptyPrivate: false,
   });
+};
+
+const isStudentInExamBatch = async (exam, studentId, enrollment = null) => {
+  if (!exam.batchId) return true;
+  if (enrollment?.batchId?.toString() === exam.batchId.toString()) return true;
+  return Boolean(await Batch.exists({ _id: exam.batchId, students: studentId }));
 };
 
 // @desc    Get all exams for a course (Tutor)
@@ -173,17 +180,25 @@ export const getExamById = async (req, res) => {
     }
 
     let enrollment = null;
-    // 2. Enrollment Check (skip if isFree or isOwner)
-    if (!isOwner && !exam.isFree) {
+    // 2. Enrollment/batch check. Free exams can skip course enrollment, but not batch membership.
+    if (!isOwner && (!exam.isFree || exam.batchId)) {
       enrollment = await Enrollment.findOne({
         studentId: req.user.id,
         courseId: exam.courseId._id,
+        status: 'active',
       });
 
-      if (!enrollment) {
+      if (!exam.isFree && !enrollment) {
         return res.status(403).json({
           success: false,
           message: 'Enroll in the course to access this exam',
+        });
+      }
+
+      if (exam.batchId && !(await isStudentInExamBatch(exam, req.user.id, enrollment))) {
+        return res.status(403).json({
+          success: false,
+          message: 'This exam is not available for your batch',
         });
       }
     }
@@ -641,16 +656,16 @@ export const submitExam = async (req, res) => {
       });
     }
 
-    // Check enrollment (skip if free)
+    // Check enrollment/batch access. Free exams can skip course enrollment, but not batch membership.
     let enrollment = null;
-    if (!exam.isFree) {
+    if (!exam.isFree || exam.batchId) {
       enrollment = await Enrollment.findOne({
         studentId: req.user.id,
         courseId: exam.courseId,
         status: 'active'
       });
 
-      if (!enrollment) {
+      if (!exam.isFree && !enrollment) {
         return res.status(403).json({
           success: false,
           message: 'You must be enrolled in the course to take this exam',
@@ -658,7 +673,7 @@ export const submitExam = async (req, res) => {
       }
 
       // If exam is batch-specific, verify student is in that batch
-      if (exam.batchId && enrollment.batchId?.toString() !== exam.batchId.toString()) {
+      if (exam.batchId && !(await isStudentInExamBatch(exam, req.user.id, enrollment))) {
         return res.status(403).json({
           success: false,
           message: 'This exam is not available for your batch.'
@@ -1557,6 +1572,41 @@ export const getNextAdaptiveQuestion = async (req, res) => {
 
     if (!exam.isAdaptive) {
       return res.status(400).json({ success: false, message: 'This exam is not adaptive' });
+    }
+
+    //  Added STRICT Access Control (Audience & Enrollment Check) 🚨
+    if (featureFlags.audienceEnforceV2) {
+      const entitlements = await getEntitlementsForUser(req.user);
+      const accessDecision = evaluateAccess({
+        resource: exam,
+        entitlements,
+        requireEnrollment: !exam.isFree,
+        requirePayment: !exam.isFree,
+        isFree: exam.isFree,
+        courseId: exam.courseId,
+      });
+      if (!accessDecision.allowed) {
+        return res.status(403).json({
+          success: false,
+          message: 'Exam is not available in your current audience scope',
+        });
+      }
+    } else {
+      // Legacy Fallback Check
+      let enrollment = null;
+      if (!exam.isFree || exam.batchId) {
+        enrollment = await Enrollment.findOne({
+          studentId: req.user.id,
+          courseId: exam.courseId,
+          status: 'active'
+        });
+        if (!exam.isFree && !enrollment) {
+          return res.status(403).json({ success: false, message: 'Enroll in the course first.' });
+        }
+        if (exam.batchId && !(await isStudentInExamBatch(exam, req.user.id, enrollment))) {
+          return res.status(403).json({ success: false, message: 'Not available for your batch.' });
+        }
+      }
     }
 
     // Filter out already answered questions

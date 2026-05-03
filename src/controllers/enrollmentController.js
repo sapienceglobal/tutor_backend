@@ -77,12 +77,34 @@ export const enrollInCourse = async (req, res) => {
       }
     }
 
+    // Handle requireApproval flow
+    const needsApproval = course.enrollmentSettings?.requireApproval;
+
     // Create enrollment
     const enrollment = await Enrollment.create({
       studentId: req.user.id,
       courseId,
       batchId,
+      status: needsApproval ? 'pending' : 'active',
     });
+
+    if (needsApproval) {
+      // Notify student that their request is pending
+      await createNotification({
+        userId: req.user.id,
+        type: 'course_enrolled',
+        title: '⏳ Enrollment Request Sent',
+        message: `Your request to join "${course.title}" has been sent. You'll be notified once the tutor approves it.`,
+        data: { courseId: course._id }
+      });
+
+      return res.status(201).json({
+        success: true,
+        pending: true,
+        message: 'Enrollment request sent. Waiting for tutor approval.',
+        enrollment,
+      });
+    }
 
     await createNotification({
       userId: req.user.id,
@@ -490,5 +512,75 @@ export const getStudentAnnouncements = async (req, res) => {
       success: false,
       message: 'Internal server error'
     });
+  }
+};
+
+// @desc    Approve a pending enrollment request (Tutor only)
+// @route   PATCH /api/enrollments/:id/approve
+export const approveEnrollment = async (req, res) => {
+  try {
+    const enrollment = await Enrollment.findById(req.params.id)
+      .populate({ path: 'courseId', populate: { path: 'tutorId', select: 'userId' } });
+
+    if (!enrollment) return res.status(404).json({ success: false, message: 'Enrollment not found' });
+    if (enrollment.status !== 'pending') return res.status(400).json({ success: false, message: 'Enrollment is not pending' });
+
+    // Ownership check
+    if (enrollment.courseId?.tutorId?.userId?.toString() !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+
+    enrollment.status = 'active';
+    await enrollment.save();
+
+    // Increment course enrolled count
+    await Course.findByIdAndUpdate(enrollment.courseId._id, { $inc: { enrolledCount: 1 } });
+
+    // Notify student
+    await createNotification({
+      userId: enrollment.studentId.toString(),
+      type: 'course_enrolled',
+      title: '✅ Enrollment Approved!',
+      message: `Your request to join "${enrollment.courseId.title}" has been approved. You can now start learning!`,
+      data: { courseId: enrollment.courseId._id }
+    });
+
+    res.status(200).json({ success: true, message: 'Enrollment approved', enrollment });
+  } catch (error) {
+    console.error('Approve enrollment error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+// @desc    Reject a pending enrollment request (Tutor only)
+// @route   DELETE /api/enrollments/:id/reject
+export const rejectEnrollment = async (req, res) => {
+  try {
+    const enrollment = await Enrollment.findById(req.params.id)
+      .populate({ path: 'courseId', populate: { path: 'tutorId', select: 'userId' } });
+
+    if (!enrollment) return res.status(404).json({ success: false, message: 'Enrollment not found' });
+    if (enrollment.status !== 'pending') return res.status(400).json({ success: false, message: 'Enrollment is not pending' });
+
+    // Ownership check
+    if (enrollment.courseId?.tutorId?.userId?.toString() !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+
+    // Notify student before deleting
+    await createNotification({
+      userId: enrollment.studentId.toString(),
+      type: 'general',
+      title: '❌ Enrollment Request Declined',
+      message: `Your request to join "${enrollment.courseId.title}" was not approved. Please contact the tutor for more information.`,
+      data: { courseId: enrollment.courseId._id }
+    });
+
+    await enrollment.deleteOne();
+
+    res.status(200).json({ success: true, message: 'Enrollment request rejected' });
+  } catch (error) {
+    console.error('Reject enrollment error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };

@@ -98,7 +98,14 @@ export const createAssignment = async (req, res) => {
 
         // Notify enrolled students
         try {
-            const enrollments = await Enrollment.find({ courseId, status: 'active' }).select('studentId');
+            const enrollmentQuery = { courseId, status: 'active' };
+            if (audience.scope === AUDIENCE_SCOPES.BATCH) {
+                enrollmentQuery.batchId = { $in: audience.batchIds };
+            }
+            if (audience.scope === AUDIENCE_SCOPES.PRIVATE) {
+                enrollmentQuery.studentId = { $in: audience.studentIds };
+            }
+            const enrollments = await Enrollment.find(enrollmentQuery).select('studentId');
             if (enrollments.length > 0) {
                 const notifications = enrollments.map(enr => ({
                     userId: enr.studentId,

@@ -8,7 +8,9 @@ import {
   // updateProgress,     
   checkEnrollment,
   removeStudentFromCourse,
-  getStudentAnnouncements
+  getStudentAnnouncements,
+  approveEnrollment,
+  rejectEnrollment,
 } from '../controllers/enrollmentController.js';
 import { protect, authorize } from '../middleware/auth.js';
 
@@ -26,4 +28,8 @@ router.delete('/:id', unenrollFromCourse);
 router.delete('/tutor/:id', removeStudentFromCourse);
 // router.patch('/:id/progress', updateProgress);
 
-export default router;
+// Tutor-only: approve / reject pending enrollment requests
+router.patch('/:id/approve', authorize('tutor', 'admin'), approveEnrollment);
+router.delete('/:id/reject', authorize('tutor', 'admin'), rejectEnrollment);
+
+export default router;

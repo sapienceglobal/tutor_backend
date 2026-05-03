@@ -1,6 +1,7 @@
 import User from '../models/User.js';
 import Tutor from '../models/Tutor.js';
 import Course from '../models/Course.js';
+import Batch from '../models/Batch.js';
 import Enrollment from '../models/Enrollment.js';
 import Payment from '../models/Payment.js';
 import InstituteMembership from '../models/InstituteMembership.js';
@@ -43,13 +44,23 @@ export const getForUser = async (userOrId, activeInstituteId = null) => {
         .select('courseId batchId');
 
     const enrolledCourseIds = uniq(enrollments.map((enrollment) => toStringId(enrollment.courseId?._id || enrollment.courseId)));
-    const batchIds = uniq(enrollments.map((enrollment) => toStringId(enrollment.batchId)));
     const enrollmentInstituteIds = uniq(enrollments.map((enrollment) => toStringId(enrollment.courseId?.instituteId)));
+
+    const studentBatches = user.role === 'student'
+        ? await Batch.find({ students: user._id }).select('_id instituteId courseId')
+        : [];
+
+    const batchIds = uniq([
+        ...enrollments.map((enrollment) => toStringId(enrollment.batchId)),
+        ...studentBatches.map((batch) => toStringId(batch._id)),
+    ]);
+    const batchInstituteIds = uniq(studentBatches.map((batch) => toStringId(batch.instituteId)));
 
     const membershipInstituteIds = uniq([
         ...normalizedMemberships.map((membership) => membership.instituteId),
         directInstituteId,
         ...enrollmentInstituteIds,
+        ...batchInstituteIds,
     ]);
 
     const paidPayments = await Payment.find({

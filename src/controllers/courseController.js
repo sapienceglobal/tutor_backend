@@ -392,8 +392,10 @@ export const createCourse = async (req, res) => {
       });
     }
 
+    const tutorInstituteId = tutor.instituteId || req.tenant?._id || null;
+
     if (
-      tutor.instituteId
+      tutorInstituteId
       && audience.scope === AUDIENCE_SCOPES.GLOBAL
       && req.tenant?.features?.allowGlobalPublishingByInstituteTutors !== true
     ) {
@@ -404,7 +406,7 @@ export const createCourse = async (req, res) => {
     }
     // Independent/global tutors have no institute admin to approve them
     // → always auto-publish and force global visibility.
-    const isIndependentTutor = !tutor.instituteId;
+    const isIndependentTutor = !tutorInstituteId;
     
     if (isIndependentTutor) {
       audience.scope = AUDIENCE_SCOPES.GLOBAL;
@@ -412,8 +414,9 @@ export const createCourse = async (req, res) => {
     }
 
     const isGlobal = audience.scope === AUDIENCE_SCOPES.GLOBAL;
-    const resolvedInstituteId = isGlobal ? null : (audience.instituteId || tutor.instituteId || null);
+    const resolvedInstituteId = isGlobal ? null : (audience.instituteId || tutorInstituteId || null);
 
+    const settings = await Settings.findOne();
     const autoApprove = isIndependentTutor || !settings || settings.autoApproveCourses !== false;
 
     const course = await Course.create({
@@ -499,7 +502,7 @@ export const updateCourse = async (req, res) => {
     // Intercept Publish Request based on Admin Auto-Approve Setting
     if (req.body.status === 'published') {
       const settings = await Settings.findOne();
-      const isIndependentTutor = !course.tutorId?.instituteId;
+      const isIndependentTutor = !(course.tutorId?.instituteId || req.tenant?._id);
       
       if (!isIndependentTutor && settings && settings.autoApproveCourses === false) {
         // Force status to pending if auto-approve is disabled for institute tutors
@@ -538,7 +541,7 @@ export const updateCourse = async (req, res) => {
       }
 
       if (
-        course.tutorId?.instituteId
+        (course.tutorId?.instituteId || req.tenant?._id)
         && audience.scope === AUDIENCE_SCOPES.GLOBAL
         && req.tenant?.features?.allowGlobalPublishingByInstituteTutors !== true
       ) {
@@ -551,7 +554,7 @@ export const updateCourse = async (req, res) => {
       course.audience = audience;
       course.visibility = audience.scope === AUDIENCE_SCOPES.GLOBAL ? 'public' : 'institute';
       if (audience.scope !== AUDIENCE_SCOPES.GLOBAL) {
-        course.instituteId = audience.instituteId || course.tutorId?.instituteId || req.tenant?._id || null;
+      course.instituteId = audience.instituteId || course.tutorId?.instituteId || req.tenant?._id || null;
       } else {
         course.instituteId = null;
       }

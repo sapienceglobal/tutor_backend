@@ -1,6 +1,7 @@
 import Batch from '../models/Batch.js';
 import User from '../models/User.js';
 import Tutor from '../models/Tutor.js';
+import Course from '../models/Course.js';
 import { ExamAttempt } from '../models/Exam.js';
 import Enrollment from '../models/Enrollment.js';
 import mongoose from 'mongoose';
@@ -152,7 +153,7 @@ export const getBatches = async (req, res) => {
         if (req.tenant) filter.instituteId = req.tenant._id;
 
         const batches = await Batch.find(filter)
-            .populate('courseId', 'title thumbnail')
+            .populate('courseId', 'title thumbnail isFree status')
             .populate({
                 path: 'tutorId',
                 populate: { path: 'userId', select: 'name profileImage' }
@@ -175,7 +176,9 @@ export const getBatches = async (req, res) => {
 // @access  Private (Student)
 export const getMyBatches = async (req, res) => {
     try {
-        let filter = { students: req.user._id };
+        const studentId = req.user._id; 
+        let filter = { students: studentId };
+    
 
         if (req.query.scope === 'global') {
             filter.instituteId = null;
@@ -183,10 +186,12 @@ export const getMyBatches = async (req, res) => {
             filter.instituteId = req.tenant ? req.tenant._id : { $ne: null };
         } else if (req.query.scope === 'strict') {
             if (req.tenant) filter.instituteId = req.tenant._id;
+        } else if (req.tenant) {
+            filter.instituteId = req.tenant._id;
         }
 
         const batches = await Batch.find(filter)
-            .populate('courseId', 'title thumbnail')
+            .populate('courseId', 'title thumbnail isFree status')
             .populate({
                 path: 'tutorId',
                 populate: { path: 'userId', select: 'name profileImage' }
@@ -197,7 +202,15 @@ export const getMyBatches = async (req, res) => {
             })
             .sort({ startDate: -1 });
 
-        res.status(200).json({ success: true, count: batches.length, batches });
+        const activeEnrollments = await Enrollment.find({ studentId, status: 'active' }).select('courseId').lean();
+        const enrolledCourseIds = new Set(activeEnrollments.map((enrollment) => enrollment.courseId.toString()));
+        const joinableBatches = batches.filter((batch) => {
+            const course = batch.courseId;
+            if (!course || course.status !== 'published') return false;
+            return course.isFree || enrolledCourseIds.has(course._id.toString());
+        });
+
+        res.status(200).json({ success: true, count: joinableBatches.length, batches: joinableBatches });
     } catch (error) {
         console.error('Get my batches error:', error);
         res.status(500).json({ success: false, message: 'Server error' });
@@ -250,22 +263,42 @@ export const joinBatch = async (req, res) => {
         const batch = await Batch.findById(req.params.id);
 
         if (!batch) return res.status(404).json({ success: false, message: 'Batch not found' });
+        if (batch.instituteId && req.tenant?._id?.toString() !== batch.instituteId.toString()) {
+            return res.status(403).json({ success: false, message: 'This batch is not available in your institute' });
+        }
         if (batch.students.map(s => s.toString()).includes(studentId.toString())) {
             return res.status(400).json({ success: false, message: 'You have already joined this batch' });
+        }
+
+        const course = await Course.findById(batch.courseId).select('isFree status title');
+        if (!course || course.status !== 'published') {
+            return res.status(403).json({ success: false, message: 'The linked course is not currently available' });
+        }
+
+        let enrollment = await Enrollment.findOne({ studentId, courseId: batch.courseId });
+        if (enrollment && enrollment.status !== 'active') {
+            return res.status(403).json({ success: false, message: 'Your course enrollment is not active yet' });
+        }
+        if (!enrollment && !course.isFree) {
+            return res.status(403).json({ success: false, message: 'Enroll in the linked course before joining this batch' });
         }
 
         batch.students.push(studentId);
         await batch.save();
 
-        // Sync enrollment batchId if student is enrolled in the course
-        if (batch.courseId) {
-            await Enrollment.updateOne(
-                { studentId, courseId: batch.courseId },
-                { $set: { batchId: batch._id } }
-            );
+        if (enrollment) {
+            enrollment.batchId = batch._id;
+            await enrollment.save();
+        } else {
+            enrollment = await Enrollment.create({
+                studentId,
+                courseId: batch.courseId,
+                batchId: batch._id,
+                status: 'active',
+            });
         }
 
-        res.status(200).json({ success: true, message: 'Successfully joined the batch', batch });
+        res.status(200).json({ success: true, message: 'Successfully joined the batch', batch, enrollment });
     } catch (error) {
         console.error('Join batch error:', error);
         res.status(500).json({ success: false, message: 'Server error' });

@@ -10,7 +10,7 @@ const toBoolean = (value, defaultValue = false) => {
 export const featureFlags = Object.freeze({
     audienceWriteV2: toBoolean(process.env.FF_AUDIENCE_WRITE_V2, true),
     audienceReadV2Shadow: toBoolean(process.env.FF_AUDIENCE_READ_V2_SHADOW, true),
-    audienceEnforceV2: toBoolean(process.env.FF_AUDIENCE_ENFORCE_V2, false),
+    audienceEnforceV2: toBoolean(process.env.FF_AUDIENCE_ENFORCE_V2, true),
     analyticsEventsV1: toBoolean(process.env.FF_ANALYTICS_EVENTS_V1, true),
 });
 
