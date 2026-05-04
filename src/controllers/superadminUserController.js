@@ -62,13 +62,19 @@ export const getUserProfile = async (req, res) => {
             };
         } 
         
-        // ─── IF USER IS A TUTOR ───
+       // ─── IF USER IS A TUTOR ───
         else if (user.role === 'tutor') {
-            // Courses created by tutor
-            const courses = await Course.find({ tutorId: id });
+            // ✅ FIX: Find the internal Tutor document ID first using the incoming User ID
+            const tutorDoc = await Tutor.findOne({ userId: id });
             
-            // Batches managed by tutor
-            const batches = await Batch.find({ tutorId: id }).populate('courseId', 'title');
+            let courses = [];
+            let batches = [];
+            
+            if (tutorDoc) {
+                // Now query using the actual Tutor model _id
+                courses = await Course.find({ tutorId: tutorDoc._id });
+                batches = await Batch.find({ tutorId: tutorDoc._id }).populate('courseId', 'title');
+            }
 
             // Total students taught (Sum of enrolledCount across their courses)
             const totalStudentsTaught = courses.reduce((acc, curr) => acc + (curr.enrolledCount || 0), 0);

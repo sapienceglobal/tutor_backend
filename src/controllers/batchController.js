@@ -65,12 +65,16 @@ export const createBatch = async (req, res) => {
             students: students || []
         });
 
-        // Sync enrollments for added students
+     // Sync enrollments (Update existing, Create for unenrolled)
         if (students && students.length > 0) {
-            await Enrollment.updateMany(
-                { studentId: { $in: students }, courseId: courseId },
-                { $set: { batchId: batch._id } }
-            );
+            const bulkOps = students.map(studentId => ({
+                updateOne: {
+                    filter: { studentId, courseId },
+                    update: { $set: { studentId, courseId, batchId: batch._id, status: 'active' } },
+                    upsert: true
+                }
+            }));
+            await Enrollment.bulkWrite(bulkOps);
         }
 
         res.status(201).json({ success: true, message: 'Batch created successfully', batch });
@@ -117,11 +121,16 @@ export const updateBatch = async (req, res) => {
                     { $set: { batchId: null } }
                 );
             }
+         // ✅Auto-enroll unenrolled students during batch edit
             if (students.length > 0) {
-                await Enrollment.updateMany(
-                    { studentId: { $in: students }, courseId: batch.courseId },
-                    { $set: { batchId: batch._id } }
-                );
+                const bulkOps = students.map(studentId => ({
+                    updateOne: {
+                        filter: { studentId, courseId: batch.courseId },
+                        update: { $set: { studentId, courseId: batch.courseId, batchId: batch._id, status: 'active' } },
+                        upsert: true
+                    }
+                }));
+                await Enrollment.bulkWrite(bulkOps);
             }
         }
 
@@ -391,12 +400,16 @@ export const updateBatchStudents = async (req, res) => {
             );
         }
 
-        // Set batchId for students added to this batch
+     // Auto-enroll unenrolled students during Direct Student Add
         if (studentIds.length > 0) {
-            await Enrollment.updateMany(
-                { studentId: { $in: studentIds }, courseId: batch.courseId },
-                { $set: { batchId: batch._id } }
-            );
+            const bulkOps = studentIds.map(studentId => ({
+                updateOne: {
+                    filter: { studentId, courseId: batch.courseId },
+                    update: { $set: { studentId, courseId: batch.courseId, batchId: batch._id, status: 'active' } },
+                    upsert: true
+                }
+            }));
+            await Enrollment.bulkWrite(bulkOps);
         }
 
         res.status(200).json({ success: true, message: 'Batch students updated successfully', batch });

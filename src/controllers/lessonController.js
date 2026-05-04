@@ -380,18 +380,16 @@ export const updateLesson = async (req, res) => {
       }
     }
 
-    // Update lesson fields manually to avoid shallow copy issues
+  // ✅ FIX: Update lesson fields accurately
     if (updateData.title !== undefined) lesson.title = updateData.title;
     if (updateData.description !== undefined) lesson.description = updateData.description;
-    if (updateData.isFree !== undefined) lesson.isFree = updateData.isFree;
+    if (updateData.isFree !== undefined) lesson.isFree = updateData.isFree === true || updateData.isFree === 'true'; // Strict boolean cast
     if (updateData.type !== undefined) lesson.type = updateData.type;
 
-    // Handle content object specially
+    // ✅ FIX: Content object needs exact overwrite for Mongoose Mixed types
     if (updateData.content) {
-      lesson.content = {
-        ...lesson.content,
-        ...updateData.content
-      };
+      lesson.content = updateData.content;
+      lesson.markModified('content'); // Crucial step for updating Mixed schema types in Mongoose
     }
 
     await lesson.save();

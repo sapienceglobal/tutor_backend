@@ -286,8 +286,13 @@ export const getCourseById = async (req, res) => {
 
     // Determine if the course is publicly available
     // A course is available if it's published AND its tutor is verified/not blocked
-    const isTutorVerified = course.tutorId && course.tutorId.isVerified;
+   // ✅ FIX: Determine if the course is publicly available (Matching getAllCourses logic)
+    const isIndependent = course.tutorId && !course.tutorId.instituteId;
+    
+    // Independent tutors bypass the verification check for publishing global courses
+    const isTutorVerified = isIndependent || (course.tutorId && course.tutorId.isVerified);
     const isTutorBlocked = course.tutorId && course.tutorId.userId && course.tutorId.userId.isBlocked;
+    
     const isCourseAvailable = course.status === 'published' && isTutorVerified && !isTutorBlocked;
 
     // Security: Strict Role-Based Access Control
@@ -685,8 +690,9 @@ export const getCoursesByTutor = async (req, res) => {
 // @desc    Get my courses (Tutor's own courses)
 // @route   GET /api/courses/my-courses
 export const getMyCourses = async (req, res) => {
-  try {
-    const tutor = await Tutor.findOne({ userId: req.user.id });
+try {
+    // ✅ FIX: Safe ID mapping
+    const tutor = await Tutor.findOne({ userId: req.user.id || req.user._id });
 
     if (!tutor) {
       return res.status(403).json({

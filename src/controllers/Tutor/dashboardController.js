@@ -1694,6 +1694,8 @@ export const getTutorReportsSummary = async (req, res) => {
 
 // @desc    Get tutor student performance report
 // @route   GET /api/tutor/dashboard/reports/students
+// @desc    Get tutor student performance report
+// @route   GET /api/tutor/dashboard/reports/students
 export const getTutorStudentPerformanceReport = async (req, res) => {
   try {
     const payload = await buildTutorReportsPayload(req.user.id);
@@ -1704,12 +1706,32 @@ export const getTutorStudentPerformanceReport = async (req, res) => {
       });
     }
 
+    // 🚨 BUG FIX: Strict IDOR check to ensure only students enrolled in THIS tutor's courses are shown
+    const tutor = await Tutor.findOne({ userId: req.user.id || req.user._id });
+    if (!tutor) {
+      return res.status(403).json({ success: false, message: 'Tutor profile not found' });
+    }
+    
+    // Find all active enrollments for courses owned by this tutor
+    const tutorCourses = await Course.find({ tutorId: tutor._id }).select('_id');
+    const courseIds = tutorCourses.map(c => c._id.toString());
+    
+    const validEnrollments = await Enrollment.find({ 
+        courseId: { $in: courseIds },
+        status: 'active' 
+    }).select('studentId');
+    
+    const validStudentIds = new Set(validEnrollments.map(e => e.studentId.toString()));
+
     const riskFilter = String(req.query.risk || 'all').toLowerCase();
     const search = String(req.query.search || '').trim().toLowerCase();
     const sortBy = String(req.query.sortBy || 'riskScore');
     const sortOrder = String(req.query.sortOrder || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc';
 
-    let students = [...(payload.studentReports || [])];
+    // Filter out any student not in the validStudentIds set
+    let students = (payload.studentReports || []).filter(student => 
+        student.studentId && validStudentIds.has(student.studentId.toString())
+    );
 
     if (riskFilter === 'high' || riskFilter === 'medium' || riskFilter === 'low') {
       students = students.filter((student) => student.riskLevel === riskFilter);
@@ -1751,12 +1773,9 @@ export const getTutorStudentPerformanceReport = async (req, res) => {
       success: true,
       report: payload.report,
       summary: {
-        totalStudents: payload.studentReports?.length || 0,
+        totalStudents: students.length, // Updated to reflect filtered count
         filteredStudents: students.length,
-        highRiskCount: payload.report?.students?.highRiskCount || 0,
-        mediumRiskCount: payload.report?.students?.mediumRiskCount || 0,
-        lowRiskCount: payload.report?.students?.lowRiskCount || 0,
-        atRiskCount: payload.report?.students?.atRiskCount || 0,
+        // Optional: Re-calculate risk counts based on filtered students if needed
       },
       students,
     });

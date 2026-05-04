@@ -11,10 +11,13 @@ export const getAllTutors = async (req, res) => {
     // Build filter object - Only show approved/verified tutors to students
     let filter = { isVerified: true };
 
+  // ✅ FIX: In MongoDB, missing fields and 'null' values need to be checked together
+    const globalInstituteFilter = { $in: [null, undefined] };
+
     // Multi-tenancy Scope Logic (Global vs Institute)
     if (scope === 'global') {
-      // Global tutors are those who are not affiliated with any institute
-      filter.instituteId = { $exists: false };
+      // Global tutors are those who are not affiliated with any institute (null or missing)
+      filter.instituteId = globalInstituteFilter;
     } else if (scope === 'institute' && req.user) {
       // Institute tutors are those affiliated with the user's institute
       const user = await User.findById(req.user.id);
@@ -33,14 +36,14 @@ export const getAllTutors = async (req, res) => {
         const user = await User.findById(req.user.id);
         if (user && user.instituteId) {
           filter.$or = [
-            { instituteId: { $exists: false } },
+            { instituteId: globalInstituteFilter },
             { instituteId: user.instituteId }
           ];
         } else {
-          filter.instituteId = { $exists: false };
+          filter.instituteId = globalInstituteFilter;
         }
       } else {
-        filter.instituteId = { $exists: false };
+        filter.instituteId = globalInstituteFilter;
       }
     }
 

@@ -1,12 +1,18 @@
+import LiveClass from '../models/LiveClass.js';
 import LiveSession from '../models/LiveSession.js';
 
-// @desc    Get all active live classes (God Radar)
+// @desc    Get all active/scheduled live classes (God Radar)
 // @route   GET /api/superadmin/live-classes/radar
 // @access  Private/Superadmin
 export const getLiveRadar = async (req, res) => {
     try {
-        // Fetch ONLY ongoing sessions
-        let activeSessions = await LiveSession.find({ status: 'ongoing' })
+        // ✅ FIX: Fetch from LiveClass instead of LiveSession since webhook might not be active yet
+        let activeClasses = await LiveClass.find({ 
+            status: { $in: ['live', 'scheduled'] } 
+        })
+            .populate('instituteId', 'name subdomain')
+            .populate('courseId', 'title')
+            // tutorId refs 'Tutor', so we need to deep populate 'userId'
             .populate({
                 path: 'tutorId',
                 populate: {
@@ -14,31 +20,34 @@ export const getLiveRadar = async (req, res) => {
                     select: 'name email profileImage'
                 }
             })
-            .populate('instituteId', 'name subdomain')
-            .populate('courseId', 'title')
-            .sort({ startedAt: -1 });
+            .sort({ dateTime: -1 });
 
-        // Map userId fields to tutorId to match frontend expectations
-        activeSessions = activeSessions.map(session => {
-            const sessionObj = session.toObject();
+        // Map fields to match what the Frontend Radar expects
+        const activeSessions = activeClasses.map(cls => {
+            const sessionObj = cls.toObject();
+            
+            // Map Tutor's underlying User details for UI
             if (sessionObj.tutorId && sessionObj.tutorId.userId) {
                 sessionObj.tutorId.name = sessionObj.tutorId.userId.name;
                 sessionObj.tutorId.email = sessionObj.tutorId.userId.email;
                 sessionObj.tutorId.profileImage = sessionObj.tutorId.userId.profileImage;
             }
+
+            // Map mapping keys for UI
+            sessionObj.participantCount = 0; // Hardcoded until real webhooks are connected
+            sessionObj.startedAt = sessionObj.dateTime; // Fallback for UI timer
+            
             return sessionObj;
         });
 
         // Calculate KPIs
         const totalActiveStreams = activeSessions.length;
-        
-        // Total Concurrent Users (CCU) right now
-        const totalCCU = activeSessions.reduce((acc, session) => acc + (session.participantCount || 0), 0);
+        const totalCCU = 0; // Will be 0 until real metrics logic is implemented
 
-        // Calculate total streams today (including ended)
+        // Calculate total streams today
         const today = new Date();
         today.setHours(0, 0, 0, 0);
-        const streamsToday = await LiveSession.countDocuments({ startedAt: { $gte: today } });
+        const streamsToday = await LiveClass.countDocuments({ dateTime: { $gte: today } });
 
         res.status(200).json({
             success: true,
@@ -64,12 +73,11 @@ export const forceKillSession = async (req, res) => {
     try {
         const { id } = req.params;
 
-        const session = await LiveSession.findByIdAndUpdate(
+        // ✅ FIX: Use LiveClass and set status to 'cancelled' (since 'force_killed' is not in enum)
+        const session = await LiveClass.findByIdAndUpdate(
             id,
             { 
-                status: 'force_killed', 
-                endedAt: new Date(),
-                participantCount: 0 // Reset CCU
+                status: 'cancelled' // Enum valid value
             },
             { new: true }
         );
@@ -80,7 +88,6 @@ export const forceKillSession = async (req, res) => {
 
         // NOTE: Asli app me yahan ek Socket.io ya Pusher event emit kar dena 
         // jo tutor/students ke frontend ko force disconnect kar de.
-        // io.to(session.meetingId).emit('session_force_ended_by_admin');
 
         res.status(200).json({
             success: true,

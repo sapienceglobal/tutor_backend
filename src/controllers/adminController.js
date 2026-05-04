@@ -314,9 +314,25 @@ export const getAllStudents = async (req, res) => {
             pending: students.filter(s => s.isVerified === false).length,
         };
 
-        // Fetch recent enrollments as activities
+        // ✅ FIX: Fetch recent enrollments as activities (With Strict Tenant Isolation)
         const Enrollment = (await import('../models/Enrollment.js')).default;
-        const recentActivitiesRaw = await Enrollment.find({ status: 'active' })
+        const Course = (await import('../models/Course.js')).default;
+
+        let enrollmentFilter = { status: 'active' };
+
+        // If it's an institute admin, they should only see enrollments for THEIR courses
+        if (req.user && req.user.role === 'admin') {
+            const adminUser = await User.findById(req.user.id);
+            if (adminUser && adminUser.instituteId) {
+                // Find all courses belonging to this institute
+                const instituteCourses = await Course.find({ instituteId: adminUser.instituteId }).select('_id');
+                const courseIds = instituteCourses.map(c => c._id);
+                // Filter enrollments to only include these courses
+                enrollmentFilter.courseId = { $in: courseIds };
+            }
+        }
+
+        const recentActivitiesRaw = await Enrollment.find(enrollmentFilter)
             .sort({ enrolledAt: -1 })
             .limit(10)
             .populate('studentId', 'name profileImage')

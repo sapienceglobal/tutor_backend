@@ -82,6 +82,21 @@ export const getAllLeaves = async (req, res) => {
         if (status) filter.status = status;
         if (role) filter.role = role;
 
+        // ✅ FIX: Strict Tenant Isolation (Cross-tenant leak prevention)
+        if (req.user && req.user.role === 'admin') {
+            const adminUser = await User.findById(req.user.id);
+            if (!adminUser || !adminUser.instituteId) {
+                return res.status(403).json({ success: false, message: 'Admin institute not found' });
+            }
+            
+            // Find all users belonging to this admin's institute
+            const instituteUsers = await User.find({ instituteId: adminUser.instituteId }).select('_id');
+            const instituteUserIds = instituteUsers.map(u => u._id);
+            
+            // Force the filter to ONLY include leaves from these specific users
+            filter.userId = { $in: instituteUserIds };
+        }
+
         const leaves = await Leave.find(filter)
             .populate('userId', 'name email profileImage')
             .sort({ createdAt: -1 });
