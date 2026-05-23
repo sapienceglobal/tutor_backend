@@ -143,6 +143,10 @@ app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
 app.use('/api/auth/forgot-password', authLimiter);
 
+// Serve uploaded media (HLS videos, etc.)
+import path from 'path';
+app.use('/uploads', express.static(path.join(process.cwd(), 'public', 'uploads')));
+
 // Public health routes (no API key required)
 app.get('/api/health', (req, res) => {
     res.status(200).json({

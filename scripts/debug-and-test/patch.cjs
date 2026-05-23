@@ -1,6 +1,6 @@
 const fs = require('fs');
 
-let content = fs.readFileSync('src/controllers/aiController.js', 'utf8');
+let content = fs.readFileSync('../../src/controllers/aiController.js', 'utf8');
 
 // 1. Insert callGroqWithTools before generateQuestions
 const insertIndex = content.indexOf('export const generateQuestions = async (req, res) => {');
@@ -223,5 +223,5 @@ export const executeAIAction = async (req, res) => {
 
 `;
 
-fs.writeFileSync('src/controllers/aiController.js', content + eofCode);
+fs.writeFileSync('../../src/controllers/aiController.js', content + eofCode);
 console.log('Patch complete.');

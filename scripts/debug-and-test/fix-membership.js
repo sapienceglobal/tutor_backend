@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const InstituteMembership = require('./src/models/InstituteMembership.js').default;
+const InstituteMembership = require('../../src/models/InstituteMembership.js').default;
 
 async function fixMembership() {
   try {
