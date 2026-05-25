@@ -157,6 +157,7 @@ export const getAllExams = async (req, res) => {
                 isScheduled: exam.isScheduled,
                 // Tutor Details
                 tutorName: exam.courseId?.tutorId?.userId?.name || 'Unknown Tutor',
+                courseId: exam.courseId?._id,
                 courseTitle: exam.courseId?.title,
                 // Attempt Info
                 attemptCount: attempts.length,
