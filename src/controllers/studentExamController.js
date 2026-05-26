@@ -91,7 +91,11 @@ export const getAllExams = async (req, res) => {
         const studentId = req.user.id;
 
         // Fetch all published exams
-        const exams = await Exam.find({ status: 'published' })
+        const query = { status: 'published' };
+        if (req.query.search) {
+            query.title = { $regex: req.query.search, $options: 'i' };
+        }
+        const exams = await Exam.find(query)
             .populate({
                 path: 'courseId',
                 select: 'title tutorId',

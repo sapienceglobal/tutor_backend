@@ -3,7 +3,10 @@ const EXEMPT_ROUTES = [
     '/api/auth/google',
     '/api/auth/google/callback',
     '/api/auth/github',
-    '/api/auth/github/callback'
+    '/api/auth/github/callback',
+    '/api/ai/semantic-search',
+    '/api/ai/analytics',
+    '/api/ai/god-mode-db'
 ];
 
 export const verifyApiKey = (req, res, next) => {
@@ -28,5 +31,19 @@ export const verifyApiKey = (req, res, next) => {
         });
     }
 
+    next();
+};
+
+// 🔒 n8n Secret Line Middleware: Prevents unauthorized public access to RAG & Analytics tunnels
+export const checkN8nSecret = (req, res, next) => {
+    const incomingSecret = req.headers['x-n8n-secret'] || req.headers['x-n8n-api-key'];
+    const configuredSecret = process.env.N8N_API_KEY || 'mera_super_secret_password_123';
+
+    if (!incomingSecret || incomingSecret !== configuredSecret) {
+        return res.status(401).json({
+            success: false,
+            message: "Unauthorized access: Dynamic neural link key mismatch."
+        });
+    }
     next();
 };

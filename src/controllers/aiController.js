@@ -6268,6 +6268,44 @@ When explicitly commanded to block/unblock a user or suspend/activate an institu
             }
         }
 
+        // ── n8n Proxy Logic with Native Fallback ──
+        const n8nWebhookUrl = process.env.N8N_COORDINATOR_WEBHOOK_URL;
+        
+        if (n8nWebhookUrl) {
+            try {
+                console.log("➡️ Proxying message to n8n multi-agent webhook:", n8nWebhookUrl);
+                const axios = (await import('axios')).default;
+                
+                const headers = {};
+                if (process.env.N8N_API_KEY) {
+                    headers['x-n8n-api-key'] = process.env.N8N_API_KEY;
+                }
+
+                const n8nResponse = await axios.post(n8nWebhookUrl, {
+                    message,
+                    sender: req.user._id,
+                    role: req.user.role
+                }, {
+                    headers,
+                    timeout: 25000
+                });
+
+                if (n8nResponse.data && (n8nResponse.data.reply || n8nResponse.data.output)) {
+                    const finalReply = n8nResponse.data.reply || n8nResponse.data.output;
+                    return res.status(200).json({
+                        success: true,
+                        reply: finalReply,
+                        platformStateFootprint: {
+                            totalStudents, totalTutors, totalInstitutes, totalActiveCourses, expiringInstitutesCount: expiringInstitutes.length
+                        }
+                    });
+                }
+            } catch (n8nError) {
+                console.error("⚠️ n8n Webhook Error, falling back to local OpenAI thread:", n8nError.message);
+            }
+        }
+
+        // ── Fallback: Local OpenAI Thread ──
         const messages = [
             systemPrompt,
             ...formattedHistory,
@@ -6290,10 +6328,63 @@ When explicitly commanded to block/unblock a user or suspend/activate an institu
     }
 };
 
-// @desc    Execute AI Generated Action (God Mode Button)
-// @route   POST /api/ai/execute-action
+// @desc    Perform Semantic Vector Search on Reviews (RAG)
+// @route   POST /api/ai/semantic-search
+export const getSemanticSearch = async (req, res) => {
+    try {
+        const { searchQuery, query } = req.body;
+        const targetQuery = searchQuery || query;
+        if (!targetQuery) {
+            return res.status(400).json({ success: false, message: 'Query is required' });
+        }
 
-// @desc    Execute AI Generated Action (God Mode Button)
+        const { searchSemanticInsights } = await import('../services/aiAgentTools.js');
+        const resultsStr = await searchSemanticInsights(targetQuery);
+        const results = JSON.parse(resultsStr);
+
+        res.status(200).json({ success: true, results });
+    } catch (error) {
+        console.error('getSemanticSearch error:', error.message);
+        res.status(500).json({ success: false, message: error.message || 'Failed to perform semantic search' });
+    }
+};
+
+// @desc    Get Platform Analytics (For n8n Superadmin monitoring)
+// @route   POST /api/ai/analytics
+export const getPlatformAnalytics = async (req, res) => {
+    try {
+        const User = (await import('../models/User.js')).default;
+        const Institute = (await import('../models/Institute.js')).default;
+        const Course = (await import('../models/Course.js')).default;
+        const Enrollment = (await import('../models/Enrollment.js')).default;
+
+        const totalStudents = await User.countDocuments({ role: 'student' });
+        const totalTutors = await User.countDocuments({ role: 'tutor' });
+        const totalInstitutes = await Institute.countDocuments();
+        const suspendedInstitutesCount = await Institute.countDocuments({ isActive: false });
+        const blockedUsersCount = await User.countDocuments({ isBlocked: true });
+        const totalActiveCourses = await Course.countDocuments({ status: 'published' });
+        const totalEnrollments = await Enrollment.countDocuments();
+
+        res.status(200).json({
+            success: true,
+            metrics: {
+                totalStudents,
+                totalTutors,
+                totalInstitutes,
+                suspendedInstitutes: suspendedInstitutesCount,
+                blockedUsers: blockedUsersCount,
+                activeCourses: totalActiveCourses,
+                totalEnrollments
+            }
+        });
+    } catch (error) {
+        console.error('getPlatformAnalytics error:', error.message);
+        res.status(500).json({ success: false, message: error.message || 'Failed to fetch platform metrics' });
+    }
+};
+
+
 // @route   POST /api/ai/execute-action
 export const executeAIAction = async (req, res) => {
     try {

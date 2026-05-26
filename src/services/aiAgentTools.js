@@ -263,10 +263,20 @@ async function getUsersList(role, status) {
     })));
 }
 // 🌟 NAYA FUNCTION: Safe Dynamic Aggregation Engine
-async function runDynamicAnalytics(modelName, pipelineStr) {
+export async function runDynamicAnalytics(modelName, pipelineStr) {
     try {
-        // Parse the pipeline provided by AI
-        let pipeline = JSON.parse(pipelineStr);
+        let pipeline;
+        if (typeof pipelineStr === 'string') {
+            try {
+                pipeline = JSON.parse(pipelineStr);
+            } catch (err) {
+                // Clean unescaped escape sequences like newlines or control chars and try parsing again
+                const cleaned = pipelineStr.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
+                pipeline = JSON.parse(cleaned);
+            }
+        } else {
+            pipeline = pipelineStr;
+        }
 
         if (!Array.isArray(pipeline)) {
             return JSON.stringify({ error: "Pipeline must be an array." });
@@ -312,7 +322,7 @@ async function runDynamicAnalytics(modelName, pipelineStr) {
 }
 
 // 🌟 THE RAG ENGINE: Vector Search
-async function searchSemanticInsights(searchQuery) {
+export async function searchSemanticInsights(searchQuery) {
     try {
         console.log(`🧠 Generating Embedding for query: "${searchQuery}"`);
 
@@ -355,3 +365,46 @@ async function searchSemanticInsights(searchQuery) {
         return JSON.stringify({ error: "Failed to perform semantic search." });
     }
 }
+
+
+
+
+
+
+
+// import axios from 'axios';
+
+// // Tumhara Chat Controller
+// export const handleAgenticChat = async (req, res) => {
+//     try {
+//         // Frontend se user ka message aur uski unique ID (studentId/adminId) aayegi
+//         const { message, userId } = req.body; 
+
+//         if (!message) {
+//             return res.status(400).json({ error: "Message is required" });
+//         }
+
+//         // n8n ke Webhook ko hit karo (Yahan apna n8n ka Production URL daalna)
+//         const n8nWebhookUrl = 'https://n8n.yourdomain.com/webhook/chat'; 
+        
+//         const response = await axios.post(n8nWebhookUrl, {
+//             message: message,
+//             sessionId: userId // Isse har student ki chat history alag aur yaad rahegi!
+//         });
+
+//         // n8n se jo output aaya, wo seedha frontend ko bhej do
+//         const aiReply = response.data.output;
+
+//         return res.status(200).json({
+//             success: true,
+//             reply: aiReply
+//         });
+
+//     } catch (error) {
+//         console.error("🛑 Error in n8n Bridge Controller:", error.message);
+//         return res.status(500).json({
+//             success: false,
+//             error: "AI Agent is currently unavailable. Please try again."
+//         });
+//     }
+// };

@@ -56,24 +56,67 @@ import {
     generateAICourse,
     getRecentAICourses, deleteAICourse,
     superAdminCoordinatorChat, executeAIAction,
-    getAIBriefings
+    getAIBriefings, getSemanticSearch, getPlatformAnalytics
 } from '../controllers/aiController.js';
 import { studentGnerateStudyPlan, getQuickRecommendations } from '../controllers/aiStudyPlanController.js';
 import { protect, admin, authorize } from '../middleware/auth.js';
 // 🌟 Naya consumeAICredits import kar liya
 import { requireFeature, consumeAICredits } from '../middleware/subscriptionMiddleware.js';
 import { fileUpload } from '../utils/cloudinary.js';
+import { checkN8nSecret } from '../middleware/apiKey.js';
+
+import { searchSemanticInsights } from '../services/aiAgentTools.js';
 
 const router = express.Router();
 
+// POST /api/ai/god-mode-db
+router.post('/god-mode-db', checkN8nSecret, async (req, res) => {
+    try {
+        const { modelName, operation, query, updateData, pipeline } = req.body;
 
+        let Model;
+        try {
+            Model = (await import(`../models/${modelName}.js`)).default;
+        } catch (importError) {
+            return res.status(400).json({ error: `Model '${modelName}' not found in the system.` });
+        }
 
-router.post('/generate-study-plan',protect, studentGnerateStudyPlan);
-router.get('/quick-recommendations',protect, getQuickRecommendations);
+        // 🧠 MASTER PARSING LOGIC: String ko asli JSON Object banayega
+        const parsedQuery = query ? (typeof query === 'string' ? JSON.parse(query) : query) : {};
+        const parsedUpdateData = updateData ? (typeof updateData === 'string' ? JSON.parse(updateData) : updateData) : {};
+
+        let result;
+
+        if (operation === 'find') {
+            // Ab yahan safe parsedQuery ja raha hai
+            result = await Model.find(parsedQuery).limit(15);
+        } else if (operation === 'count') {
+            result = await Model.countDocuments(parsedQuery);
+        } else if (operation === 'updateOne') {
+            result = await Model.updateOne(parsedQuery, parsedUpdateData);
+        } else if (operation === 'aggregate') {
+            const parsedPipeline = pipeline ? (typeof pipeline === 'string' ? JSON.parse(pipeline) : pipeline) : [];
+            result = await Model.aggregate(parsedPipeline);
+        } else {
+            return res.status(400).json({ error: "Unsupported operation. Use find, count, updateOne, or aggregate." });
+        }
+
+        res.status(200).json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.post('/generate-study-plan', protect, studentGnerateStudyPlan);
+router.get('/quick-recommendations', protect, getQuickRecommendations);
 // ── Super Admin Agent (MUST be before requireFeature — superadmin has no instituteId) ──
 router.post('/superadmin-coordinator', protect, authorize('superadmin'), superAdminCoordinatorChat);
 router.post('/execute-action', protect, authorize('superadmin'), executeAIAction);
 router.get('/briefings', protect, authorize('superadmin'), getAIBriefings);
+
+// ── n8n Webhook Target Endpoints (Exempt from subscription gating) ──
+router.post('/semantic-search', checkN8nSecret, getSemanticSearch);
+router.post('/analytics', checkN8nSecret, getPlatformAnalytics);
 
 // All routes below require aiFeatures subscription
 router.use(requireFeature('aiFeatures'));
