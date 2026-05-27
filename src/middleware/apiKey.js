@@ -6,7 +6,10 @@ const EXEMPT_ROUTES = [
     '/api/auth/github/callback',
     '/api/ai/semantic-search',
     '/api/ai/analytics',
-    '/api/ai/god-mode-db'
+    '/api/ai/god-mode-db',
+    '/api/ai/trigger-email',
+    '/api/ai/generate-csv-report',
+    '/api/ai/system-health'
 ];
 
 export const verifyApiKey = (req, res, next) => {

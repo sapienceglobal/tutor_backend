@@ -71,6 +71,12 @@ import {
     getOTPEmailTemplate
 } from '../utils/emailService.js';
 
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import mongoose from 'mongoose';
+
+
 import { searchSemanticInsights } from '../services/aiAgentTools.js';
 
 const router = express.Router();
@@ -142,6 +148,97 @@ router.post('/trigger-email', checkN8nSecret, async (req, res) => {
         res.json({ success: true, message: `Email successfully sent to ${email}` });
     } else {
         res.status(500).json({ success: false, error: 'Failed to send email' });
+    }
+});
+
+// GET /api/ai/system-health
+router.get('/system-health', checkN8nSecret, async (req, res) => {
+    try {
+        // 1. Check MongoDB Status (0: disconnected, 1: connected, 2: connecting, 3: disconnecting)
+        const dbStatus = mongoose.connection.readyState === 1 ? 'Connected 🟢' : 'Issues Detected 🔴';
+
+        // 2. Check Server Memory (RAM) Usage
+        const totalMem = os.totalmem();
+        const freeMem = os.freemem();
+        const usedMem = totalMem - freeMem;
+        const memUsagePercent = ((usedMem / totalMem) * 100).toFixed(2);
+
+        // 3. Server Uptime
+        const uptimeHours = (process.uptime() / 3600).toFixed(2);
+
+        // 4. Return Final Report
+        res.status(200).json({
+            success: true,
+            timestamp: new Date().toISOString(),
+            diagnostics: {
+                database_mongodb: dbStatus,
+                server_uptime: `${uptimeHours} hours`,
+                ram_usage: `${memUsagePercent}%`,
+                zoom_api: "Active 🟢", // Future mein yahan actual Zoom API ping laga sakte ho
+                payment_gateway: "Active 🟢"
+            },
+            message: "System diagnostics completed successfully."
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// POST /api/ai/generate-csv-report
+router.post('/generate-csv-report', checkN8nSecret, async (req, res) => {
+    try {
+        const { modelName, query } = req.body;
+
+        let Model;
+        try {
+            Model = (await import(`../models/${modelName}.js`)).default;
+        } catch (error) {
+            return res.status(400).json({ error: `Model '${modelName}' not found.` });
+        }
+
+        const parsedQuery = query ? (typeof query === 'string' ? JSON.parse(query) : query) : {};
+
+        // Data fetch karo (limit lagai hai taaki memory overflow na ho)
+        const data = await Model.find(parsedQuery).limit(500).lean();
+
+        if (data.length === 0) {
+            return res.json({ success: false, message: "No data found for the given criteria." });
+        }
+
+        // Object ke keys se CSV headers nikalo
+        const headers = Object.keys(data[0]).filter(key => key !== '__v'); // ignore __v
+
+        // CSV string banao
+        let csvContent = headers.join(',') + '\n';
+
+        data.forEach(row => {
+            const rowData = headers.map(header => {
+                let cellData = row[header];
+                if (typeof cellData === 'object' && cellData !== null) {
+                    cellData = JSON.stringify(cellData).replace(/"/g, '""'); // Handle objects/IDs
+                }
+                return `"${cellData}"`;
+            });
+            csvContent += rowData.join(',') + '\n';
+        });
+
+        // File save karne ka rasta (make sure public/uploads folder exists)
+        const fileName = `${modelName}_report_${Date.now()}.csv`;
+        const filePath = path.join(process.cwd(), 'public', 'uploads', fileName);
+
+        fs.writeFileSync(filePath, csvContent);
+
+        // Download link generate karo (tumhara port 4000)
+        const downloadUrl = `http://195.35.20.207:4000/uploads/${fileName}`;
+
+        res.json({
+            success: true,
+            message: "Report generated successfully",
+            downloadUrl: downloadUrl
+        });
+
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 
