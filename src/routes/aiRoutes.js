@@ -64,6 +64,12 @@ import { protect, admin, authorize } from '../middleware/auth.js';
 import { requireFeature, consumeAICredits } from '../middleware/subscriptionMiddleware.js';
 import { fileUpload } from '../utils/cloudinary.js';
 import { checkN8nSecret } from '../middleware/apiKey.js';
+import {
+    sendEmail,
+    getWelcomeEmailTemplate,
+    getAccountBlockedEmailTemplate,
+    getOTPEmailTemplate
+} from '../utils/emailService.js';
 
 import { searchSemanticInsights } from '../services/aiAgentTools.js';
 
@@ -104,6 +110,38 @@ router.post('/god-mode-db', checkN8nSecret, async (req, res) => {
         res.status(200).json(result);
     } catch (err) {
         res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/ai/trigger-email
+router.post('/trigger-email', checkN8nSecret, async (req, res) => {
+    const { email, subject, templateType, name, extraData } = req.body;
+
+    let htmlBody = '';
+
+    // AI templateType bhejega, backend decide karega kaunsa template lagana hai
+    switch (templateType) {
+        case 'welcome':
+            htmlBody = getWelcomeEmailTemplate(name);
+            break;
+        case 'blocked':
+            htmlBody = getAccountBlockedEmailTemplate(name);
+            break;
+        case 'otp':
+            htmlBody = getOTPEmailTemplate(name, extraData.otp);
+            break;
+        // ... baaki templates
+        default:
+            // Custom text email with your base template layout
+            htmlBody = `<div style="padding: 20px;">${extraData.message}</div>`;
+    }
+
+    const success = await sendEmail({ email, subject, html: htmlBody });
+
+    if (success) {
+        res.json({ success: true, message: `Email successfully sent to ${email}` });
+    } else {
+        res.status(500).json({ success: false, error: 'Failed to send email' });
     }
 });
 
