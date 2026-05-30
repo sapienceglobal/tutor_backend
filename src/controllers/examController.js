@@ -1371,7 +1371,13 @@ export const getExamsByTutor = async (req, res) => {
           attemptCount: 1,
           averageScore: 1,
           courseId: '$course._id',
-          type: 1
+          type: 1,
+          audience: 1,
+          instituteId: 1,
+          batchId: 1,
+          batchIds: 1,
+          visibility: 1,
+          visibilityScope: 1
         }
       },
       { $sort: { createdAt: -1 } }

@@ -472,8 +472,8 @@ export const loginUser = async (req, res) => {
 export const getMe = async (req, res) => {
   try {
     const user = await User.findById(req.user.id)
-      // 🌟 CHANGE 1: 'features' ko string mein add kiya taaki DB se uth kar aaye
-      .populate('instituteId', 'name subdomain isActive subscriptionPlan features')
+      // 🌟 CHANGE 1: 'features', 'aiUsageCount', and 'aiUsageQuota' populated from DB
+      .populate('instituteId', 'name subdomain isActive subscriptionPlan features aiUsageCount aiUsageQuota')
       .select('+password');
 
     if (!user) {
@@ -500,8 +500,10 @@ export const getMe = async (req, res) => {
           subdomain: user.instituteId.subdomain,
           isActive: user.instituteId.isActive,
           subscriptionPlan: user.instituteId.subscriptionPlan,
-          // 🌟 CHANGE 2: Frontend (SubscriptionContext) ko features dena zaroori hai!
+          // 🌟 CHANGE 2: Frontend (SubscriptionContext) ko features & dynamic usage data return kiya!
           features: user.instituteId.features || {}, 
+          aiUsageCount: user.instituteId.aiUsageCount || 0,
+          aiUsageQuota: user.instituteId.aiUsageQuota || 1000,
         } : null,
         profileImage: user.profileImage,
         language: user.language,

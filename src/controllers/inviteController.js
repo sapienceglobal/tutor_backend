@@ -167,8 +167,11 @@ export const bulkCreateInvites = async (req, res) => {
         // Create invites with tokens
         const createdInvites = await Invite.insertMany(invitesWithTokens, { session });
 
+        // Fetch full institute document to enable brand color and name personalization in invite emails
+        const instituteDoc = await Institute.findById(instituteId).session(session);
+
         // Send emails (async, don't wait for completion)
-        sendBulkInviteEmails(createdInvites, instituteId).catch(console.error);
+        sendBulkInviteEmails(createdInvites, instituteDoc || { name: 'Tutor Platform' }).catch(console.error);
 
         await session.commitTransaction();
         session.endSession();
