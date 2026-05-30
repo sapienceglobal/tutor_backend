@@ -1040,7 +1040,7 @@ export const getChatSessions = async (req, res) => {
             .sort('-updatedAt')
             .populate('courseId', 'title');
 
-        res.status(200).json({ success: true, count: sessions.length, sessions });
+        res.status(200).json({ success: true, count: sessions.length, sessions, data: sessions });
     } catch (error) {
         console.error('Get chat sessions error:', error);
         res.status(500).json({ success: false, message: 'Failed to fetch chat sessions' });
@@ -1062,7 +1062,7 @@ export const createChatSession = async (req, res) => {
             messages: []
         });
 
-        res.status(201).json({ success: true, session });
+        res.status(201).json({ success: true, session, data: session });
     } catch (error) {
         console.error('Create chat session error:', error);
         res.status(500).json({ success: false, message: 'Failed to create chat session' });
@@ -1080,7 +1080,7 @@ export const getChatSessionById = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Chat session not found' });
         }
 
-        res.status(200).json({ success: true, session });
+        res.status(200).json({ success: true, session, data: session });
     } catch (error) {
         console.error('Get chat session error:', error);
         res.status(500).json({ success: false, message: 'Failed to fetch chat session' });
@@ -1393,7 +1393,8 @@ Format replies cleanly using Markdown.`
         res.status(200).json({
             success: true,
             reply: aiMsg,
-            sessionTitle: session.title // Send back in case it was auto-updated
+            sessionTitle: session.title, // Send back in case it was auto-updated
+            data: session
         });
 
         // Log usage
