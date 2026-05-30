@@ -6,6 +6,7 @@ import Course from '../models/Course.js';
 import Enrollment from '../models/Enrollment.js';
 import SubscriptionPlan from '../models/SubscriptionPlan.js';
 import Institute from '../models/Institute.js';
+import User from '../models/User.js';
 import { createNotification } from './notificationController.js';
 
 // Lazy Razorpay initialization (only when payment endpoints are called)
@@ -167,7 +168,7 @@ export const verifyPayment = async (req, res) => {
                     data: { courseId: payment.courseId },
                 });
             }
-        } else if (payment.type === 'subscription_renewal' && payment.instituteId && payment.planId) {
+        } else if (payment.type === 'subscription_renewal' && payment.planId) {
             // Fetch the plan
             const plan = await SubscriptionPlan.findById(payment.planId);
             if (plan) {
@@ -183,23 +184,50 @@ export const verifyPayment = async (req, res) => {
                     expiryDate = null; // Lifetime
                 }
 
-                // Update Institute
-                await Institute.findByIdAndUpdate(payment.instituteId, {
-                    subscriptionPlan: plan.name,
-                    subscriptionExpiresAt: expiryDate,
-                    features: {
-                        ...plan.features, // Spread new plan features
-                        manageTutors: true, // Keep defaults active
-                        manageStudents: true
-                    }
-                });
+                if (payment.instituteId) {
+                    // Update Institute
+                    await Institute.findByIdAndUpdate(payment.instituteId, {
+                        subscriptionPlan: plan.name,
+                        subscriptionExpiresAt: expiryDate,
+                        features: {
+                            ...plan.features, // Spread new plan features
+                            manageTutors: true, // Keep defaults active
+                            manageStudents: true
+                        }
+                    });
 
-                await createNotification({
-                    userId: payment.studentId, // the admin who paid
-                    type: 'fee_paid',
-                    title: '🚀 Subscription Upgraded!',
-                    message: `Your institute has successfully upgraded to the ${plan.name} plan.`,
-                });
+                    await createNotification({
+                        userId: payment.studentId, // the admin who paid
+                        type: 'fee_paid',
+                        title: '🚀 Subscription Upgraded!',
+                        message: `Your institute has successfully upgraded to the ${plan.name} plan.`,
+                    });
+                } else {
+                    // 🌟 Update Tutor/Student's Personal Subscription!
+                    const personalFeatures = {
+                        aiAssistant: plan.features?.aiAssistant === true,
+                        aiAssessment: plan.features?.aiAssessment === true,
+                        aiIntelligence: plan.features?.aiIntelligence === true,
+                        aiCreditsPerMonth: plan.features?.aiCreditsPerMonth || 0,
+                        aiUsageCount: 0
+                    };
+
+                    await User.findByIdAndUpdate(payment.studentId, {
+                        $set: {
+                            "personalSubscription.planName": plan.name,
+                            "personalSubscription.isActive": true,
+                            "personalSubscription.subscriptionExpiresAt": expiryDate,
+                            "personalSubscription.features": personalFeatures
+                        }
+                    });
+
+                    await createNotification({
+                        userId: payment.studentId,
+                        type: 'fee_paid',
+                        title: '🚀 Personal Plan Activated!',
+                        message: `Your account has successfully upgraded to the "${plan.name}" personal plan.`,
+                    });
+                }
             }
         } else if (payment.type === 'institute_fee') {
              await createNotification({

@@ -154,7 +154,14 @@ export const requireFeature = (featureKey) => {
                 }
 
                 const features = req.tenant.features || {};
-                if (!features[featureKey]) {
+                let isAllowed = features[featureKey] === true;
+
+                // Backwards compatibility for general aiFeatures checks
+                if (featureKey === 'aiFeatures') {
+                    isAllowed = isAllowed || features.aiAssistant === true || features.aiAssessment === true || features.aiIntelligence === true;
+                }
+
+                if (!isAllowed) {
                     return res.status(403).json({
                         success: false,
                         featureLocked: true,
@@ -167,13 +174,30 @@ export const requireFeature = (featureKey) => {
                 const user = await User.findById(req.user.id);
                 const sub = user.personalSubscription;
 
-                if (!sub || !sub.isActive || !sub.features || !sub.features[featureKey]) {
+                if (!sub || !sub.isActive || !sub.features) {
                     return res.status(403).json({
                         success: false,
                         featureLocked: true,
                         personalLocked: true,
                         requiredFeature: featureKey,
-                        message: `This is a personal/global asset. To use this AI feature, please purchase a Personal AI Plan.`
+                        message: `This is a personal/global asset. To use this feature, please purchase a Personal Subscription Plan.`
+                    });
+                }
+
+                let isAllowed = sub.features[featureKey] === true;
+
+                // Backwards compatibility for general aiFeatures checks
+                if (featureKey === 'aiFeatures') {
+                    isAllowed = isAllowed || sub.features.aiAssistant === true || sub.features.aiAssessment === true || sub.features.aiIntelligence === true || sub.features.aiFeatures === true;
+                }
+
+                if (!isAllowed) {
+                    return res.status(403).json({
+                        success: false,
+                        featureLocked: true,
+                        personalLocked: true,
+                        requiredFeature: featureKey,
+                        message: `This feature is not unlocked in your personal subscription tier. Please upgrade your personal plan.`
                     });
                 }
             }
@@ -328,7 +352,14 @@ export const consumeAICredits = (cost = 1) => {
                 const user = await User.findById(req.user.id);
                 const sub = user.personalSubscription;
 
-                if (!sub || !sub.isActive || !sub.features || !sub.features.aiFeatures) {
+                const hasAnyAIFeature = sub?.features && (
+                    sub.features.aiAssistant === true || 
+                    sub.features.aiAssessment === true || 
+                    sub.features.aiIntelligence === true ||
+                    sub.features.aiFeatures === true
+                );
+
+                if (!sub || !sub.isActive || !hasAnyAIFeature) {
                     return res.status(403).json({
                         success: false,
                         featureLocked: true,
