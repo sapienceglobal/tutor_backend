@@ -26,7 +26,7 @@ import {
     aiEvaluateSubmission, confirmAIGrade, bulkAIEvaluate,
 
     generateLectureSummary, getLectureSummaries,
-    getLectureSummaryById, deleteLectureSummary,
+    getLectureSummaryById, deleteLectureSummary, shareLectureSummary,
     getLectureSummaryStats, getRelatedLectures,
 
     getWeakTopics,
@@ -48,6 +48,7 @@ import {
 
     // AI Notifications
     draftNotification,
+    sendNotification,
     checkSubjectiveAnswer,
     checkPlagiarism,
     getReportStudents, generateReport, getRecentReports, deleteReport,
@@ -302,6 +303,7 @@ router.get('/lecture-summaries', protect, getLectureSummaries);
 router.get('/lecture-summaries/:id/related', protect, getRelatedLectures);
 router.get('/lecture-summaries/:id', protect, getLectureSummaryById);
 router.delete('/lecture-summaries/:id', protect, deleteLectureSummary);
+router.patch('/lecture-summaries/:id/share', protect, shareLectureSummary);
 
 router.get('/weak-topics', protect, getWeakTopics); // Assuming DB aggregation
 
@@ -340,6 +342,7 @@ router.post('/plagiarism-check', protect, fileUpload.single('file'), consumeAICr
 
 // ── AI Automation ─────────────────────────────────────────────────────────────
 router.post('/draft-notification', protect, consumeAICredits(1), draftNotification);
+router.post('/send-notification', protect, consumeAICredits(1), sendNotification);
 
 router.get('/report-gen/students', protect, getReportStudents);
 router.post('/report-gen/generate', protect, consumeAICredits(5), generateReport);

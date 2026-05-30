@@ -2878,6 +2878,55 @@ export const deleteLectureSummary = async (req, res) => {
     }
 };
 
+// @desc    Share lecture summary with course & notify students
+// @route   PATCH /api/ai/lecture-summaries/:id/share
+// @access  Private (tutor)
+export const shareLectureSummary = async (req, res) => {
+    try {
+        const { courseId, notifyStudents } = req.body;
+        const summaryId = req.params.id;
+
+        const record = await LectureSummary.findOneAndUpdate(
+            { _id: summaryId, userId: req.user._id },
+            { courseId, status: 'ready' },
+            { new: true }
+        ).populate('courseId', 'title');
+
+        if (!record) {
+            return res.status(404).json({ success: false, message: 'Summary not found.' });
+        }
+
+        if (notifyStudents && courseId) {
+            const Enrollment = (await import('../models/Enrollment.js')).default;
+            const { createNotification } = await import('./notificationController.js');
+
+            const enrollments = await Enrollment.find({ courseId, status: 'active' }).select('userId').lean();
+            const studentIds = enrollments.map(e => e.userId);
+
+            if (studentIds.length > 0) {
+                const message = `Your tutor shared a new lecture summary: "${record.title}". View it in your AI Buddy tab.`;
+                await Promise.all(studentIds.map(sId =>
+                    createNotification({
+                        userId: sId,
+                        type: 'system_alert',
+                        title: 'New Lecture Summary Shared 📝',
+                        message
+                    }).catch(err => console.error(`Error notifying student ${sId}:`, err))
+                ));
+            }
+        }
+
+        res.status(200).json({
+            success: true,
+            message: 'Lecture summary shared successfully!',
+            record
+        });
+    } catch (error) {
+        console.error('shareLectureSummary error:', error);
+        res.status(500).json({ success: false, message: 'Failed to share lecture summary.' });
+    }
+};
+
 
 // @desc    Get lecture summary stats for tutor
 // @route   GET /api/ai/lecture-summary-stats
@@ -6501,5 +6550,45 @@ export const getAIBriefings = async (req, res) => {
     } catch (error) {
         console.error('getAIBriefings error:', error);
         res.status(500).json({ success: false, message: 'Failed to fetch AI briefings' });
+    }
+};
+
+// @desc    Send an AI-generated smart notification to a student
+// @route   POST /api/ai/send-notification
+// @access  Private (tutor/admin)
+export const sendNotification = async (req, res) => {
+    try {
+        const { targetStudentName, message, tone } = req.body;
+
+        if (!message) {
+            return res.status(400).json({ success: false, message: 'Message content is required.' });
+        }
+
+        // Try to find the student in User records
+        const User = (await import('../models/User.js')).default;
+        const student = await User.findOne({ 
+            name: { $regex: new RegExp(targetStudentName, 'i') }, 
+            role: 'student' 
+        });
+
+        if (!student) {
+            return res.status(404).json({ success: false, message: `Student '${targetStudentName}' not found.` });
+        }
+
+        const { createNotification } = await import('./notificationController.js');
+        await createNotification({
+            userId: student._id,
+            type: 'direct_message',
+            title: `AI check-in (${tone || 'Encouraging'})`,
+            message: message.trim()
+        });
+
+        res.status(200).json({
+            success: true,
+            message: 'Notification successfully delivered to student dashboard!'
+        });
+    } catch (error) {
+        console.error('Send Notification error:', error);
+        res.status(500).json({ success: false, message: 'Failed to send notification.' });
     }
 };
