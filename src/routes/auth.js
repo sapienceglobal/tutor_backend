@@ -27,6 +27,7 @@ import {
   registerUserWithInvite,
   listPublicInstitutes,
   checkUserExists,
+  upgradePersonalSubscription,
 } from '../controllers/authController.js';
 import {
   sendOTP,
@@ -64,6 +65,7 @@ router.get('/github/callback', githubCallback);
 // Protected routes
 router.get('/me', protect, getMe);
 router.patch('/profile', protect, updateProfile);
+router.post('/upgrade-personal', protect, upgradePersonalSubscription);
 router.patch('/profile-image', protect, updateProfileImage);
 router.post('/change-password', protect, changePassword);
 router.post('/set-password', protect, setInitialPassword);

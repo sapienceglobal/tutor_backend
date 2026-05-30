@@ -510,7 +510,8 @@ export const getMe = async (req, res) => {
         bio: user.bio,
         address: user.address,
         authProvider: user.authProvider,
-        hasPassword: Boolean(user.password)
+        hasPassword: Boolean(user.password),
+        personalSubscription: user.personalSubscription
       }
     });
   } catch (error) {
@@ -1557,6 +1558,48 @@ export const refreshAccessToken = async (req, res) => {
     });
   } catch (error) {
     console.error('Refresh token error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+export const upgradePersonalSubscription = async (req, res) => {
+  try {
+    const { planId } = req.body;
+
+    const SubscriptionPlan = mongoose.model('SubscriptionPlan');
+    const plan = await SubscriptionPlan.findById(planId);
+    if (!plan) {
+      return res.status(404).json({ success: false, message: 'Plan not found' });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    user.personalSubscription = {
+      planName: plan.name,
+      isActive: true,
+      subscriptionExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+      features: {
+        aiFeatures: plan.features.aiAssistant || plan.features.aiAssessment || plan.features.aiIntelligence || false,
+        aiCreditsPerMonth: plan.features.aiCreditsPerMonth || 0,
+        aiUsageCount: 0,
+        aiAssistant: plan.features.aiAssistant || false,
+        aiAssessment: plan.features.aiAssessment || false,
+        aiIntelligence: plan.features.aiIntelligence || false
+      }
+    };
+
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: `Successfully upgraded to Personal ${plan.name}!`,
+      personalSubscription: user.personalSubscription
+    });
+  } catch (error) {
+    console.error('Upgrade personal subscription error:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };

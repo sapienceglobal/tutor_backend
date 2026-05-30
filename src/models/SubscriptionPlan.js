@@ -17,6 +17,16 @@ const subscriptionPlanSchema = new mongoose.Schema({
         enum: ['monthly', 'yearly', 'lifetime'],
         default: 'monthly'
     },
+    planType: {
+        type: String,
+        enum: ['institute', 'personal'],
+        default: 'institute'
+    },
+    planRole: {
+        type: String,
+        enum: ['tutor', 'student', 'both', 'all'],
+        default: 'all'
+    },
    features: {
         maxTutors: { type: Number, default: 5 }, 
         maxStudents: { type: Number, default: 50 }, 

@@ -161,6 +161,21 @@ const userSchema = new mongoose.Schema({
     select: false,
     default: null,
   },
+
+  // --- Personal Subscription ---
+  personalSubscription: {
+    planName: { type: String, default: 'free' },
+    isActive: { type: Boolean, default: false },
+    subscriptionExpiresAt: { type: Date, default: null },
+    features: {
+      aiFeatures: { type: Boolean, default: false },
+      aiCreditsPerMonth: { type: Number, default: 0 },
+      aiUsageCount: { type: Number, default: 0 },
+      aiAssistant: { type: Boolean, default: false },
+      aiAssessment: { type: Boolean, default: false },
+      aiIntelligence: { type: Boolean, default: false }
+    }
+  },
 }, {
   timestamps: true
 });

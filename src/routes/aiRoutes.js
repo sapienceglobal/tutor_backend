@@ -253,7 +253,8 @@ router.get('/briefings', protect, authorize('superadmin'), getAIBriefings);
 router.post('/semantic-search', checkN8nSecret, getSemanticSearch);
 router.post('/analytics', checkN8nSecret, getPlatformAnalytics);
 
-// All routes below require aiFeatures subscription
+// All routes below require protect authentication and aiFeatures subscription
+router.use(protect);
 router.use(requireFeature('aiFeatures'));
 
 // Chat Session Routes (Industry Standard UI)

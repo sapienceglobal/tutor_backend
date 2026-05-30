@@ -5,7 +5,15 @@ import SubscriptionPlan from '../models/SubscriptionPlan.js';
 // @access  Public (or Superadmin, depending on your needs. Usually public for pricing pages)
 export const getPlans = async (req, res) => {
     try {
-        const plans = await SubscriptionPlan.find().sort({ price: 1 });
+        const { planType, planRole } = req.query;
+        const query = {};
+        if (planType) {
+            query.planType = planType;
+        }
+        if (planRole) {
+            query.planRole = { $in: [planRole, 'all', 'both'] };
+        }
+        const plans = await SubscriptionPlan.find(query).sort({ price: 1 });
         res.status(200).json({ success: true, plans });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
