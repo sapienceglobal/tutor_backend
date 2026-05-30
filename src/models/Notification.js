@@ -24,7 +24,10 @@ const notificationSchema = new mongoose.Schema({
       'direct_message',
       'study_plan_generated',
       'assignment_created',
-      'assignment_graded'
+      'assignment_graded',
+      'fee_paid',
+      'subscription_upgraded',
+      'subscription_expired'
     ],
     required: true
   },

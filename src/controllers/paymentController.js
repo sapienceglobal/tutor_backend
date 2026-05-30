@@ -59,7 +59,7 @@ export const createOrder = async (req, res) => {
         const options = {
             amount: amountInPaise,
             currency: 'INR',
-            receipt: `course_${courseId}_${Date.now()}`,
+            receipt: `cr_${courseId.toString().slice(-12)}_${Date.now()}`,
             notes: {
                 courseId: courseId.toString(),
                 studentId: req.user.id,
@@ -402,7 +402,7 @@ export const renewSubscription = async (req, res) => {
         const options = {
             amount: amountInPaise,
             currency: 'INR',
-            receipt: `sub_${instituteId || req.user.id}_${Date.now()}`,
+            receipt: `sub_${(instituteId || req.user.id).toString().slice(-12)}_${Date.now()}`,
             notes: {
                 type: 'subscription_renewal',
                 planName: planName || 'Standard',
@@ -436,7 +436,10 @@ export const renewSubscription = async (req, res) => {
         });
     } catch (error) {
         console.error('Renew subscription error:', error);
-        res.status(500).json({ success: false, message: 'Failed to create subscription order' });
+        res.status(500).json({ 
+            success: false, 
+            message: error.message || 'Failed to create subscription order' 
+        });
     }
 };
 

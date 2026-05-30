@@ -110,7 +110,7 @@ const paymentSchema = new mongoose.Schema({
 });
 
 // Auto-generate invoice number on payment success
-paymentSchema.pre('save', function (next) {
+paymentSchema.pre('save', function () {
     if (this.isModified('status') && this.status === 'paid' && !this.invoiceNumber) {
         const date = new Date();
         const prefix = 'INV';
@@ -120,7 +120,6 @@ paymentSchema.pre('save', function (next) {
         this.invoiceNumber = `${prefix}-${year}${month}-${random}`;
         this.paidAt = date;
     }
-    next();
 });
 
 export default mongoose.model('Payment', paymentSchema);

@@ -1,7 +1,7 @@
 import express from 'express';
 import { protect, authorize } from '../middleware/auth.js'; 
 
-import { getFinanceOverview, processPayout } from '../controllers/financeController.js';
+import { getFinanceOverview, processPayout, refundPayment } from '../controllers/financeController.js';
 
 const router = express.Router();
 
@@ -9,10 +9,9 @@ const router = express.Router();
 router.use(protect);
 router.use(authorize('superadmin')); 
 
-
-
 // 3. Routes
 router.get('/overview', getFinanceOverview); // Not logged (GET)
 router.post('/payouts/:instituteId', processPayout); // 🌟 Automatically Logged!
+router.post('/refund/:paymentId', refundPayment); // 💸 Issue Razorpay refund & revoke access!
 
 export default router;

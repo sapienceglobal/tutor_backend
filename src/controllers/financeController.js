@@ -1,6 +1,22 @@
 import mongoose from 'mongoose';
+import Razorpay from 'razorpay';
 import Payment from '../models/Payment.js';
 import { Institute } from '../models/Institute.js';
+
+// Lazy Razorpay initialization
+let razorpay = null;
+const getRazorpay = () => {
+    if (!razorpay) {
+        if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+            throw new Error('Razorpay keys not configured. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in .env');
+        }
+        razorpay = new Razorpay({
+            key_id: process.env.RAZORPAY_KEY_ID,
+            key_secret: process.env.RAZORPAY_KEY_SECRET,
+        });
+    }
+    return razorpay;
+};
 
 // @desc    Get Superadmin Finance Overview (Live Exact Aggregation)
 // @route   GET /api/superadmin/finance/overview
@@ -88,19 +104,20 @@ export const getFinanceOverview = async (req, res) => {
 
 
         // ─── 3. Recent Transactions ───
-        const recentPayments = await Payment.find({ status: { $in: ['paid', 'failed'] } })
+        const recentPayments = await Payment.find({ status: { $in: ['paid', 'failed', 'refunded'] } })
             .sort({ createdAt: -1 })
             .limit(6)
             .populate('studentId', 'name email')
             .populate('instituteId', 'name');
 
         const recentTransactions = recentPayments.map(p => ({
+            id: p._id,
             transactionId: p.razorpayOrderId || p._id,
             entityName: p.instituteId?.name || p.studentId?.name || 'Unknown User',
             entityEmail: p.studentId?.email || 'N/A',
             type: p.type,
             amount: p.amount,
-            status: p.status === 'paid' ? 'successful' : 'failed',
+            status: p.status === 'paid' ? 'successful' : p.status === 'refunded' ? 'refunded' : 'failed',
             createdAt: p.createdAt
         }));
 
@@ -205,5 +222,101 @@ export const processPayout = async (req, res) => {
         session.endSession();
         console.error('Process Payout Error:', error);
         res.status(500).json({ success: false, message: 'Failed to process payout' });
+    }
+};
+
+// @desc    Issue Refund & Revoke Access (Razorpay integration)
+// @route   POST /api/superadmin/finance/refund/:paymentId
+// @access  Private/Superadmin
+export const refundPayment = async (req, res) => {
+    try {
+        const { paymentId } = req.params;
+        const { reason } = req.body;
+
+        const payment = await Payment.findById(paymentId);
+        if (!payment) {
+            return res.status(404).json({ success: false, message: 'Payment record not found.' });
+        }
+
+        if (payment.status !== 'paid') {
+            return res.status(400).json({ success: false, message: `Only paid transactions can be refunded. Current status is '${payment.status}'.` });
+        }
+
+        if (!payment.razorpayPaymentId) {
+            return res.status(400).json({ success: false, message: 'No Razorpay payment ID associated with this transaction.' });
+        }
+
+        // 1. Call Razorpay API to issue the actual refund
+        const refund = await getRazorpay().payments.refund(payment.razorpayPaymentId, {
+            amount: Math.round(payment.amount * 100), // Refund full amount
+            notes: {
+                reason: reason || 'Superadmin Initiated Refund',
+                paymentId: paymentId
+            }
+        });
+
+        // 2. Update payment status in database
+        payment.status = 'refunded';
+        await payment.save();
+
+        // 3. Revoke active privileges based on type
+        if (payment.type === 'course_purchase' && payment.courseId) {
+            const Enrollment = mongoose.model('Enrollment');
+            await Enrollment.findOneAndUpdate(
+                { studentId: payment.studentId, courseId: payment.courseId },
+                { $set: { status: 'dropped' } }
+            );
+        } else if (payment.type === 'subscription_renewal') {
+            if (payment.instituteId) {
+                // Revoke institute active plan
+                await Institute.findByIdAndUpdate(payment.instituteId, {
+                    $set: {
+                        subscriptionPlan: 'free',
+                        subscriptionExpiresAt: new Date(),
+                        "features.hlsStreaming": false,
+                        "features.customBranding": false,
+                        "features.zoomIntegration": false,
+                        "features.aiFeatures": false,
+                        "features.aiAssistant": false,
+                        "features.aiAssessment": false,
+                        "features.aiIntelligence": false,
+                        "features.customDomain": false,
+                        "features.advancedAnalytics": false,
+                        "features.apiAccess": false
+                    }
+                });
+            } else {
+                // Revoke personal plan
+                const User = mongoose.model('User');
+                await User.findByIdAndUpdate(payment.studentId, {
+                    $set: {
+                        "personalSubscription.isActive": false,
+                        "personalSubscription.planName": "Free",
+                        "personalSubscription.subscriptionExpiresAt": new Date()
+                    }
+                });
+            }
+        }
+
+        // 4. Send notification
+        const Notification = mongoose.model('Notification');
+        await Notification.create({
+            userId: payment.studentId,
+            type: 'fee_paid',
+            title: '💰 Payment Refunded Successfully',
+            message: `Your payment of ₹${payment.amount} has been refunded to your original payment source.`
+        });
+
+        res.status(200).json({
+            success: true,
+            message: 'Refund issued successfully through Razorpay and access has been revoked.',
+            refundId: refund.id
+        });
+    } catch (error) {
+        console.error('Refund request error:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: error.description || error.message || 'Failed to issue refund via Razorpay' 
+        });
     }
 };
