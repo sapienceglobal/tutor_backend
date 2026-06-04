@@ -162,6 +162,12 @@ const userSchema = new mongoose.Schema({
     default: null,
   },
 
+  // --- Push Notifications ---
+  fcmTokens: [{
+    type: String,
+    default: []
+  }],
+
   // --- Personal Subscription ---
   personalSubscription: {
     planName: { type: String, default: 'free' },

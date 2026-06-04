@@ -28,6 +28,11 @@ const reportSchema = new mongoose.Schema({
         type: String,
         enum: ['Pending', 'Reviewed', 'Resolved', 'Dismissed'],
         default: 'Pending'
+    },
+    platform: {
+        type: String,
+        enum: ['web', 'mobile', 'unknown'],
+        default: 'web'
     }
 }, { timestamps: true });
 

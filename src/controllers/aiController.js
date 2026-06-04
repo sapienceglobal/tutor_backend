@@ -4790,7 +4790,7 @@ export const getExamSuspicionReview = async (req, res) => {
 export const evaluateSubjectiveAnswer = async (question, idealAnswer, studentAnswer, maxPoints = 1) => {
     try {
         if (!question || !studentAnswer) {
-            return { isCorrect: false, pointsEarned: 0, feedback: 'Question and student answer are required' };
+            return { isCorrect: false, pointsEarned: 0, feedback: 'Question and student answer are required', highlights: [] };
         }
 
         const prompt = `You are an expert academic evaluator. Your task is to evaluate a student's subjective answer against the provided question. 
@@ -4826,10 +4826,20 @@ Provide a JSON object with EXACTLY this structure:
         "Ask for specific terms next time.",
         "Suggest more real-world examples."
     ],
+    "highlights": [
+        {
+            "phrase": "exact substring from student's answer",
+            "type": "grammar" || "spelling" || "key_term" || "poor_phrasing" || "factual_error",
+            "comment": "Why this is highlighted, explanation, correction, or praise."
+        }
+    ],
     "isCorrect": true,
     "pointsEarned": <a number between 0 and ${maxPoints} based on quality>
 }
-Ensure the output is strictly valid JSON without markdown wrapping.`;
+Ensure that:
+1. Every "phrase" in the "highlights" array is an EXACT, case-sensitive substring of the student's answer.
+2. The type field MUST be one of: "grammar", "spelling", "key_term", "poor_phrasing", "factual_error".
+3. The output is strictly valid JSON without markdown wrapping.`;
 
         const aiResponseText = await groqService.generateCompletion(prompt, true, "llama-3.3-70b-versatile");
         const evaluation = JSON.parse(aiResponseText);
@@ -4838,11 +4848,12 @@ Ensure the output is strictly valid JSON without markdown wrapping.`;
             isCorrect: evaluation.isCorrect || false,
             pointsEarned: evaluation.pointsEarned || 0,
             feedback: evaluation.feedback || 'Evaluated successfully.',
+            highlights: evaluation.highlights || [],
             data: evaluation
         };
     } catch (error) {
         console.error('Evaluate Subjective Answer error:', error);
-        return { isCorrect: false, pointsEarned: 0, feedback: 'AI failed to evaluate the answer' };
+        return { isCorrect: false, pointsEarned: 0, feedback: 'AI failed to evaluate the answer', highlights: [] };
     }
 };
 
@@ -6590,5 +6601,116 @@ export const sendNotification = async (req, res) => {
     } catch (error) {
         console.error('Send Notification error:', error);
         res.status(500).json({ success: false, message: 'Failed to send notification.' });
+    }
+};
+
+// @desc    Get currently active exam sessions for tutor
+// @route   GET /api/ai/proctoring/live-sessions
+// @access  Private (tutor)
+export const getActiveProctoringSessions = async (req, res) => {
+    try {
+        const Tutor = (await import('../models/Tutor.js')).default;
+        const Course = (await import('../models/Course.js')).default;
+        const User = (await import('../models/User.js')).default;
+        const { Exam } = await import('../models/Exam.js');
+        const { getActiveSessions } = await import('../services/socketService.js');
+
+        const tutor = await Tutor.findOne({ userId: req.user.id || req.user._id }).select('_id').lean();
+        if (!tutor) return res.status(403).json({ success: false, message: 'Tutor profile not found' });
+
+        const courses = await Course.find({ tutorId: tutor._id }).select('_id').lean();
+        const courseIds = courses.map(c => c._id.toString());
+
+        const tutorExams = await Exam.find({ courseId: { $in: courseIds } }).select('_id title duration isProctoringEnabled').lean();
+        const examIds = tutorExams.map(e => e._id.toString());
+        const examMap = tutorExams.reduce((m, e) => { m[e._id.toString()] = e; return m; }, {});
+
+        const rawSessions = getActiveSessions(); // Array of { studentId, socketId, examId, startTime }
+        
+        // Filter sessions that are writing the tutor's exams
+        const filteredSessions = rawSessions.filter(s => examIds.includes(s.examId));
+
+        if (filteredSessions.length === 0) {
+            return res.status(200).json({
+                success: true,
+                sessions: []
+            });
+        }
+
+        // Fetch student user details
+        const studentIds = filteredSessions.map(s => s.studentId);
+        const students = await User.find({ _id: { $in: studentIds } }).select('_id name email profileImage').lean();
+        const studentMap = students.reduce((m, s) => { m[s._id.toString()] = s; return m; }, {});
+
+        const enrichedSessions = filteredSessions.map(s => {
+            const student = studentMap[s.studentId];
+            const exam = examMap[s.examId];
+            return {
+                studentId: s.studentId,
+                socketId: s.socketId,
+                examId: s.examId,
+                studentName: student?.name || 'Student',
+                studentEmail: student?.email || '',
+                studentAvatar: student?.profileImage || null,
+                examTitle: exam?.title || 'Unknown Exam',
+                examDuration: exam?.duration || 0,
+                startTime: s.startTime,
+                elapsedSeconds: Math.floor((Date.now() - s.startTime) / 1000)
+            };
+        });
+
+        res.status(200).json({
+            success: true,
+            sessions: enrichedSessions
+        });
+    } catch (error) {
+        console.error('getActiveProctoringSessions error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch active proctoring sessions', error: error.message });
+    }
+};
+
+// @desc    Forcefully terminate a student's active exam session
+// @route   POST /api/ai/proctoring/terminate-session
+// @access  Private (tutor)
+export const terminateExamSession = async (req, res) => {
+    try {
+        const { studentId, examId, reason = 'Academic dishonesty detected' } = req.body;
+        if (!studentId || !examId) {
+            return res.status(400).json({ success: false, message: 'studentId and examId are required' });
+        }
+
+        const Tutor = (await import('../models/Tutor.js')).default;
+        const { Exam } = await import('../models/Exam.js');
+        const { getIO } = await import('../services/socketService.js');
+
+        const tutor = await Tutor.findOne({ userId: req.user.id || req.user._id }).select('_id').lean();
+        if (!tutor) return res.status(403).json({ success: false, message: 'Tutor profile not found' });
+
+        const exam = await Exam.findById(examId).populate('courseId').lean();
+        if (!exam) {
+            return res.status(404).json({ success: false, message: 'Exam not found' });
+        }
+
+        // Verify ownership
+        if (exam.courseId?.tutorId?.toString() !== tutor._id.toString()) {
+            return res.status(403).json({ success: false, message: 'Unauthorized: This exam does not belong to your course' });
+        }
+
+        const io = getIO();
+        if (io) {
+            console.log(`🔌 Emitting exam_terminated to user_${studentId} for exam ${examId}`);
+            io.to(`user_${studentId}`).emit('exam_terminated', {
+                examId,
+                reason
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            message: 'Termination command sent successfully'
+        });
+    } catch (error) {
+        console.error('terminateExamSession error:', error);
+        res.status(500).json({ success: false, message: 'Failed to terminate session', error: error.message });
     }
 };

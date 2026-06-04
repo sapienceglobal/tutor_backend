@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import Razorpay from 'razorpay';
 import Payment from '../models/Payment.js';
 import { Institute } from '../models/Institute.js';
+import { logBillingEvent } from '../utils/billingLogger.js';
 
 // Lazy Razorpay initialization
 let razorpay = null;
@@ -208,10 +209,15 @@ export const processPayout = async (req, res) => {
             { session }
         );
 
-        // TODO: In the future, trigger your actual RazorpayX or Stripe Transfer API right here before committing the transaction.
-
         await session.commitTransaction();
         session.endSession();
+
+        // Log payout processed event
+        await logBillingEvent(req.user.id, 'BILLING_PAYOUT_PROCESSED', {
+            instituteId,
+            payoutReferenceId: payoutReference,
+            actorId: req.user.id
+        });
 
         res.status(200).json({
             success: true,
@@ -305,6 +311,16 @@ export const refundPayment = async (req, res) => {
             type: 'fee_paid',
             title: '💰 Payment Refunded Successfully',
             message: `Your payment of ₹${payment.amount} has been refunded to your original payment source.`
+        });
+
+        // Log refund event
+        await logBillingEvent(req.user.id, 'BILLING_REFUND_ISSUED', {
+            paymentId: payment._id,
+            amount: payment.amount,
+            type: payment.type,
+            reason: reason || 'Superadmin Initiated Refund',
+            refundId: refund.id,
+            actorId: req.user.id
         });
 
         res.status(200).json({

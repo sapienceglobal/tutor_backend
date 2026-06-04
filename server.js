@@ -1,9 +1,12 @@
 import "./src/config/loadEnv.js"
 import express from 'express';
+import { createServer } from 'http';
+import { initSocket } from './src/services/socketService.js';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { initAICronJobs } from './src/services/aiCronJob.js';
+import { initSubscriptionCronJobs } from './src/services/subscriptionCronJob.js';
 import mongoose from 'mongoose'; 
 
 // Import routes
@@ -81,9 +84,12 @@ import superadminCommunicationRoutes from './src/routes/superadminCommunicationR
 import superadminSecurityRoutes from './src/routes/superadminSecurityRoutes.js';
 import superadminPayoutRoutes from './src/routes/superadminPayoutRoutes.js';
 
-// Initialize express app
+// Initialize express app and HTTP server
 const app = express();
 const PORT = process.env.PORT || 4000;
+const server = createServer(app);
+initSocket(server);
+
 // Connect to database
 connectDB();
 
@@ -274,9 +280,10 @@ mongoose.connection.once('open', () => {
     
     // 🌟 Start the AI Cron Agent only AFTER DB is completely ready
     initAICronJobs();
+    initSubscriptionCronJobs();
 
     // Start listening to API requests
-    app.listen(PORT, '0.0.0.0', () => {
+    server.listen(PORT, '0.0.0.0', () => {
         console.log(`🚀 Server running on port ${PORT}`);
         console.log(`📡 API: http://localhost:${PORT}/api`);
     });

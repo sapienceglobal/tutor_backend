@@ -730,22 +730,72 @@ export const deleteUserByAdmin = async (req, res) => {
 // 8. Get Activity Log
 export const getActivityLog = async (req, res) => {
     try {
-        const recentUsers = await User.find({ role: { $ne: 'superadmin' } })
-            .select('name email role createdAt profileImage')
-            .sort({ createdAt: -1 })
-            .limit(50);
+        const { platform } = req.query;
+        let query = {};
+        if (platform && platform !== 'all') {
+            query.platform = platform;
+        }
 
-        const activities = recentUsers.map(u => ({
-            _id: u._id,
-            type: 'registration',
-            user: { name: u.name, email: u.email, role: u.role, profileImage: u.profileImage },
-            description: `${u.name} (${u.role}) registered`,
-            timestamp: u.createdAt,
-        }));
+        const recentLogs = await AuditLog.find(query)
+            .populate('userId', 'name email role profileImage')
+            .sort({ createdAt: -1 })
+            .limit(50)
+            .lean();
+
+        const activities = recentLogs.map(log => {
+            const user = log.userId || { name: 'System', email: 'system@platform.com', role: 'system', profileImage: null };
+            let actionType = 'action';
+            
+            // Determine a friendly type
+            const actionLower = (log.action || '').toLowerCase();
+            if (actionLower.includes('register') || actionLower.includes('signup') || actionLower.includes('institute')) {
+                actionType = 'registration';
+            } else if (actionLower.includes('login') || actionLower.includes('auth') || actionLower.includes('signin')) {
+                actionType = 'login';
+            } else if (log.method === 'POST') {
+                actionType = 'creation';
+            } else if (log.method === 'DELETE') {
+                actionType = 'deletion';
+            } else if (log.method === 'PUT' || log.method === 'PATCH') {
+                actionType = 'update';
+            }
+
+            // Make description human readable
+            let friendlyDesc = log.action;
+            if (log.action && log.action.includes(' ')) {
+                // E.g. "POST /api/superadmin/institutes" -> "Created institute via /api/superadmin/institutes"
+                const parts = log.action.split(' ');
+                const method = parts[0];
+                const path = parts[1];
+                let actionVerb = 'accessed';
+                if (method === 'POST') actionVerb = 'created';
+                else if (method === 'DELETE') actionVerb = 'deleted';
+                else if (method === 'PUT' || method === 'PATCH') actionVerb = 'updated';
+                
+                friendlyDesc = `${user.name} ${actionVerb} resource at ${path}`;
+            }
+
+            return {
+                _id: log._id,
+                type: actionType,
+                user: {
+                    name: user.name,
+                    email: user.email,
+                    role: user.role,
+                    profileImage: user.profileImage
+                },
+                description: friendlyDesc,
+                timestamp: log.createdAt,
+                platform: log.platform || 'web',
+                statusCode: log.statusCode,
+                path: log.path,
+                resource: log.resource
+            };
+        });
 
         res.json({ success: true, activities, count: activities.length });
     } catch (error) {
-        console.error(error);
+        console.error('Fetch Activity Log Error:', error);
         res.status(500).json({ success: false, message: 'Failed to fetch activity log' });
     }
 };

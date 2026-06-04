@@ -23,7 +23,7 @@ export const auditMiddleware = (req, res, next) => {
         // Log asynchronously — don't block the response
         setImmediate(async () => {
             try {
-                await AuditLog.create({
+                const log = await AuditLog.create({
                     userId: req.user?.id || req.user?._id || null,
                     adminId: req.user?.role === 'admin' ? req.user.id : null,
                     action: `${req.method} ${req.path}`,
@@ -33,12 +33,22 @@ export const auditMiddleware = (req, res, next) => {
                     statusCode: res.statusCode,
                     ip: req.ip || req.headers['x-forwarded-for'] || req.connection?.remoteAddress || '',
                     userAgent: req.headers['user-agent'] || '',
+                    platform: req.headers['x-client-platform'] || (req.headers['user-agent']?.includes('Dart') ? 'mobile' : 'web'),
                     details: {
                         params: req.params,
                         // Don't log sensitive body fields
                         body: sanitizeBody(req.body),
                     },
                 });
+
+                // Populate user/admin info and emit to superadmins in real-time
+                const populatedLog = await AuditLog.findById(log._id)
+                    .populate('userId', 'name email role profileImage')
+                    .populate('adminId', 'name email role profileImage')
+                    .lean();
+
+                const { emitAuditLogCreated } = await import('../services/socketService.js');
+                emitAuditLogCreated(populatedLog);
             } catch (err) {
                 console.error('Audit log error:', err.message);
             }

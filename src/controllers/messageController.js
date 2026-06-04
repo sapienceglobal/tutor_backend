@@ -4,6 +4,7 @@ import Course from '../models/Course.js';
 import Enrollment from '../models/Enrollment.js';
 import TutorMessage from '../models/TutorMessage.js';
 import { createNotification } from './notificationController.js';
+import { emitChatMessage } from '../services/socketService.js';
 
 const getUserIdFromReq = (req) => req.user?._id || req.user?.id;
 
@@ -80,6 +81,8 @@ const mapMessageForResponse = (message, actorUserId) => {
 
   return {
     _id: message._id,
+    tutorId: message.tutorId?._id || message.tutorId,
+    studentId: message.studentId?._id || message.studentId,
     body: message.body,
     senderRole: message.senderRole,
     senderUserId,
@@ -317,9 +320,14 @@ export const sendMessage = async (req, res) => {
       .populate('senderUserId', 'name email profileImage')
       .lean();
 
+    const mappedMessage = mapMessageForResponse(populatedMessage, actor.userId);
+
+    // Send real-time chat event via WebSocket
+    emitChatMessage(recipientUserId.toString(), mappedMessage);
+
     return res.status(201).json({
       success: true,
-      message: mapMessageForResponse(populatedMessage, actor.userId),
+      message: mappedMessage,
     });
   } catch (error) {
     console.error('Send message error:', error);

@@ -145,6 +145,7 @@ export const buildAttemptQuestionResults = ({ exam, attempt }) => {
       canViewSolution,
       solutionText,
       aiFeedback: studentAnswer?.aiFeedback || null,
+      aiHighlights: studentAnswer?.aiHighlights || null,
       explanation: solutionText,
       pointsEarned: studentAnswer?.pointsEarned ?? 0,
       pointsPossible: question.points || 1,

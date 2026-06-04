@@ -5,10 +5,15 @@ import AuditLog from '../models/AuditLog.js';
 // @access  Private/Superadmin
 export const getAuditLogs = async (req, res) => {
     try {
-        const { method, search, limit = 100 } = req.query;
+        const { method, search, platform, limit = 100 } = req.query;
 
         let query = {};
         
+        // Filter by Platform
+        if (platform && platform !== 'all') {
+            query.platform = platform;
+        }
+
         // Filter by HTTP Method
         if (method && method !== 'all') {
             query.method = method.toUpperCase();

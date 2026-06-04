@@ -379,6 +379,7 @@ export const submitExam = async (req, res) => {
                     selectedOption: -1,
                     textAnswer,
                     aiFeedback: evaluation.feedback,
+                    aiHighlights: evaluation.highlights || [],
                     isCorrect: evaluation.isCorrect,
                     pointsEarned: evaluation.pointsEarned,
                     _scoreDelta: evaluation.pointsEarned,
@@ -565,6 +566,8 @@ export const getAttemptDetails = async (req, res) => {
             solutionText: item.solutionText,
             pointsEarned: item.pointsEarned,
             pointsPossible: item.pointsPossible,
+            aiFeedback: item.aiFeedback,
+            aiHighlights: item.aiHighlights,
         }));
         const correctCount = detailedAnalysis.filter(item => item.status === 'correct').length;
         const incorrectCount = detailedAnalysis.filter(item => item.status === 'incorrect').length;
@@ -618,6 +621,31 @@ export const logTabSwitch = async (req, res) => {
 
         // Log the tab switch
         attempt.tabSwitchLog.push({ switchedAt: new Date() });
+        // Emit real-time proctoring warning to Tutor via WebSocket
+        setImmediate(async () => {
+            try {
+                const exam = await Exam.findById(attempt.examId).populate({
+                    path: 'courseId',
+                    populate: { path: 'tutorId' }
+                });
+                if (exam && exam.courseId && exam.courseId.tutorId) {
+                    const tutorUserId = exam.courseId.tutorId.userId;
+                    if (tutorUserId) {
+                        const { emitProctoringAlert } = await import('../../services/socketService.js');
+                        emitProctoringAlert(tutorUserId.toString(), {
+                            attemptId: attempt._id,
+                            studentName: req.user.name,
+                            examTitle: exam.title,
+                            tabSwitchCount: attempt.tabSwitchCount,
+                            eventType: 'tab_switch',
+                            timestamp: new Date()
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to emit real-time proctoring socket warning:', err);
+            }
+        });
         attempt.tabSwitchCount = (attempt.tabSwitchCount || 0) + 1;
         await attempt.save();
 

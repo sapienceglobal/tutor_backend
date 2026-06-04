@@ -6,13 +6,17 @@ import mongoose from 'mongoose';
 // @access  Private/Superadmin
 export const getGlobalReports = async (req, res) => {
     try {
-        const { status, search } = req.query;
+        const { status, search, platform } = req.query;
 
         let query = {};
         if (status && status !== 'all') {
             // Mongoose is case-sensitive, match your Schema's exact enum casing
             const formattedStatus = status.charAt(0).toUpperCase() + status.slice(1);
             query.status = formattedStatus;
+        }
+
+        if (platform && platform !== 'all') {
+            query.platform = platform;
         }
 
         // Fetch reports and populate the reporter
@@ -84,10 +88,35 @@ export const updateReportStatus = async (req, res) => {
 
         if (!report) return res.status(404).json({ success: false, message: 'Report not found' });
 
+        const populatedReport = await Report.findById(report._id)
+            .populate('reporter', 'name email profileImage')
+            .lean();
+
+        let targetName = 'Unknown Target';
+        try {
+            if (populatedReport.targetType === 'Course' && mongoose.models.Course) {
+                const course = await mongoose.models.Course.findById(populatedReport.targetId).select('title').lean();
+                if (course) targetName = course.title;
+            } else if (populatedReport.targetType === 'Tutor' && mongoose.models.User) {
+                const tutor = await mongoose.models.User.findById(populatedReport.targetId).select('name').lean();
+                if (tutor) targetName = tutor.name;
+            } else if (populatedReport.targetType === 'Review' && mongoose.models.Review) {
+                const review = await mongoose.models.Review.findById(populatedReport.targetId).select('comment').lean();
+                if (review) targetName = review.comment.substring(0, 30) + '...';
+            }
+        } catch (e) {
+            // Ignore target lookup failures
+        }
+        populatedReport.targetName = targetName;
+
+        // Emit WebSocket notification
+        const { emitReportStatusChanged } = await import('../services/socketService.js');
+        emitReportStatusChanged(populatedReport);
+
         res.status(200).json({
             success: true,
             message: `Report status updated to ${status}`,
-            data: report
+            data: populatedReport
         });
     } catch (error) {
         console.error('Update Report Status Error:', error);

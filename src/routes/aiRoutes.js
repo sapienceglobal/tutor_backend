@@ -54,6 +54,7 @@ import {
     getReportStudents, generateReport, getRecentReports, deleteReport,
 
     getProctoringAlerts, generateProctoringAISummary,
+    getActiveProctoringSessions, terminateExamSession,
     generateAICourse,
     getRecentAICourses, deleteAICourse,
     superAdminCoordinatorChat, executeAIAction,
@@ -333,6 +334,8 @@ router.delete('/course-builder/:id', protect, deleteAICourse);
 
 // ── Exam Intelligence (Proctoring & Review) routes ────────────────────────────
 router.get('/proctoring/alerts', protect, getProctoringAlerts);
+router.get('/proctoring/live-sessions', protect, getActiveProctoringSessions);
+router.post('/proctoring/terminate-session', protect, terminateExamSession);
 router.get('/proctoring/review/:attemptId', protect, getExamSuspicionReview);
 router.post('/proctoring/review/:attemptId/summary', protect, consumeAICredits(3), generateProctoringAISummary);
 

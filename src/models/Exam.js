@@ -340,6 +340,7 @@ const examAttemptSchema = new mongoose.Schema({
     matchAnswers: mongoose.Schema.Types.Mixed, // ✅ NEW: For match-the-following questions { "left1": "right2" }
     textAnswer: String,
     aiFeedback: String,
+    aiHighlights: mongoose.Schema.Types.Mixed,
     isCorrect: Boolean,
     pointsEarned: Number,
 

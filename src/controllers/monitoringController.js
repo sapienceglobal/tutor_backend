@@ -22,13 +22,25 @@ export const getMonitoringOverview = async (req, res) => {
         const serverUptime = process.uptime(); // in seconds
 
         // ─── 2. API HEALTH & ERRORS (From AuditLog) ───
-        // Total API requests in last 24h
+        // Total API requests in last 24h by platform
         const totalRequests = await AuditLog.countDocuments({ createdAt: { $gte: twentyFourHoursAgo } });
+        const webRequests = await AuditLog.countDocuments({ createdAt: { $gte: twentyFourHoursAgo }, platform: 'web' });
+        const mobileRequests = await AuditLog.countDocuments({ createdAt: { $gte: twentyFourHoursAgo }, platform: 'mobile' });
         
         // Failed requests (Status 400 or above)
         const failedRequests = await AuditLog.countDocuments({ 
             createdAt: { $gte: twentyFourHoursAgo },
             statusCode: { $gte: 400 }
+        });
+        const webFailedRequests = await AuditLog.countDocuments({ 
+            createdAt: { $gte: twentyFourHoursAgo },
+            statusCode: { $gte: 400 },
+            platform: 'web'
+        });
+        const mobileFailedRequests = await AuditLog.countDocuments({ 
+            createdAt: { $gte: twentyFourHoursAgo },
+            statusCode: { $gte: 400 },
+            platform: 'mobile'
         });
 
         const errorRate = totalRequests > 0 ? ((failedRequests / totalRequests) * 100).toFixed(2) : 0;
@@ -37,7 +49,7 @@ export const getMonitoringOverview = async (req, res) => {
         const recentErrors = await AuditLog.find({ statusCode: { $gte: 400 } })
             .sort({ createdAt: -1 })
             .limit(5)
-            .select('method path statusCode action createdAt ip');
+            .select('method path statusCode action createdAt ip platform');
 
 
         // ─── 3. STORAGE CALCULATION (From Lesson Documents) ───
@@ -75,6 +87,10 @@ export const getMonitoringOverview = async (req, res) => {
                 apiHealth: {
                     totalRequests24h: totalRequests,
                     failedRequests24h: failedRequests,
+                    webRequests24h: webRequests,
+                    mobileRequests24h: mobileRequests,
+                    webFailedRequests24h: webFailedRequests,
+                    mobileFailedRequests24h: mobileFailedRequests,
                     errorRate: parseFloat(errorRate),
                     recentErrors
                 },

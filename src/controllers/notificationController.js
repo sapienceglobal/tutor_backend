@@ -152,6 +152,8 @@ export const getUnreadCount = async (req, res) => {
   }
 };
 
+import { sendPushNotification } from '../services/fcmService.js';
+
 // ✅ Helper function to create notification
 export const createNotification = async ({
   userId,
@@ -176,9 +178,73 @@ export const createNotification = async ({
       data
     });
 
+    // Fire WebSocket event in real-time
+    setImmediate(async () => {
+      try {
+        const { emitNotification } = await import('../services/socketService.js');
+        emitNotification(userId.toString(), notification);
+      } catch (err) {
+        console.error('Socket notification emit failed:', err);
+      }
+    });
+
+    // Fire push notification asynchronously
+    setImmediate(() => {
+      sendPushNotification(userId, title, message, {
+        type,
+        notificationId: notification._id.toString(),
+        ...data
+      });
+    });
+
     return notification;
   } catch (error) {
     console.error('Create notification error:', error);
     return null;
+  }
+};
+
+// @desc    Register FCM Token
+// @route   POST /api/notifications/register-fcm
+export const registerFcmToken = async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'FCM Token is required' });
+    }
+
+    // Add token to fcmTokens list if it doesn't exist
+    await User.findByIdAndUpdate(
+      req.user.id,
+      { $addToSet: { fcmTokens: token } },
+      { new: true }
+    );
+
+    res.status(200).json({ success: true, message: 'FCM Token registered successfully' });
+  } catch (error) {
+    console.error('Register FCM token error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+// @desc    Unregister FCM Token
+// @route   POST /api/notifications/unregister-fcm
+export const unregisterFcmToken = async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'FCM Token is required' });
+    }
+
+    // Remove token from fcmTokens list
+    await User.findByIdAndUpdate(
+      req.user.id,
+      { $pull: { fcmTokens: token } }
+    );
+
+    res.status(200).json({ success: true, message: 'FCM Token unregistered successfully' });
+  } catch (error) {
+    console.error('Unregister FCM token error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };

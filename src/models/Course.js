@@ -32,7 +32,7 @@ const courseSchema = new mongoose.Schema({
   },
   thumbnail: {
     type: String,
-    default: 'https://via.placeholder.com/400x250',
+    default: 'https://images.unsplash.com/photo-1497633762265-9d179a990aa6?w=800&auto=format&fit=crop&q=60',
   },
   categoryId: {
     type: mongoose.Schema.Types.ObjectId,

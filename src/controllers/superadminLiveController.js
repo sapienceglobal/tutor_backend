@@ -88,6 +88,12 @@ export const forceKillSession = async (req, res) => {
 
         // NOTE: Asli app me yahan ek Socket.io ya Pusher event emit kar dena 
         // jo tutor/students ke frontend ko force disconnect kar de.
+        try {
+            const { emitLiveClassStatusChange } = await import('../services/socketService.js');
+            emitLiveClassStatusChange({ type: 'deleted', sessionId: id });
+        } catch (socketErr) {
+            console.error("Failed to emit live class force-kill socket event:", socketErr);
+        }
 
         res.status(200).json({
             success: true,

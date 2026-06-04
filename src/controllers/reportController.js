@@ -1,23 +1,53 @@
 import Report from '../models/Report.js';
+import mongoose from 'mongoose';
 
 export const createReport = async (req, res) => {
     try {
         const { targetType, targetId, reason, description } = req.body;
 
+        const clientPlatform = req.headers['x-client-platform'] || (req.headers['user-agent']?.includes('Dart') ? 'mobile' : 'web');
+
         const report = new Report({
-            reporter: req.user.id, // Assumes auth middleware
+            reporter: req.user.id || req.user._id, // Assumes auth middleware
             targetType,
             targetId,
             reason,
-            description
+            description,
+            platform: clientPlatform
         });
 
         await report.save();
 
+        // Populate reporter details and lookup target name dynamically for the real-time WebSocket update
+        const populatedReport = await Report.findById(report._id)
+            .populate('reporter', 'name email profileImage')
+            .lean();
+
+        let targetName = 'Unknown Target';
+        try {
+            if (populatedReport.targetType === 'Course' && mongoose.models.Course) {
+                const course = await mongoose.models.Course.findById(populatedReport.targetId).select('title').lean();
+                if (course) targetName = course.title;
+            } else if (populatedReport.targetType === 'Tutor' && mongoose.models.User) {
+                const tutor = await mongoose.models.User.findById(populatedReport.targetId).select('name').lean();
+                if (tutor) targetName = tutor.name;
+            } else if (populatedReport.targetType === 'Review' && mongoose.models.Review) {
+                const review = await mongoose.models.Review.findById(populatedReport.targetId).select('comment').lean();
+                if (review) targetName = review.comment.substring(0, 30) + '...';
+            }
+        } catch (e) {
+            // Ignore target lookup failures
+        }
+        populatedReport.targetName = targetName;
+
+        // Emit WebSocket notification to superadmins
+        const { emitReportCreated } = await import('../services/socketService.js');
+        emitReportCreated(populatedReport);
+
         res.status(201).json({
             success: true,
             message: 'Report submitted successfully. We will review it shortly.',
-            data: report
+            data: populatedReport
         });
     } catch (error) {
         console.error('Create Report Error:', error);

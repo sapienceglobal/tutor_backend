@@ -55,11 +55,17 @@ const auditLogSchema = new mongoose.Schema({
     type: String,
     default: '',
   },
+  platform: {
+    type: String,
+    enum: ['web', 'mobile', 'unknown'],
+    default: 'web',
+  },
 }, { timestamps: true });
 
 // Indexes for efficient querying
 auditLogSchema.index({ userId: 1, createdAt: -1 });
 auditLogSchema.index({ action: 1, createdAt: -1 });
+auditLogSchema.index({ platform: 1, createdAt: -1 });
 
 const AuditLog = mongoose.model('AuditLog', auditLogSchema);
 export default AuditLog;

@@ -8,6 +8,7 @@ import SubscriptionPlan from '../models/SubscriptionPlan.js';
 import Institute from '../models/Institute.js';
 import User from '../models/User.js';
 import { createNotification } from './notificationController.js';
+import { logBillingEvent } from '../utils/billingLogger.js';
 
 // Lazy Razorpay initialization (only when payment endpoints are called)
 let razorpay = null;
@@ -91,7 +92,7 @@ export const createOrder = async (req, res) => {
             course: {
                 title: course.title,
                 price: course.price,
-            },
+              },
         });
     } catch (error) {
         console.error('Create order error:', error);
@@ -123,6 +124,10 @@ export const verifyPayment = async (req, res) => {
                 { razorpayOrderId },
                 { status: 'failed' }
             );
+            await logBillingEvent(req.user.id, 'BILLING_PAYMENT_FAILED', {
+                razorpayOrderId,
+                reason: 'Signature mismatch'
+            });
             return res.status(400).json({ success: false, message: 'Payment verification failed' });
         }
 
@@ -139,8 +144,23 @@ export const verifyPayment = async (req, res) => {
         );
 
         if (!payment) {
+            await logBillingEvent(req.user.id, 'BILLING_PAYMENT_FAILED', {
+                razorpayOrderId,
+                reason: 'Payment record not found'
+            });
             return res.status(404).json({ success: false, message: 'Payment record not found' });
         }
+
+        // Log successful billing event
+        await logBillingEvent(payment.studentId, 'BILLING_PAYMENT_SUCCESS', {
+            paymentId: payment._id,
+            amount: payment.amount,
+            type: payment.type,
+            planId: payment.planId || null,
+            courseId: payment.courseId || null,
+            razorpayOrderId: payment.razorpayOrderId,
+            razorpayPaymentId: payment.razorpayPaymentId
+        });
 
         // Auto-enroll the student if it's a course purchase
         if (payment.type === 'course_purchase' && payment.courseId) {

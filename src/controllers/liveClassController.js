@@ -171,6 +171,35 @@ export const createLiveClass = async (req, res) => {
       platform,
     });
 
+    try {
+      const populated = await LiveClass.findById(liveClass._id)
+        .populate('instituteId', 'name subdomain')
+        .populate('courseId', 'title')
+        .populate({
+            path: 'tutorId',
+            populate: {
+                path: 'userId',
+                select: 'name email profileImage'
+            }
+        })
+        .lean();
+      
+      if (populated) {
+        if (populated.tutorId && populated.tutorId.userId) {
+            populated.tutorId.name = populated.tutorId.userId.name;
+            populated.tutorId.email = populated.tutorId.userId.email;
+            populated.tutorId.profileImage = populated.tutorId.userId.profileImage;
+        }
+        populated.participantCount = 0;
+        populated.startedAt = populated.dateTime;
+
+        const { emitLiveClassStatusChange } = await import('../services/socketService.js');
+        emitLiveClassStatusChange({ type: 'created', session: populated });
+      }
+    } catch (socketErr) {
+      console.error("Failed to emit live class created socket event:", socketErr);
+    }
+
     res.status(201).json({
       success: true,
       message: "Live class scheduled successfully",
@@ -392,7 +421,15 @@ export const deleteLiveClass = async (req, res) => {
       });
     }
 
+    const liveClassId = liveClass._id.toString();
     await liveClass.deleteOne();
+
+    try {
+      const { emitLiveClassStatusChange } = await import('../services/socketService.js');
+      emitLiveClassStatusChange({ type: 'deleted', sessionId: liveClassId });
+    } catch (socketErr) {
+      console.error("Failed to emit live class deleted socket event:", socketErr);
+    }
 
     res.status(200).json({
       success: true,
@@ -559,6 +596,35 @@ export const updateLiveClass = async (req, res) => {
     }
 
     await liveClass.save();
+
+    try {
+      const populated = await LiveClass.findById(liveClass._id)
+        .populate('instituteId', 'name subdomain')
+        .populate('courseId', 'title')
+        .populate({
+            path: 'tutorId',
+            populate: {
+                path: 'userId',
+                select: 'name email profileImage'
+            }
+        })
+        .lean();
+      
+      if (populated) {
+        if (populated.tutorId && populated.tutorId.userId) {
+            populated.tutorId.name = populated.tutorId.userId.name;
+            populated.tutorId.email = populated.tutorId.userId.email;
+            populated.tutorId.profileImage = populated.tutorId.userId.profileImage;
+        }
+        populated.participantCount = 0;
+        populated.startedAt = populated.dateTime;
+
+        const { emitLiveClassStatusChange } = await import('../services/socketService.js');
+        emitLiveClassStatusChange({ type: 'updated', session: populated });
+      }
+    } catch (socketErr) {
+      console.error("Failed to emit live class updated socket event:", socketErr);
+    }
 
     res.status(200).json({
       success: true,
