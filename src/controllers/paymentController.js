@@ -494,7 +494,7 @@ export const retryFailedPayment = async (req, res) => {
         const order = await getRazorpay().orders.create({
             amount: amountInPaise,
             currency: payment.currency || 'INR',
-            receipt: `retry_${id}_${Date.now()}`,
+            receipt: `retry_${id.toString().slice(-12)}_${Date.now()}`,
             notes: {
                 originalPaymentId: id,
                 retryCount: retryCount + 1,
