@@ -179,7 +179,9 @@ const userSchema = new mongoose.Schema({
       aiUsageCount: { type: Number, default: 0 },
       aiAssistant: { type: Boolean, default: false },
       aiAssessment: { type: Boolean, default: false },
-      aiIntelligence: { type: Boolean, default: false }
+      aiIntelligence: { type: Boolean, default: false },
+      hlsStreaming: { type: Boolean, default: false },
+      zoomIntegration: { type: Boolean, default: false }
     }
   },
 }, {

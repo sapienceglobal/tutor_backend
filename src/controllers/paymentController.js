@@ -7,6 +7,7 @@ import Enrollment from '../models/Enrollment.js';
 import SubscriptionPlan from '../models/SubscriptionPlan.js';
 import Institute from '../models/Institute.js';
 import User from '../models/User.js';
+import InstituteMembership from '../models/InstituteMembership.js';
 import { createNotification } from './notificationController.js';
 import { logBillingEvent } from '../utils/billingLogger.js';
 
@@ -229,7 +230,9 @@ export const verifyPayment = async (req, res) => {
                         aiAssessment: plan.features?.aiAssessment === true,
                         aiIntelligence: plan.features?.aiIntelligence === true,
                         aiCreditsPerMonth: plan.features?.aiCreditsPerMonth || 0,
-                        aiUsageCount: 0
+                        aiUsageCount: 0,
+                        hlsStreaming: plan.features?.hlsStreaming === true,
+                        zoomIntegration: plan.features?.zoomIntegration === true
                     };
 
                     await User.findByIdAndUpdate(payment.studentId, {
@@ -394,12 +397,12 @@ export const generateInvoice = async (req, res) => {
     }
 };
 
-// @desc    Renew subscription (for institutes / tutors)
+// @desc    Renew subscription (for institutes / personal)
 // @route   POST /api/payments/renew-subscription
-// @access  Private
+// @access  Private (Admin, Tutor, Student)
 export const renewSubscription = async (req, res) => {
     try {
-        const { planId, instituteId } = req.body;
+        const { planId } = req.body;
 
         if (!planId) {
             return res.status(400).json({ success: false, message: 'planId is required' });
@@ -418,24 +421,70 @@ export const renewSubscription = async (req, res) => {
         }
 
         const amountInPaise = Math.round(planAmount * 100);
+        let order;
+        let verifiedInstituteId = null;
 
-        const options = {
-            amount: amountInPaise,
-            currency: 'INR',
-            receipt: `sub_${(instituteId || req.user.id).toString().slice(-12)}_${Date.now()}`,
-            notes: {
-                type: 'subscription_renewal',
-                planName: planName || 'Standard',
+        if (plan.planType === 'personal') {
+            // Validate that the user role matches the planRole if restricted
+            const userRole = req.user.role;
+            if (plan.planRole && plan.planRole !== 'all' && plan.planRole !== 'both') {
+                if (plan.planRole !== userRole && req.user.role !== 'superadmin') {
+                    return res.status(403).json({ success: false, message: `Only users with role ${plan.planRole} can subscribe to this plan` });
+                }
+            }
+
+            const options = {
+                amount: amountInPaise,
+                currency: 'INR',
+                receipt: `sub_pers_${req.user.id.toString().slice(-12)}_${Date.now()}`,
+                notes: {
+                    type: 'subscription_renewal',
+                    planName: planName || 'Standard',
+                    userId: req.user.id,
+                    instituteId: '',
+                    planId: plan._id.toString()
+                },
+            };
+
+            order = await getRazorpay().orders.create(options);
+        } else {
+            // Institute plan flow
+            verifiedInstituteId = req.user.instituteId;
+            if (!verifiedInstituteId) {
+                return res.status(403).json({ success: false, message: 'You must belong to an institute to renew an institute subscription' });
+            }
+
+            // Verify the user is an admin of this institute via membership
+            const membership = await InstituteMembership.findOne({
                 userId: req.user.id,
-                instituteId: instituteId || null,
-            },
-        };
+                instituteId: verifiedInstituteId,
+                status: 'active'
+            });
 
-        const order = await getRazorpay().orders.create(options);
+            if (!membership || (membership.roleInInstitute !== 'admin' && req.user.role !== 'superadmin')) {
+                return res.status(403).json({ success: false, message: 'Only institute admins can renew institute subscriptions' });
+            }
 
+            const options = {
+                amount: amountInPaise,
+                currency: 'INR',
+                receipt: `sub_inst_${verifiedInstituteId.toString().slice(-12)}_${Date.now()}`,
+                notes: {
+                    type: 'subscription_renewal',
+                    planName: planName || 'Standard',
+                    userId: req.user.id,
+                    instituteId: verifiedInstituteId.toString(),
+                    planId: plan._id.toString()
+                },
+            };
+
+            order = await getRazorpay().orders.create(options);
+        }
+
+        // Save payment record
         await Payment.create({
             studentId: req.user.id,
-            instituteId: instituteId || null,
+            instituteId: verifiedInstituteId || null,
             planId: plan._id,
             amount: planAmount,
             title: `Upgrade to ${planName}`,

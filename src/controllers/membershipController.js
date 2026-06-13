@@ -414,13 +414,30 @@ export const switchInstitute = async (req, res) => {
     // Update last active
     await membership.updateLastActive();
     
-    // Update user's current institute
-    await User.findByIdAndUpdate(userId, { instituteId });
+    // SECURITY: Sync global role with the institute-specific role
+    // This prevents privilege escalation across institutes
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      {
+        instituteId,
+        role: membership.roleInInstitute // Sync global role with institute role
+      },
+      { new: true }
+    );
+
+    // Generate a new token with the updated role
+    const newToken = generateToken(updatedUser._id, updatedUser.role);
 
     res.status(200).json({
       success: true,
       message: 'Institute switched successfully',
-      membership: await membership.populate('instituteId')
+      token: newToken, // Client must use this new token
+      membership: await membership.populate('instituteId'),
+      user: {
+        _id: updatedUser._id,
+        role: updatedUser.role,
+        instituteId: updatedUser.instituteId
+      }
     });
 
   } catch (error) {

@@ -12,18 +12,24 @@ import User from '../models/User.js';
  * - null -> General action (no specific asset context in request)
  */
 const resolveAssetContext = async (req) => {
-    const { courseId, examId, lessonId, batchId, lectureId, chatSessionId, sessionId } = {
+    const { courseId, examId, lessonId, batchId, lectureId, chatSessionId, sessionId, isPersonal } = {
         ...(req.body || {}),
         ...(req.query || {}),
         ...(req.params || {})
     };
 
+    const isPersonalParam = isPersonal === 'true' || isPersonal === true;
+
     // If no asset indicators are present in the request, return null (general action)
-    if (!courseId && !examId && !lessonId && !batchId && !lectureId && !chatSessionId && !sessionId && !req.body?.instituteId && !req.query?.instituteId) {
+    if (!isPersonalParam && !courseId && !examId && !lessonId && !batchId && !lectureId && !chatSessionId && !sessionId && !req.body?.instituteId && !req.query?.instituteId) {
         return null;
     }
 
     try {
+        // 0. Direct isPersonal parameter check
+        if (isPersonalParam) {
+            return { isPersonalAsset: true, instituteId: null };
+        }
         // 1. Direct instituteId in request
         if (req.body?.instituteId || req.query?.instituteId) {
             const instId = req.body?.instituteId || req.query?.instituteId;
@@ -305,7 +311,7 @@ export const consumeAICredits = (cost = 1) => {
                 : !!req.user.instituteId; // Default to Institute if user belongs to one and action is general
 
             if (isInstituteContext) {
-                // --- DEDUCT FROM INSTITUTE QUOTA ---
+                // --- DEDUCT FROM INSTITUTE QUOTA (ATOMIC) ---
                 if (!req.tenant) {
                     return res.status(403).json({
                         success: false,
@@ -323,10 +329,22 @@ export const consumeAICredits = (cost = 1) => {
                 }
 
                 const limit = req.tenant.features?.aiCreditsPerMonth || 0;
-                const usage = req.tenant.aiUsageCount || 0;
-                const remaining = Math.max(0, limit - usage);
 
-                if (remaining < cost) {
+                // ATOMIC: Only increment if usage + cost won't exceed the limit
+                // This prevents race conditions from concurrent requests
+                const updatedInstitute = await Institute.findOneAndUpdate(
+                    {
+                        _id: targetInstituteId,
+                        $expr: { $lte: [{ $add: ['$aiUsageCount', cost] }, limit] }
+                    },
+                    { $inc: { aiUsageCount: cost } },
+                    { new: true }
+                );
+
+                if (!updatedInstitute) {
+                    // Atomic update failed — credits exhausted or concurrent race
+                    const currentInstitute = await Institute.findById(targetInstituteId);
+                    const remaining = Math.max(0, limit - (currentInstitute?.aiUsageCount || 0));
                     return res.status(403).json({
                         success: false,
                         featureLocked: true,
@@ -335,20 +353,14 @@ export const consumeAICredits = (cost = 1) => {
                     });
                 }
 
-                // Deduct credits by incrementing usage atomically
-                await Institute.findByIdAndUpdate(
-                    targetInstituteId,
-                    { $inc: { aiUsageCount: cost } }
-                );
-
                 // Update loaded memory context
                 if (req.tenant) {
-                    req.tenant.aiUsageCount = usage + cost;
+                    req.tenant.aiUsageCount = updatedInstitute.aiUsageCount;
                 }
                 
                 req.billingContext = 'institute';
             } else {
-                // --- DEDUCT FROM USER PERSONAL QUOTA ---
+                // --- DEDUCT FROM USER PERSONAL QUOTA (ATOMIC) ---
                 const user = await User.findById(req.user.id);
                 const sub = user.personalSubscription;
 
@@ -369,9 +381,26 @@ export const consumeAICredits = (cost = 1) => {
                     });
                 }
 
-                const personalCredits = sub.features.aiCreditsPerMonth - sub.features.aiUsageCount;
+                const personalLimit = sub.features.aiCreditsPerMonth || 0;
 
-                if (personalCredits < cost) {
+                // ATOMIC: Only increment if personal usage + cost won't exceed limit
+                const updatedUser = await User.findOneAndUpdate(
+                    {
+                        _id: req.user.id,
+                        'personalSubscription.isActive': true,
+                        $expr: {
+                            $lte: [
+                                { $add: ['$personalSubscription.features.aiUsageCount', cost] },
+                                personalLimit
+                            ]
+                        }
+                    },
+                    { $inc: { 'personalSubscription.features.aiUsageCount': cost } },
+                    { new: true }
+                );
+
+                if (!updatedUser) {
+                    const personalCredits = Math.max(0, personalLimit - (sub.features.aiUsageCount || 0));
                     return res.status(403).json({
                         success: false,
                         featureLocked: true,
@@ -379,12 +408,6 @@ export const consumeAICredits = (cost = 1) => {
                         message: `Your Personal AI Credits are exhausted! This action requires ${cost} credits, but you only have ${personalCredits} left. Please upgrade your personal plan.`
                     });
                 }
-
-                // Deduct credits from user document
-                await User.findByIdAndUpdate(
-                    req.user.id,
-                    { $inc: { 'personalSubscription.features.aiUsageCount': cost } }
-                );
 
                 req.billingContext = 'personal';
             }

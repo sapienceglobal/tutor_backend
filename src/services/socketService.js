@@ -97,32 +97,58 @@ export const initSocket = (server) => {
     }
 
     // Handle joining exam attempt (Device Session Lock-in)
-    socket.on('join_exam_attempt', ({ examId }) => {
-      console.log(`✍️ User ${userId} joining exam ${examId}`);
-      
-      // Check if there is already another active socket for this student on ANY exam
-      const existingSession = activeExamSessions.get(userId);
-      
-      if (existingSession && existingSession.socketId !== socket.id) {
-        console.log(`🚨 Multi-device login attempt by Student ${userId} on exam ${examId}`);
+    socket.on('join_exam_attempt', async ({ examId, attemptId }) => {
+      console.log(`✍️ User ${userId} requesting to join exam ${examId}`);
+
+      // SECURITY: Only students can join exams
+      if (socket.userRole !== 'student') {
+        socket.emit('exam_error', { message: 'Only students can join exam sessions' });
+        return;
+      }
+
+      // SECURITY: Verify the user has a valid, in-progress attempt for this exam
+      try {
+        const { default: ExamAttempt } = await import('../models/ExamAttempt.js');
+        const query = attemptId
+          ? { _id: attemptId, studentId: userId, examId, status: 'in-progress' }
+          : { studentId: userId, examId, status: 'in-progress' };
+
+        const attempt = await ExamAttempt.findOne(query);
+        if (!attempt) {
+          socket.emit('exam_error', {
+            message: 'No active exam attempt found. Please start the exam properly.'
+          });
+          return;
+        }
+
+        // Check if there is already another active socket for this student on ANY exam
+        const existingSession = activeExamSessions.get(userId);
         
-        // Block the NEW connection (current socket) to keep the original active
-        socket.emit('multiple_devices_detected', {
-          message: 'Another active session of this exam was detected on a different device or tab. This instance has been blocked to maintain exam integrity.'
-        });
-        
-        // Also send a warning to the OLD connection to alert them
-        io.to(existingSession.socketId).emit('exam_session_warning', {
-          message: 'A secondary login attempt was made. We blocked it to protect your ongoing exam session.'
-        });
-      } else {
-        // Register this socket as the active exam session
-        activeExamSessions.set(userId, {
-          socketId: socket.id,
-          examId,
-          startTime: Date.now()
-        });
-        socket.join(`exam_${examId}`);
+        if (existingSession && existingSession.socketId !== socket.id) {
+          console.log(`🚨 Multi-device login attempt by Student ${userId} on exam ${examId}`);
+          
+          // Block the NEW connection (current socket) to keep the original active
+          socket.emit('multiple_devices_detected', {
+            message: 'Another active session of this exam was detected on a different device or tab. This instance has been blocked to maintain exam integrity.'
+          });
+          
+          // Also send a warning to the OLD connection to alert them
+          io.to(existingSession.socketId).emit('exam_session_warning', {
+            message: 'A secondary login attempt was made. We blocked it to protect your ongoing exam session.'
+          });
+        } else {
+          // Register this socket as the active exam session
+          activeExamSessions.set(userId, {
+            socketId: socket.id,
+            examId,
+            attemptId: attempt._id.toString(),
+            startTime: Date.now()
+          });
+          socket.join(`exam_${examId}`);
+        }
+      } catch (err) {
+        console.error('Error verifying exam attempt for socket join:', err);
+        socket.emit('exam_error', { message: 'Failed to verify exam attempt' });
       }
     });
 
@@ -138,12 +164,27 @@ export const initSocket = (server) => {
 
     // Handle real-time proctoring event (e.g. face detection deviation, voice trigger)
     socket.on('proctoring_event', async (eventData) => {
+      // SECURITY: Only students with an active exam session can send proctoring events
+      if (socket.userRole !== 'student') {
+        return; // Silently ignore non-student events
+      }
+
+      const activeSession = activeExamSessions.get(userId);
+      if (!activeSession || activeSession.socketId !== socket.id) {
+        return; // Silently ignore events from non-active exam sessions
+      }
+
+      // Ensure the examId in the event matches the active session
+      if (eventData.examId && eventData.examId !== activeSession.examId) {
+        return; // Ignore events for different exams
+      }
+
       console.log(`🚨 Proctoring event from student ${userId}:`, eventData);
       
       // eventData contains: { examId, eventType, severity, details }
       try {
         const { Exam } = await import('../models/Exam.js');
-        const exam = await Exam.findById(eventData.examId).populate({
+        const exam = await Exam.findById(activeSession.examId).populate({
           path: 'courseId',
           populate: { path: 'tutorId' }
         });
@@ -152,9 +193,9 @@ export const initSocket = (server) => {
           const tutorUserId = exam.courseId.tutorId.userId;
           if (tutorUserId) {
             emitProctoringAlert(tutorUserId.toString(), {
-              attemptId: eventData.attemptId || null,
+              attemptId: activeSession.attemptId || eventData.attemptId || null,
               studentId: userId.toString(),
-              examId: eventData.examId,
+              examId: activeSession.examId,
               studentName: socket.handshake.auth.userName || 'Student',
               examTitle: exam.title,
               eventType: eventData.eventType,

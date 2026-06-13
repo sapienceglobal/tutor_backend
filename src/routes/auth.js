@@ -33,7 +33,7 @@ import {
   sendOTP,
   verifyOTPAndRegister,
 } from '../controllers/otpController.js';
-import { protect } from '../middleware/auth.js';
+import { protect, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -65,7 +65,7 @@ router.get('/github/callback', githubCallback);
 // Protected routes
 router.get('/me', protect, getMe);
 router.patch('/profile', protect, updateProfile);
-router.post('/upgrade-personal', protect, upgradePersonalSubscription);
+router.post('/upgrade-personal', protect, authorize('student', 'tutor'), upgradePersonalSubscription);
 router.patch('/profile-image', protect, updateProfileImage);
 router.post('/change-password', protect, changePassword);
 router.post('/set-password', protect, setInitialPassword);

@@ -107,9 +107,27 @@ export const updateInstitutePlan = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Institute not found' });
         }
 
+        // Dynamically import SubscriptionPlan to retrieve its feature mapping
+        const SubscriptionPlan = (await import('../models/SubscriptionPlan.js')).default;
+        const selectedPlan = await SubscriptionPlan.findOne({ name: { $regex: new RegExp(`^${plan}$`, 'i') } });
+
         const updateData = { subscriptionPlan: plan };
-        if (maxTutors  !== undefined) updateData['features.maxTutors']  = maxTutors;
-        if (maxStudents !== undefined) updateData['features.maxStudents'] = maxStudents;
+        if (selectedPlan) {
+            updateData.features = {
+                ...selectedPlan.features.toObject(),
+                manageTutors: true,
+                manageStudents: true,
+                maxTutors: maxTutors !== undefined ? Number(maxTutors) : selectedPlan.features.maxTutors,
+                maxStudents: maxStudents !== undefined ? Number(maxStudents) : selectedPlan.features.maxStudents,
+                aiFeatures: selectedPlan.features.aiAssistant || selectedPlan.features.aiAssessment || selectedPlan.features.aiIntelligence || false
+            };
+            if (selectedPlan.features.aiCreditsPerMonth !== undefined) {
+                updateData.aiUsageQuota = selectedPlan.features.aiCreditsPerMonth;
+            }
+        } else {
+            if (maxTutors  !== undefined) updateData['features.maxTutors']  = Number(maxTutors);
+            if (maxStudents !== undefined) updateData['features.maxStudents'] = Number(maxStudents);
+        }
 
         const updatedInstitute = await Institute.findByIdAndUpdate(
             instituteId,

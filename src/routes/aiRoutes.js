@@ -7,6 +7,8 @@ import {
     generateStudentAnalytics,
     summarizeLesson,
     generateRevisionNotes,
+    explainConcept,
+    generatePracticeQuestions,
     getAIUsageStats,
     contextualChat,
     // Chat Session endpoints
@@ -230,8 +232,9 @@ router.post('/generate-csv-report', checkN8nSecret, async (req, res) => {
 
         fs.writeFileSync(filePath, csvContent);
 
-        // Download link generate karo (tumhara port 4000)
-        const downloadUrl = `http://195.35.20.207:4000/uploads/${fileName}`;
+        // Download link uses configured backend URL
+        const backendUrl = process.env.BACKEND_URL || 'http://localhost:4000';
+        const downloadUrl = `${backendUrl}/uploads/${fileName}`;
 
         res.json({
             success: true,
@@ -288,6 +291,8 @@ router.post('/contextual-chat', protect, consumeAICredits(1), contextualChat);
 router.get('/analytics/student', protect, generateStudentAnalytics); // Re-check if this calls LLM, if yes, change to POST and charge credits. Assuming DB fetch for now.
 router.post('/summarize-lesson', protect, consumeAICredits(3), summarizeLesson);
 router.post('/revision-notes', protect, consumeAICredits(3), generateRevisionNotes);
+router.post('/explain-concept', protect, consumeAICredits(3), explainConcept);
+router.post('/practice-questions', protect, consumeAICredits(3), generatePracticeQuestions);
 router.get('/usage-stats', protect, admin, getAIUsageStats);
 router.get('/tutor-dashboard-stats', protect, getTutorAIDashboardStats);
 

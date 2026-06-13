@@ -74,9 +74,8 @@ const lessonCommentSchema = new mongoose.Schema({
 lessonCommentSchema.index({ lessonId: 1, createdAt: -1 });
 lessonCommentSchema.index({ lessonId: 1, moderationStatus: 1, createdAt: -1 });
 
-lessonCommentSchema.pre('save', function (next) {
+lessonCommentSchema.pre('save', function () {
     this.updatedAt = new Date();
-    next();
 });
 
 const LessonComment = mongoose.model('LessonComment', lessonCommentSchema);

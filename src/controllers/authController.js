@@ -433,8 +433,40 @@ export const loginUser = async (req, res) => {
         message: 'Invalid Password'
       });
     }
-    // Generate token
+
+    // SECURITY: Check if 2FA is enabled — require TOTP verification before issuing JWT
+    if (user.twoFactorEnabled) {
+      // Generate a short-lived temp token (5 min) that can only be used for 2FA verification
+      const tempToken = jwt.sign(
+        { id: user._id, pending2FA: true },
+        process.env.JWT_SECRET,
+        { expiresIn: '5m' }
+      );
+
+      return res.status(200).json({
+        success: true,
+        requires2FA: true,
+        tempToken,
+        message: 'Please enter your 2FA code to complete login'
+      });
+    }
+
+    // Generate token (only if 2FA is NOT enabled)
     const token = generateToken(user._id, user.role);
+
+    // Track session
+    const device = req.headers['user-agent'] || 'Unknown';
+    const ip = req.ip || req.headers['x-forwarded-for'] || '';
+    const browserMatch = device.match(/(Chrome|Firefox|Safari|Edge|Opera)/i);
+    const browser = browserMatch ? browserMatch[1] : 'Unknown';
+
+    if (user.activeSessions && user.activeSessions.length >= 3) {
+      user.activeSessions.sort((a, b) => new Date(a.lastActive) - new Date(b.lastActive));
+      user.activeSessions.shift();
+    }
+    if (!user.activeSessions) user.activeSessions = [];
+    user.activeSessions.push({ token, device: device.substring(0, 200), ip, browser });
+    await user.save();
 
     res.status(200).json({
       success: true,
@@ -453,7 +485,8 @@ export const loginUser = async (req, res) => {
         bio: user.bio,
         address: user.address,
         authProvider: user.authProvider,
-        hasPassword: true
+        hasPassword: true,
+        twoFactorEnabled: user.twoFactorEnabled || false
       }
     });
   } catch (error) {
@@ -513,7 +546,8 @@ export const getMe = async (req, res) => {
         address: user.address,
         authProvider: user.authProvider,
         hasPassword: Boolean(user.password),
-        personalSubscription: user.personalSubscription
+        personalSubscription: user.personalSubscription,
+        twoFactorEnabled: user.twoFactorEnabled || false
       }
     });
   } catch (error) {
@@ -1003,7 +1037,17 @@ export const googleAuth = (req, res) => {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const redirectUri = `${BACKEND_URL}/api/auth/google/callback`;
   const scope = encodeURIComponent('openid email profile');
-  const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent`;
+
+  // SECURITY: Generate CSRF state token to prevent cross-site request forgery
+  const state = crypto.randomBytes(32).toString('hex');
+  res.cookie('oauth_state', state, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 10 * 60 * 1000 // 10 minutes
+  });
+
+  const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent&state=${state}`;
   res.redirect(url);
 };
 
@@ -1011,7 +1055,15 @@ export const googleAuth = (req, res) => {
 // @route   GET /api/auth/google/callback
 export const googleCallback = async (req, res) => {
   try {
-    const { code } = req.query;
+    const { code, state } = req.query;
+
+    // SECURITY: Verify OAuth state to prevent CSRF
+    const savedState = req.cookies?.oauth_state;
+    res.clearCookie('oauth_state');
+    if (!state || !savedState || state !== savedState) {
+      return res.redirect(`${FRONTEND_URL}/login?error=Invalid OAuth state. Please try again.`);
+    }
+
     if (!code) {
       return res.redirect(`${FRONTEND_URL}/login?error=Google login failed`);
     }
@@ -1084,7 +1136,12 @@ export const googleCallback = async (req, res) => {
       });
     }
 
-    const token = generateToken(user._id);
+    // SECURITY: Generate short-lived token (5 min) to reduce query-string exposure
+    const token = jwt.sign(
+      { id: user._id, role: user.role, oauthRedirect: true },
+      process.env.JWT_SECRET,
+      { expiresIn: '5m' }
+    );
 
     if (isNewUser) {
       // New user - redirect to role selection
@@ -1106,7 +1163,17 @@ export const githubAuth = (req, res) => {
   const clientId = process.env.GITHUB_CLIENT_ID;
   const redirectUri = `${BACKEND_URL}/api/auth/github/callback`;
   const scope = encodeURIComponent('user:email read:user');
-  const url = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}`;
+
+  // SECURITY: Generate CSRF state token
+  const state = crypto.randomBytes(32).toString('hex');
+  res.cookie('oauth_state_gh', state, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 10 * 60 * 1000
+  });
+
+  const url = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}&state=${state}`;
   res.redirect(url);
 };
 
@@ -1114,7 +1181,15 @@ export const githubAuth = (req, res) => {
 // @route   GET /api/auth/github/callback
 export const githubCallback = async (req, res) => {
   try {
-    const { code } = req.query;
+    const { code, state } = req.query;
+
+    // SECURITY: Verify OAuth state to prevent CSRF
+    const savedState = req.cookies?.oauth_state_gh;
+    res.clearCookie('oauth_state_gh');
+    if (!state || !savedState || state !== savedState) {
+      return res.redirect(`${FRONTEND_URL}/login?error=Invalid OAuth state. Please try again.`);
+    }
+
     if (!code) {
       return res.redirect(`${FRONTEND_URL}/login?error=GitHub login failed`);
     }
@@ -1203,7 +1278,12 @@ export const githubCallback = async (req, res) => {
       });
     }
 
-    const token = generateToken(user._id, user.role);
+    // SECURITY: Generate short-lived token (5 min) to reduce query-string exposure
+    const token = jwt.sign(
+      { id: user._id, role: user.role, oauthRedirect: true },
+      process.env.JWT_SECRET,
+      { expiresIn: '5m' }
+    );
 
     if (isNewUser) {
       return res.redirect(`${FRONTEND_URL}/select-role?token=${token}&name=${encodeURIComponent(user.name)}&avatar=${encodeURIComponent(user.profileImage)}`);
@@ -1447,6 +1527,7 @@ export const verify2FALogin = async (req, res) => {
         address: user.address,
         authProvider: user.authProvider,
         hasPassword: true,
+        twoFactorEnabled: user.twoFactorEnabled || false
       },
     });
   } catch (error) {
@@ -1566,7 +1647,11 @@ export const refreshAccessToken = async (req, res) => {
 
 export const upgradePersonalSubscription = async (req, res) => {
   try {
-    const { planId } = req.body;
+    const { planId, paymentId } = req.body;
+
+    if (!planId) {
+      return res.status(400).json({ success: false, message: 'Plan ID is required' });
+    }
 
     const SubscriptionPlan = mongoose.model('SubscriptionPlan');
     const plan = await SubscriptionPlan.findById(planId);
@@ -1574,22 +1659,54 @@ export const upgradePersonalSubscription = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Plan not found' });
     }
 
+    // SECURITY: If the plan is paid, require a verified payment record
+    if (plan.price > 0) {
+      if (!paymentId) {
+        return res.status(400).json({ success: false, message: 'Payment verification is required for paid plans' });
+      }
+
+      const Payment = mongoose.model('Payment');
+      const payment = await Payment.findById(paymentId);
+
+      if (!payment) {
+        return res.status(404).json({ success: false, message: 'Payment record not found' });
+      }
+
+      // Verify: payment belongs to this user, is for this plan, and is actually paid
+      if (payment.studentId.toString() !== req.user.id) {
+        return res.status(403).json({ success: false, message: 'Payment does not belong to this user' });
+      }
+      if (payment.planId?.toString() !== planId) {
+        return res.status(400).json({ success: false, message: 'Payment plan mismatch' });
+      }
+      if (payment.status !== 'paid') {
+        return res.status(400).json({ success: false, message: 'Payment has not been verified yet' });
+      }
+    }
+
     const user = await User.findById(req.user.id);
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
+    // Determine subscription duration from plan billing cycle
+    const durationMs = plan.billingCycle === 'yearly'
+      ? 365 * 24 * 60 * 60 * 1000
+      : 30 * 24 * 60 * 60 * 1000; // default 30 days
+
     user.personalSubscription = {
       planName: plan.name,
       isActive: true,
-      subscriptionExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+      subscriptionExpiresAt: new Date(Date.now() + durationMs),
       features: {
         aiFeatures: plan.features.aiAssistant || plan.features.aiAssessment || plan.features.aiIntelligence || false,
         aiCreditsPerMonth: plan.features.aiCreditsPerMonth || 0,
         aiUsageCount: 0,
         aiAssistant: plan.features.aiAssistant || false,
         aiAssessment: plan.features.aiAssessment || false,
-        aiIntelligence: plan.features.aiIntelligence || false
+        aiIntelligence: plan.features.aiIntelligence || false,
+        hlsStreaming: plan.features.hlsStreaming || false,
+        zoomIntegration: plan.features.zoomIntegration || false
       }
     };
 
@@ -1605,3 +1722,4 @@ export const upgradePersonalSubscription = async (req, res) => {
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
+

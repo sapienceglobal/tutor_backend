@@ -122,7 +122,7 @@ const lessonSchema = new mongoose.Schema({
 });
 
 // Update timestamp on save
-lessonSchema.pre('save', function (next) {
+lessonSchema.pre('save', function () {
   this.updatedAt = Date.now();
 
   // Calculate total points for quiz

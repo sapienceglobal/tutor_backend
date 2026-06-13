@@ -136,7 +136,7 @@ export const createInstitute = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Admin email already registered.' });
         }
 
-        // 🌟 DYNAMIC PLAN FETCHING
+                // 🌟 DYNAMIC PLAN FETCHING
         let planName = 'Custom';
         let planFeatures = {
             hlsStreaming: false,
@@ -151,11 +151,8 @@ export const createInstitute = async (req, res) => {
             if (selectedPlan) {
                 planName = selectedPlan.name;
                 planFeatures = {
-                    hlsStreaming: selectedPlan.features.hlsStreaming,
-                    customBranding: selectedPlan.features.customBranding,
-                    zoomIntegration: selectedPlan.features.zoomIntegration,
-                    aiFeatures: selectedPlan.features.aiBasic,
-                    apiAccess: selectedPlan.features.apiAccess || false
+                    ...selectedPlan.features.toObject(),
+                    aiFeatures: selectedPlan.features.aiAssistant || selectedPlan.features.aiAssessment || selectedPlan.features.aiIntelligence || false
                 };
             }
         }
@@ -164,7 +161,8 @@ export const createInstitute = async (req, res) => {
             name,
             subdomain: subdomain.toLowerCase(),
             subscriptionPlan: planName, // Saving the real string name ("Platinum", "Pro", etc.)
-            features: planFeatures
+            features: planFeatures,
+            aiUsageQuota: planFeatures.aiCreditsPerMonth !== undefined ? planFeatures.aiCreditsPerMonth : 1000
         });
 
         await newInstitute.save({ session });

@@ -804,6 +804,119 @@ Content: "${textContent || 'Video/multimedia content — create notes based on t
     }
 };
 
+// @desc    Explain a lesson concept using AI
+// @route   POST /api/ai/explain-concept
+// @access  Private
+export const explainConcept = async (req, res) => {
+    try {
+        if (!GROQ_API_KEY) {
+            return res.status(500).json({ success: false, message: 'Groq API key not configured' });
+        }
+
+        const { lessonId, courseId, lessonTitle, content } = req.body;
+
+        let title, description, textContent;
+
+        if (lessonId) {
+            const lesson = await Lesson.findById(lessonId);
+            if (!lesson) return res.status(404).json({ success: false, message: 'Lesson not found' });
+            title = lesson.title;
+            description = lesson.description || '';
+            textContent = lesson.content?.text || '';
+        } else if (courseId || lessonTitle) {
+            title = lessonTitle || 'Course';
+            description = content || '';
+            textContent = content || '';
+        } else {
+            return res.status(400).json({ success: false, message: 'Lesson ID or course details are required' });
+        }
+
+        const prompt = `
+You are an expert AI tutor. Explain the core concepts of the following topic in simple, easy-to-understand terms.
+
+Guidelines:
+- Break down complex terms into simple analogies
+- Use real-world examples to illustrate the concept
+- Format key terms in **bold**
+- Structure the explanation with headings and bullet points using Markdown
+- Keep the tone warm, engaging, and educational
+
+Title: "${title}"
+Description: "${description}"
+Content: "${textContent || 'Video/multimedia content — explain concept based on title and description'}"
+`;
+
+        const explanation = await callGroqAI(prompt);
+
+        logAIUsage(req.user.id, 'explain_concept', { lessonId: lessonId || courseId });
+
+        res.status(200).json({
+            success: true,
+            explanation,
+            lessonTitle: title,
+        });
+    } catch (error) {
+        console.error('Explain concept error:', error);
+        res.status(500).json({ success: false, message: 'Failed to explain concept', error: error.message });
+    }
+};
+
+// @desc    Generate practice questions for a lesson using AI
+// @route   POST /api/ai/practice-questions
+// @access  Private
+export const generatePracticeQuestions = async (req, res) => {
+    try {
+        if (!GROQ_API_KEY) {
+            return res.status(500).json({ success: false, message: 'Groq API key not configured' });
+        }
+
+        const { lessonId, courseId, lessonTitle, content } = req.body;
+
+        let title, description, textContent;
+
+        if (lessonId) {
+            const lesson = await Lesson.findById(lessonId);
+            if (!lesson) return res.status(404).json({ success: false, message: 'Lesson not found' });
+            title = lesson.title;
+            description = lesson.description || '';
+            textContent = lesson.content?.text || '';
+        } else if (courseId || lessonTitle) {
+            title = lessonTitle || 'Course';
+            description = content || '';
+            textContent = content || '';
+        } else {
+            return res.status(400).json({ success: false, message: 'Lesson ID or course details are required' });
+        }
+
+        const prompt = `
+You are an expert educator. Generate 3-5 high-quality practice questions to test a student's understanding of this topic.
+
+Guidelines:
+- Provide a mix of multiple-choice, fill-in-the-blank, or short-answer questions.
+- Include a separate "Answer Key" section with clear explanations for each answer.
+- Format using Markdown with clear headings and bullet points.
+- Keep the tone encouraging and academic.
+
+Title: "${title}"
+Description: "${description}"
+Content: "${textContent || 'Video/multimedia content — generate practice questions based on title and description'}"
+`;
+
+        const questions = await callGroqAI(prompt);
+
+        logAIUsage(req.user.id, 'practice_questions', { lessonId: lessonId || courseId });
+
+        res.status(200).json({
+            success: true,
+            questions,
+            lessonTitle: title,
+        });
+    } catch (error) {
+        console.error('Practice questions error:', error);
+        res.status(500).json({ success: false, message: 'Failed to generate practice questions', error: error.message });
+    }
+};
+
 // @desc    Contextual Chat with AI Assistant (adapts to current page context)
 // @route   POST /api/ai/contextual-chat
 export const contextualChat = async (req, res) => {

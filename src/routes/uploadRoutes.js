@@ -1,4 +1,6 @@
+
 import express from 'express';
+import { v2 as cloudinary } from 'cloudinary';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -79,6 +81,49 @@ router.post('/file', protect, authorize('tutor', 'admin', 'student'), fileUpload
   });
 });
 
+// @route   POST /api/upload/cloudinary-signature
+// @desc    Get signed signature for direct Cloudinary upload
+// @access  Private (Tutor/Admin/Student)
+router.post('/cloudinary-signature', protect, (req, res, next) => {
+  if (req.body?.type === 'hls') {
+    return requireFeature('hlsStreaming')(req, res, next);
+  }
+  next();
+}, (req, res) => {
+  try {
+    const { type } = req.body || {};
+    const timestamp = Math.round((new Date()).getTime() / 1000);
+    
+    const isHls = type === 'hls';
+    const folder = isHls ? 'tutor-app-hls' : 'tutor-app-resources';
+    
+    const params_to_sign = {
+      timestamp: timestamp,
+      folder: folder,
+    };
+    
+    if (isHls) {
+      params_to_sign.eager = 'sp_auto/m3u8';
+      params_to_sign.eager_async = 'true';
+    }
+    
+    const signature = cloudinary.utils.api_sign_request(params_to_sign, process.env.CLOUDINARY_API_SECRET);
+    
+    res.json({
+      success: true,
+      signature,
+      timestamp,
+      cloudName: process.env.CLOUDINARY_CLOUD_NAME,
+      apiKey: process.env.CLOUDINARY_API_KEY,
+      folder,
+      ...(isHls ? { eager: 'sp_auto/m3u8', eager_async: 'true' } : {})
+    });
+  } catch (error) {
+    console.error('Error generating signature:', error);
+    res.status(500).json({ success: false, message: 'Failed to generate upload signature' });
+  }
+});
+
 // @route   POST /api/upload/video-hls
 // @desc    Upload an MP4 and convert to HLS format
 // @access  Private (Tutor)
@@ -95,39 +140,44 @@ router.post(
     }
 
     try {
-      const fileId = path.parse(req.file.filename).name; // UUID without .mp4
+      // Upload raw video to Cloudinary and request background HLS transcoding
+      const result = await cloudinary.uploader.upload(req.file.path, {
+        resource_type: 'video',
+        folder: 'tutor-app-hls',
+        eager: [
+          { streaming_profile: 'auto', format: 'm3u8' }
+        ],
+        eager_async: true
+      });
 
-      // Asynchronously process the video so the upload request doesn't timeout
-      // In a production app, use heavily decoupled Queues (RabbitMQ, Redis/BullMQ)
-      // Since we are running on standard servers, we'll offload it but return immediately
+      // Clean up the local temp MP4 file immediately to save VPS disk space
+      try {
+        fs.unlinkSync(req.file.path);
+        console.log('Cleaned up raw local video file:', req.file.path);
+      } catch (cleanupErr) {
+        console.error('Failed to clean up raw local video file:', cleanupErr);
+      }
 
-      processVideoForHLS(req.file.path, hlsOutputDir, fileId)
-        .then((result) => {
-          // Here we could update a database record status to "processed"
-          console.log(`Video ready at ${result.playlistUrl}`);
+      const cloudName = cloudinary.config().cloud_name || process.env.CLOUDINARY_CLOUD_NAME;
+      const estimatedPlaylistUrl = `https://res.cloudinary.com/${cloudName}/video/upload/sp_auto/${result.public_id}.m3u8`;
 
-          // Optional: Clean up the raw .mp4 after successful HLS creation to save space
-          try {
-            fs.unlinkSync(req.file.path);
-            console.log('Cleaned up raw MP4:', req.file.path);
-          } catch (cleanupErr) {
-            console.error('Failed to clean up raw MP4:', cleanupErr);
-          }
-        })
-        .catch((err) => {
-          console.error(`HLS processing failed for ${fileId}`, err);
-        });
-
-      // Return immediately while FFMPEG runs in the background
-      res.status(202).json({
+      res.status(200).json({
         success: true,
-        message: 'Video uploaded and is being processed for HLS streaming.',
-        estimatedPlaylistUrl: `/uploads/hls/${fileId}/index.m3u8`,
+        message: 'Video uploaded and is being processed for HLS streaming on Cloudinary.',
+        estimatedPlaylistUrl,
+        duration: Math.round(result.duration || 0),
+        videoSize: result.bytes || req.file.size || 0,
         status: 'processing'
       });
 
     } catch (error) {
       console.error('Upload Video Error:', error);
+      // Clean up local file in case upload failed
+      try {
+        if (req.file && fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+      } catch (_) {}
       res.status(500).json({ success: false, message: 'Server error during upload' });
     }
   });

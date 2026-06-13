@@ -1,5 +1,5 @@
 import { v2 as cloudinary } from 'cloudinary';
-import { CloudinaryStorage } from 'multer-storage-cloudinary';
+import multerStorageCloudinary from 'multer-storage-cloudinary';
 import multer from 'multer';
 import dotenv from 'dotenv';
 
@@ -11,8 +11,8 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-const storage = new CloudinaryStorage({
-  cloudinary: cloudinary,
+const storage = multerStorageCloudinary({
+  cloudinary: { v2: cloudinary },
   params: {
     folder: 'tutor-app-profiles',
     allowed_formats: ['jpg', 'png', 'jpeg', 'webp'],
@@ -20,8 +20,8 @@ const storage = new CloudinaryStorage({
   },
 });
 
-const fileStorage = new CloudinaryStorage({
-  cloudinary: cloudinary,
+const fileStorage = multerStorageCloudinary({
+  cloudinary: { v2: cloudinary },
   params: {
     folder: 'tutor-app-resources',
     resource_type: 'auto', // Important for PDFs, Docs, etc.
