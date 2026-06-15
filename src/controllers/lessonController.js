@@ -4,6 +4,28 @@ import Enrollment from '../models/Enrollment.js';
 import Progress from '../models/Progress.js';
 import { createNotification } from './notificationController.js';
 
+// Helper to convert Cloudinary HLS URLs to secure backend proxy URLs
+const secureHlsUrl = (url) => {
+  if (!url || typeof url !== 'string') return url;
+  if (!url.includes('cloudinary.com') || !url.includes('.m3u8')) return url;
+  
+  const match = url.match(/https:\/\/res\.cloudinary\.com\/(.+)/);
+  if (match) {
+    return `/api/proxy/upload/secure-hls/${match[1]}`;
+  }
+  return url;
+};
+
+// Helper to secure HLS video URLs inside a Lesson object
+const secureLessonHls = (lesson) => {
+  if (!lesson) return lesson;
+  const lessonObj = typeof lesson.toObject === 'function' ? lesson.toObject() : lesson;
+  if (lessonObj.content && lessonObj.content.videoUrl) {
+    lessonObj.content.videoUrl = secureHlsUrl(lessonObj.content.videoUrl);
+  }
+  return lessonObj;
+};
+
 // @desc    Get all lessons for a course
 // @route   GET /api/lessons/course/:courseId
 export const getLessonsByCourse = async (req, res) => {
@@ -56,10 +78,13 @@ export const getLessonsByCourse = async (req, res) => {
     let lessons = await Lesson.find({ courseId, isPublished: true })
       .sort({ order: 1 });
 
+    // Secure HLS urls for the lessons array
+    lessons = lessons.map(lesson => secureLessonHls(lesson));
+
     // If not enrolled and course is paid, only show free lessons
     if (!canAccess && !course.isFree) {
       lessons = lessons.map(lesson => ({
-        ...lesson.toObject(),
+        ...lesson,
         content: lesson.isFree ? lesson.content : null,
       }));
     }
@@ -158,7 +183,7 @@ export const getLessonById = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      lesson,
+      lesson: secureLessonHls(lesson),
       progress: userProgress,
     });
   } catch (error) {
@@ -306,7 +331,7 @@ export const createLesson = async (req, res) => {
     res.status(201).json({
       success: true,
       message: 'Lesson created successfully',
-      lesson,
+      lesson: secureLessonHls(lesson),
     });
   } catch (error) {
     console.error('Create lesson error:', error);
@@ -397,7 +422,7 @@ export const updateLesson = async (req, res) => {
     res.status(200).json({
       success: true,
       message: 'Lesson updated successfully',
-      lesson,
+      lesson: secureLessonHls(lesson),
     });
   } catch (error) {
     console.error('Update lesson error:', error);

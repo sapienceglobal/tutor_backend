@@ -7,9 +7,11 @@ export const protect = async (req, res, next) => {
   try {
     let token;
 
-    // Check for token in headers
+    // Check for token in headers or query parameters (crucial for native HLS players)
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
       token = req.headers.authorization.split(' ')[1];
+    } else if (req.query && req.query.token) {
+      token = req.query.token;
     }
 
     if (!token) {

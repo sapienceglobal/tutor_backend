@@ -9,6 +9,7 @@ import upload from '../utils/cloudinary.js';
 import { protect, authorize } from '../middleware/auth.js';
 import { processVideoForHLS } from '../services/hlsService.js';
 import { requireFeature } from '../middleware/subscriptionMiddleware.js';
+import axios from 'axios';
 
 const router = express.Router();
 
@@ -181,5 +182,104 @@ router.post(
       res.status(500).json({ success: false, message: 'Server error during upload' });
     }
   });
+
+// @route   GET /api/upload/secure-hls/*cloudinaryPath
+// @desc    Token-gated secure HLS streaming proxy for Cloudinary
+// @access  Private (Authenticated Students/Tutors/Admins)
+router.get('/secure-hls/{*cloudinaryPath}', protect, async (req, res) => {
+  let pathSuffix = req.params.cloudinaryPath;
+  if (Array.isArray(pathSuffix)) {
+    pathSuffix = pathSuffix.join('/');
+  }
+  if (!pathSuffix) {
+    return res.status(400).json({ success: false, message: 'Invalid HLS path' });
+  }
+
+  const cloudinaryUrl = `https://res.cloudinary.com/${pathSuffix}`;
+  const isManifest = pathSuffix.endsWith('.m3u8');
+
+  // Forward Range header if present
+  const headers = {};
+  if (req.headers.range) {
+    headers.range = req.headers.range;
+  }
+
+  try {
+    if (isManifest) {
+      // Fetch the manifest as text
+      const response = await axios.get(cloudinaryUrl, {
+        headers,
+        responseType: 'text'
+      });
+
+      const token = req.query.token || (req.headers.authorization ? req.headers.authorization.split(' ')[1] : null);
+      let manifestText = response.data;
+
+      // Rewrite absolute and root-relative Cloudinary URLs, and append token to all playlist/segment files
+      const lines = manifestText.split(/\r?\n/);
+      const rewrittenLines = lines.map(line => {
+        const trimmed = line.trim();
+        // If line is empty or is a comment/tag, leave it as is
+        if (!trimmed || trimmed.startsWith('#')) {
+          return line;
+        }
+
+        // It is a URI line (either a variant playlist or a segment file)
+        let rewrittenUri = trimmed;
+
+        // Check if the URI is a Cloudinary path and rewrite to our proxy path
+        const cloudinaryMatch = rewrittenUri.match(/(?:https:\/\/res\.cloudinary\.com)?\/([a-zA-Z0-9_-]+)\/video\/upload\/([^\s?]+)/);
+        if (cloudinaryMatch) {
+          const [_, cloudName, rest] = cloudinaryMatch;
+          rewrittenUri = `/api/proxy/upload/secure-hls/${cloudName}/video/upload/${rest}`;
+        }
+
+        // Append JWT authentication token if present
+        if (token) {
+          const separator = rewrittenUri.includes('?') ? '&' : '?';
+          if (!rewrittenUri.includes('token=')) {
+            rewrittenUri = `${rewrittenUri}${separator}token=${token}`;
+          }
+        }
+
+        return rewrittenUri;
+      });
+
+      manifestText = rewrittenLines.join('\n');
+
+      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      return res.send(manifestText);
+    } else {
+      // Stream segment byte ranges from Cloudinary
+      const response = await axios.get(cloudinaryUrl, {
+        headers,
+        responseType: 'stream'
+      });
+
+      // Pass crucial headers to the client
+      if (response.headers['content-type']) {
+        res.setHeader('content-type', response.headers['content-type']);
+      }
+      if (response.headers['content-length']) {
+        res.setHeader('content-length', response.headers['content-length']);
+      }
+      if (response.headers['accept-ranges']) {
+        res.setHeader('accept-ranges', response.headers['accept-ranges']);
+      }
+      if (response.headers['content-range']) {
+        res.setHeader('content-range', response.headers['content-range']);
+      }
+
+      res.status(response.status);
+      response.data.pipe(res);
+    }
+  } catch (error) {
+    console.error('Secure HLS Proxy Error:', error.message);
+    if (error.response) {
+      return res.status(error.response.status).send(error.response.statusText);
+    }
+    return res.status(500).json({ success: false, message: 'Failed to stream secure HLS resource' });
+  }
+});
 
 export default router;

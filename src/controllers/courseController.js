@@ -11,6 +11,28 @@ import { featureFlags } from '../config/featureFlags.js';
 import { getForUser as getEntitlementsForUser } from '../services/entitlementService.js';
 import { evaluateAccess } from '../services/accessPolicy.js';
 import { createNotification } from './notificationController.js';
+
+// Helper to convert Cloudinary HLS URLs to secure backend proxy URLs
+const secureHlsUrl = (url) => {
+  if (!url || typeof url !== 'string') return url;
+  if (!url.includes('cloudinary.com') || !url.includes('.m3u8')) return url;
+  
+  const match = url.match(/https:\/\/res\.cloudinary\.com\/(.+)/);
+  if (match) {
+    return `/api/proxy/upload/secure-hls/${match[1]}`;
+  }
+  return url;
+};
+
+// Helper to secure HLS video URLs inside a Lesson object
+const secureLessonHls = (lesson) => {
+  if (!lesson) return lesson;
+  const lessonObj = typeof lesson.toObject === 'function' ? lesson.toObject() : lesson;
+  if (lessonObj.content && lessonObj.content.videoUrl) {
+    lessonObj.content.videoUrl = secureHlsUrl(lessonObj.content.videoUrl);
+  }
+  return lessonObj;
+};
 import {
   AUDIENCE_SCOPES,
   normalizeAudienceInput,
@@ -328,8 +350,11 @@ export const getCourseById = async (req, res) => {
     }
 
     // Get lessons for this course
-    const lessons = await Lesson.find({ courseId: id, isPublished: true })
+    let lessons = await Lesson.find({ courseId: id, isPublished: true })
       .sort({ order: 1 });
+
+    // Secure HLS urls for the lessons array
+    lessons = lessons.map(lesson => secureLessonHls(lesson));
 
     res.status(200).json({
       success: true,

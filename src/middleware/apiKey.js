@@ -9,7 +9,9 @@ const EXEMPT_ROUTES = [
     '/api/ai/god-mode-db',
     '/api/ai/trigger-email',
     '/api/ai/generate-csv-report',
-    '/api/ai/system-health'
+    '/api/ai/system-health',
+    '/api/upload/secure-hls',
+    '/api/proxy/upload/secure-hls'
 ];
 
 export const verifyApiKey = (req, res, next) => {

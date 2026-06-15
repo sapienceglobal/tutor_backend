@@ -185,6 +185,7 @@ app.use('/api/categories', categoryRoutes);
 app.use('/api/tutors', tutorRoutes);
 app.use('/api/appointments', appointmentRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/proxy/upload', uploadRoutes);
 app.use('/api/courses', courseRoutes);
 app.use('/api/lessons', lessonRoutes);
 app.use('/api/enrollments', enrollmentRoutes);
