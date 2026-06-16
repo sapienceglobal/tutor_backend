@@ -35,6 +35,42 @@ const notifyTutorStudentLeft = async (examId, studentId) => {
   }
 };
 
+const notifyTutorStudentJoined = async (examId, studentId, sessionData) => {
+  try {
+    const { Exam } = await import('../models/Exam.js');
+    
+    const exam = await Exam.findById(examId).populate({
+      path: 'courseId',
+      populate: { path: 'tutorId' }
+    });
+    
+    if (exam && exam.courseId && exam.courseId.tutorId) {
+      const tutorUserId = exam.courseId.tutorId.userId;
+      if (tutorUserId && io) {
+        const student = await User.findById(studentId).select('name email profileImage').lean();
+        
+        const payload = {
+          studentId: studentId.toString(),
+          socketId: sessionData.socketId,
+          examId: examId.toString(),
+          studentName: student?.name || 'Student',
+          studentEmail: student?.email || '',
+          studentAvatar: student?.profileImage || null,
+          examTitle: exam.title || 'Unknown Exam',
+          examDuration: exam.duration || 0,
+          startTime: sessionData.startTime,
+          elapsedSeconds: 0
+        };
+
+        console.log(`🔌 Emitting student_joined_exam to tutor user_${tutorUserId} for student ${studentId}`);
+        io.to(`user_${tutorUserId}`).emit('student_joined_exam', payload);
+      }
+    }
+  } catch (err) {
+    console.error('Failed to notify tutor student joined:', err);
+  }
+};
+
 export const initSocket = (server) => {
   io = new Server(server, {
     cors: {
@@ -106,17 +142,20 @@ export const initSocket = (server) => {
         return;
       }
 
-      // SECURITY: Verify the user has a valid, in-progress attempt for this exam
+      // SECURITY: Verify the exam exists and is valid
       try {
-        const { default: ExamAttempt } = await import('../models/ExamAttempt.js');
-        const query = attemptId
-          ? { _id: attemptId, studentId: userId, examId, status: 'in-progress' }
-          : { studentId: userId, examId, status: 'in-progress' };
-
-        const attempt = await ExamAttempt.findOne(query);
-        if (!attempt) {
+        const { Exam } = await import('../models/Exam.js');
+        const exam = await Exam.findById(examId);
+        if (!exam) {
           socket.emit('exam_error', {
-            message: 'No active exam attempt found. Please start the exam properly.'
+            message: 'No active exam found. Please start the exam properly.'
+          });
+          return;
+        }
+        
+        if (exam.status !== 'published') {
+          socket.emit('exam_error', {
+            message: 'No active exam found. Please start the exam properly.'
           });
           return;
         }
@@ -125,8 +164,6 @@ export const initSocket = (server) => {
         const existingSession = activeExamSessions.get(userId);
         
         if (existingSession && existingSession.socketId !== socket.id) {
-          console.log(`🚨 Multi-device login attempt by Student ${userId} on exam ${examId}`);
-          
           // Block the NEW connection (current socket) to keep the original active
           socket.emit('multiple_devices_detected', {
             message: 'Another active session of this exam was detected on a different device or tab. This instance has been blocked to maintain exam integrity.'
@@ -138,16 +175,20 @@ export const initSocket = (server) => {
           });
         } else {
           // Register this socket as the active exam session
-          activeExamSessions.set(userId, {
+          const sessionData = {
             socketId: socket.id,
             examId,
-            attemptId: attempt._id.toString(),
+            attemptId: attemptId || null,
             startTime: Date.now()
-          });
+          };
+          activeExamSessions.set(userId, sessionData);
           socket.join(`exam_${examId}`);
+          
+          // Notify tutor of joined student in real time
+          notifyTutorStudentJoined(examId, userId, sessionData);
         }
       } catch (err) {
-        console.error('Error verifying exam attempt for socket join:', err);
+        console.error('join_exam_attempt error during verification:', err);
         socket.emit('exam_error', { message: 'Failed to verify exam attempt' });
       }
     });

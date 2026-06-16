@@ -6729,12 +6729,21 @@ export const getActiveProctoringSessions = async (req, res) => {
         const { getActiveSessions } = await import('../services/socketService.js');
 
         const tutor = await Tutor.findOne({ userId: req.user.id || req.user._id }).select('_id').lean();
-        if (!tutor) return res.status(403).json({ success: false, message: 'Tutor profile not found' });
+        if (!tutor) {
+          return res.status(403).json({ success: false, message: 'Tutor profile not found' });
+        }
 
         const courses = await Course.find({ tutorId: tutor._id }).select('_id').lean();
         const courseIds = courses.map(c => c._id.toString());
 
-        const tutorExams = await Exam.find({ courseId: { $in: courseIds } }).select('_id title duration isProctoringEnabled').lean();
+        // Fetch exams belonging to either tutor's courses OR matching tutorId directly
+        const tutorExams = await Exam.find({
+            $or: [
+                { courseId: { $in: courseIds } },
+                { tutorId: tutor._id }
+            ]
+        }).select('_id title duration isProctoringEnabled').lean();
+        
         const examIds = tutorExams.map(e => e._id.toString());
         const examMap = tutorExams.reduce((m, e) => { m[e._id.toString()] = e; return m; }, {});
 

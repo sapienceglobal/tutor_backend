@@ -165,8 +165,9 @@ export const createNotification = async ({
   try {
     const user = await User.findById(userId);
     
-    // Check user's notification settings
-    if (!user || !user.notificationSettings.push) {
+    // Check user's notification settings (bypass if it is a direct tutor warning message)
+    const pushEnabled = user?.notificationSettings?.push ?? true;
+    if (!user || (type !== 'direct_message' && !pushEnabled)) {
       return null; // User ne push notifications off kar rakhi hai
     }
 
