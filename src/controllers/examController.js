@@ -12,6 +12,7 @@ import { featureFlags } from '../config/featureFlags.js';
 import { getForUser as getEntitlementsForUser } from '../services/entitlementService.js';
 import { evaluateAccess } from '../services/accessPolicy.js';
 import { emitLearningEvent } from '../services/learningEventService.js';
+import { evaluateSubjectiveAnswer } from './aiController.js';
 import {
   AUDIENCE_SCOPES,
   normalizeAudienceInput,
@@ -719,11 +720,8 @@ export const submitExam = async (req, res) => {
       });
     }
 
-    // Calculate score
-    let score = 0;
-
     // Build detailed answer array with question data
-    const processedAnswers = answers.map((ans) => {
+    const processedAnswers = (await Promise.all(answers.map(async (ans) => {
       const question = exam.questions.id(ans.questionId);
 
       if (!question) {
@@ -737,9 +735,50 @@ export const submitExam = async (req, res) => {
 
       let isCorrect = false;
       let pointsEarned = 0;
+      let scoreDelta = 0;
       let selectedOptionIndex = Number.isInteger(ans.selectedOption) ? ans.selectedOption : -1;
 
       const qType = question.questionType || 'mcq';
+
+      if (qType === 'subjective') {
+        const textAnswer = ans.textAnswer || ans.selectedOptionText || '';
+        const maxPoints = question.points || 1;
+        const evaluation = await evaluateSubjectiveAnswer(
+          question.question,
+          question.idealAnswer,
+          textAnswer,
+          maxPoints
+        );
+        isCorrect = evaluation.isCorrect;
+        pointsEarned = evaluation.pointsEarned;
+        scoreDelta = evaluation.pointsEarned;
+
+        return {
+          questionId: ans.questionId,
+          selectedOption: -1,
+          selectedOptionText: null,
+          textAnswer,
+          aiFeedback: evaluation.feedback,
+          aiHighlights: evaluation.highlights || [],
+          isCorrect,
+          pointsEarned,
+          _scoreDelta: scoreDelta,
+
+          // Include full question data for review
+          questionData: {
+            question: question.question,
+            options: [],
+            correctOption: -1,
+            explanation: question.explanation || null,
+            points: question.points,
+            difficulty: question.difficulty,
+            questionType: qType,
+            numericAnswer: null,
+            tolerance: 0,
+            pairs: []
+          },
+        };
+      }
 
       if (qType === 'mcq' || qType === 'passage_based') {
         // If we have selectedOptionText, use it to find the correct option (handles shuffled options)
@@ -756,20 +795,27 @@ export const submitExam = async (req, res) => {
 
         if (isCorrect) {
           pointsEarned = question.points || 1;
+          scoreDelta = pointsEarned;
         } else if (ans.selectedOption !== -1 && exam.negativeMarking) {
-          pointsEarned = -0.25 * (question.points || 1);
+          pointsEarned = 0;
+          scoreDelta = -0.25 * (question.points || 1);
         }
       } else if (qType === 'numeric') {
-        if (ans.numericAnswer !== undefined && ans.numericAnswer !== null && question.numericAnswer !== undefined) {
-          const studentAns = Number(ans.numericAnswer);
+        const rawAns = (ans.numericAnswer !== undefined && ans.numericAnswer !== null && ans.numericAnswer !== '')
+          ? ans.numericAnswer
+          : ans.textAnswer;
+        if (rawAns !== undefined && rawAns !== null && rawAns !== '' && question.numericAnswer !== undefined) {
+          const studentAns = Number(rawAns);
           const correctAns = Number(question.numericAnswer);
           const tolerance = Number(question.tolerance || 0);
 
-          if (Math.abs(studentAns - correctAns) <= tolerance) {
+          if (!isNaN(studentAns) && Math.abs(studentAns - correctAns) <= tolerance) {
             isCorrect = true;
             pointsEarned = question.points || 1;
+            scoreDelta = pointsEarned;
           } else if (exam.negativeMarking) {
-            pointsEarned = -0.25 * (question.points || 1);
+            pointsEarned = 0;
+            scoreDelta = -0.25 * (question.points || 1);
           }
         }
       } else if (qType === 'match_the_following') {
@@ -786,16 +832,17 @@ export const submitExam = async (req, res) => {
           if (correctMatches === totalPairs) {
             isCorrect = true;
             pointsEarned = question.points || 1;
+            scoreDelta = pointsEarned;
           } else if (correctMatches > 0) {
             // Partial points for partial matches
             pointsEarned = parseFloat(((correctMatches / totalPairs) * (question.points || 1)).toFixed(2));
+            scoreDelta = pointsEarned;
           } else if (exam.negativeMarking && Object.keys(ans.matchAnswers).length > 0) {
-            pointsEarned = -0.25 * (question.points || 1);
+            pointsEarned = 0;
+            scoreDelta = -0.25 * (question.points || 1);
           }
         }
       }
-
-      score += pointsEarned;
 
       // Find correct option index in original question (for MCQs)
       const correctOptionIndex = (qType === 'mcq' || qType === 'passage_based') ? question.options.findIndex(opt => opt.isCorrect) : -1;
@@ -809,13 +856,15 @@ export const submitExam = async (req, res) => {
         selectedOptionText,
         numericAnswer: ans.numericAnswer,
         matchAnswers: ans.matchAnswers,
+        textAnswer: ans.textAnswer || null,
         isCorrect,
         pointsEarned,
+        _scoreDelta: scoreDelta,
 
         // Include full question data for review
         questionData: {
           question: question.question,
-          options: question.options.map(opt => ({ text: opt.text })),
+          options: question.options ? question.options.map(opt => ({ text: opt.text })) : [],
           correctOption: correctOptionIndex,
           explanation: question.explanation || null,
           points: question.points,
@@ -826,7 +875,10 @@ export const submitExam = async (req, res) => {
           pairs: question.pairs
         },
       };
-    });
+    }))).filter(Boolean);
+
+    // Calculate score
+    let score = processedAnswers.reduce((total, ans) => total + (ans._scoreDelta || 0), 0);
 
     // Ensure score doesn't go below 0
     score = Math.max(0, score);
@@ -1393,6 +1445,7 @@ export const getExamsByTutor = async (req, res) => {
         requirePayment: !exam.isFree,
         isFree: exam.isFree,
         courseId: exam.courseId,
+        ownerId: req.user.id,
       }).allowed);
     }
 
@@ -1494,6 +1547,7 @@ export const getStudentExams = async (req, res) => {
       {
         $project: {
           title: 1,
+          description: 1,
           type: 1,
           duration: 1,
           totalQuestions: 1,

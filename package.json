@@ -8,7 +8,8 @@
     "dev": "nodemon server.js",
     "build": "echo 'No build step'",
     "backfill:exam-pass": "node scripts/backfillExamAttemptPassStatus.js",
-    "analytics:aggregate-daily": "node scripts/aggregateLearningEventsDaily.js"
+    "analytics:aggregate-daily": "node scripts/aggregateLearningEventsDaily.js",
+    "seed:all": "node scripts/seedAll.js"
   },
   "keywords": [
     "tutor",
