@@ -62,12 +62,24 @@ export const evaluatePass = ({ score, totalMarks, passingPercentage, passingMark
 };
 
 const getAnsweredState = (answer) => {
-  if (!answer) return false;
-  if (typeof answer.selectedOption === 'number' && answer.selectedOption >= 0) return true;
-  if (typeof answer.selectedOptionText === 'string' && answer.selectedOptionText.trim()) return true;
-  if (answer.numericAnswer !== undefined && answer.numericAnswer !== null && answer.numericAnswer !== '') return true;
-  if (answer.textAnswer && String(answer.textAnswer).trim()) return true;
-  if (answer.matchAnswers && typeof answer.matchAnswers === 'object' && Object.keys(answer.matchAnswers).length > 0) return true;
+  if (!answer) {
+    return false;
+  }
+  if (typeof answer.selectedOption === 'number' && answer.selectedOption >= 0) {
+    return true;
+  }
+  if (typeof answer.selectedOptionText === 'string' && answer.selectedOptionText.trim()) {
+    return true;
+  }
+  if (answer.numericAnswer !== undefined && answer.numericAnswer !== null && answer.numericAnswer !== '') {
+    return true;
+  }
+  if (answer.textAnswer && String(answer.textAnswer).trim()) {
+    return true;
+  }
+  if (answer.matchAnswers && typeof answer.matchAnswers === 'object' && Object.keys(answer.matchAnswers).length > 0) {
+    return true;
+  }
   return false;
 };
 
@@ -123,9 +135,21 @@ export const buildAttemptQuestionResults = ({ exam, attempt }) => {
     const status = !isAnswered ? 'unanswered' : isCorrect ? 'correct' : 'incorrect';
 
     const selectedAnswerText = getSelectedAnswerText(question, studentAnswer);
-    const correctAnswerText = canViewCorrectAnswer && correctIndex >= 0
-      ? question.options?.[correctIndex]?.text || null
-      : null;
+    const qType = question.questionType || 'mcq';
+    let correctAnswerText = null;
+    if (canViewCorrectAnswer) {
+      if (qType === 'numeric') {
+        correctAnswerText = question.numericAnswer !== undefined && question.numericAnswer !== null ? String(question.numericAnswer) : null;
+      } else if (qType === 'subjective') {
+        correctAnswerText = question.idealAnswer || null;
+      } else if (qType === 'match_the_following') {
+        correctAnswerText = Array.isArray(question.pairs)
+          ? question.pairs.map(p => `${p.left} -> ${p.right}`).join(', ')
+          : null;
+      } else if (correctIndex >= 0) {
+        correctAnswerText = question.options?.[correctIndex]?.text || null;
+      }
+    }
     const solutionText = canViewSolution ? question.explanation || null : null;
 
     return {

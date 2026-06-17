@@ -361,11 +361,16 @@ export const submitExam = async (req, res) => {
 
         const processedAnswers = (await Promise.all(answers.map(async ans => {
             const question = exam.questions.id(ans.questionId);
-            if (!question) return null;
+            if (!question) {
+                return null;
+            }
 
-            const isSubjective = !question.options || question.options.length === 0;
+            let isCorrect = false;
+            let pointsEarned = 0;
+            let scoreDelta = 0;
+            const qType = question.questionType || 'mcq';
 
-            if (isSubjective) {
+            if (qType === 'subjective') {
                 const textAnswer = ans.textAnswer || ans.selectedOptionText || '';
                 const maxPoints = question.points || 1;
                 const evaluation = await evaluateSubjectiveAnswer(
@@ -374,43 +379,123 @@ export const submitExam = async (req, res) => {
                     textAnswer,
                     maxPoints
                 );
+                isCorrect = evaluation.isCorrect;
+                pointsEarned = evaluation.pointsEarned;
+                scoreDelta = evaluation.pointsEarned;
+
                 return {
                     questionId: question._id,
                     selectedOption: -1,
+                    selectedOptionText: null,
                     textAnswer,
                     aiFeedback: evaluation.feedback,
                     aiHighlights: evaluation.highlights || [],
-                    isCorrect: evaluation.isCorrect,
-                    pointsEarned: evaluation.pointsEarned,
-                    _scoreDelta: evaluation.pointsEarned,
+                    isCorrect,
+                    pointsEarned,
+                    _scoreDelta: scoreDelta,
+                    questionData: {
+                        question: question.question,
+                        options: [],
+                        correctOption: -1,
+                        explanation: question.explanation || null,
+                        points: question.points,
+                        difficulty: question.difficulty,
+                        questionType: qType,
+                        numericAnswer: null,
+                        tolerance: 0,
+                        pairs: []
+                    }
                 };
             }
 
+            if (qType === 'mcq' || qType === 'passage_based') {
+                if (typeof ans.selectedOptionText === 'string' && ans.selectedOptionText.trim()) {
+                    const optionByText = question.options.find(opt => opt.text === ans.selectedOptionText.trim());
+                    if (optionByText) {
+                        isCorrect = optionByText.isCorrect || false;
+                    }
+                } else if (ans.selectedOption !== -1 && ans.selectedOption !== null && ans.selectedOption !== undefined) {
+                    isCorrect = question.options[ans.selectedOption]?.isCorrect || false;
+                }
+
+                if (isCorrect) {
+                    pointsEarned = question.points || 1;
+                    scoreDelta = pointsEarned;
+                } else if (ans.selectedOption !== -1 && ans.selectedOption !== null && ans.selectedOption !== undefined && exam.negativeMarking) {
+                    pointsEarned = 0;
+                    scoreDelta = -0.25 * (question.points || 1);
+                }
+            } else if (qType === 'numeric') {
+                const rawAns = (ans.numericAnswer !== undefined && ans.numericAnswer !== null && ans.numericAnswer !== '')
+                    ? ans.numericAnswer
+                    : ans.textAnswer;
+                if (rawAns !== undefined && rawAns !== null && rawAns !== '' && question.numericAnswer !== undefined && question.numericAnswer !== null) {
+                    const studentAns = Number(rawAns);
+                    const correctAns = Number(question.numericAnswer);
+                    const tolerance = Number(question.tolerance || 0);
+
+                    if (!isNaN(studentAns) && Math.abs(studentAns - correctAns) <= tolerance) {
+                        isCorrect = true;
+                        pointsEarned = question.points || 1;
+                        scoreDelta = pointsEarned;
+                    } else if (exam.negativeMarking) {
+                        pointsEarned = 0;
+                        scoreDelta = -0.25 * (question.points || 1);
+                    }
+                }
+            } else if (qType === 'match_the_following') {
+                if (ans.matchAnswers && typeof ans.matchAnswers === 'object' && question.pairs && question.pairs.length > 0) {
+                    let correctMatches = 0;
+                    const totalPairs = question.pairs.length;
+
+                    question.pairs.forEach(pair => {
+                        if (ans.matchAnswers[pair.left] === pair.right) {
+                            correctMatches++;
+                        }
+                    });
+
+                    if (correctMatches === totalPairs) {
+                        isCorrect = true;
+                        pointsEarned = question.points || 1;
+                        scoreDelta = pointsEarned;
+                    } else if (correctMatches > 0) {
+                        pointsEarned = parseFloat(((correctMatches / totalPairs) * (question.points || 1)).toFixed(2));
+                        scoreDelta = pointsEarned;
+                    } else if (exam.negativeMarking && Object.keys(ans.matchAnswers).length > 0) {
+                        pointsEarned = 0;
+                        scoreDelta = -0.25 * (question.points || 1);
+                    }
+                }
+            }
+
+            const correctOptionIndex = (qType === 'mcq' || qType === 'passage_based') ? question.options.findIndex(opt => opt.isCorrect) : -1;
             const selectedOptIndex = Number.isInteger(ans.selectedOption) ? ans.selectedOption : -1;
             const selectedOptionText = (typeof ans.selectedOptionText === 'string' && ans.selectedOptionText.trim())
                 ? ans.selectedOptionText.trim()
                 : (selectedOptIndex >= 0 ? question.options[selectedOptIndex]?.text || null : null);
-            const optionByText = selectedOptionText
-                ? question.options.find(opt => opt.text === selectedOptionText)
-                : null;
-            const isCorrect = optionByText
-                ? optionByText.isCorrect || false
-                : (selectedOptIndex >= 0 ? question.options[selectedOptIndex]?.isCorrect || false : false);
-
-            let scoreDelta = 0;
-            if (isCorrect) {
-                scoreDelta = question.points || 1;
-            } else if (exam.negativeMarking && selectedOptIndex !== -1 && selectedOptIndex !== null) {
-                scoreDelta = -((question.points || 1) * 0.25);
-            }
 
             return {
                 questionId: question._id,
                 selectedOption: selectedOptIndex,
                 selectedOptionText,
+                numericAnswer: ans.numericAnswer,
+                matchAnswers: ans.matchAnswers,
+                textAnswer: ans.textAnswer || null,
                 isCorrect,
-                pointsEarned: isCorrect ? (question.points || 1) : 0,
+                pointsEarned,
                 _scoreDelta: scoreDelta,
+                questionData: {
+                    question: question.question,
+                    options: question.options ? question.options.map(opt => ({ text: opt.text })) : [],
+                    correctOption: correctOptionIndex,
+                    explanation: question.explanation || null,
+                    points: question.points,
+                    difficulty: question.difficulty,
+                    questionType: qType,
+                    numericAnswer: question.numericAnswer,
+                    tolerance: question.tolerance,
+                    pairs: question.pairs
+                }
             };
         }))).filter(Boolean);
 
@@ -546,13 +631,16 @@ export const getAttemptDetails = async (req, res) => {
             return res.status(403).json({ success: false, message: 'Results are hidden by the tutor and will be published later.' });
         }
 
-        const detailedAnalysis = buildAttemptQuestionResults({
+        const rawAnalysis = buildAttemptQuestionResults({
             exam: attempt.examId,
             attempt,
-        }).map((item) => ({
+        });
+
+        const detailedAnalysis = rawAnalysis.map((item) => ({
             _id: item.questionId,
             questionNumber: item.questionNumber,
             question: item.question,
+            questionType: item.questionType, // ✅ Return questionType for frontend rendering
             options: item.options,
             points: item.pointsPossible,
             userSelectedOption: item.selectedIndex,
@@ -569,6 +657,7 @@ export const getAttemptDetails = async (req, res) => {
             aiFeedback: item.aiFeedback,
             aiHighlights: item.aiHighlights,
         }));
+
         const correctCount = detailedAnalysis.filter(item => item.status === 'correct').length;
         const incorrectCount = detailedAnalysis.filter(item => item.status === 'incorrect').length;
         const unansweredCount = detailedAnalysis.filter(item => item.status === 'unanswered').length;
