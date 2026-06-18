@@ -17,7 +17,7 @@ import mongoose from 'mongoose';
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
     console.error('❌ FATAL: JWT_SECRET must be at least 32 characters. Server cannot start.');
     process.exit(1);
-} 
+}
 
 // Import routes
 import connectDB from './src/config/database.js';
@@ -145,10 +145,19 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
+app.use((req, res, next) => {
+    Object.defineProperty(req, 'query', {
+        value: { ...req.query },
+        writable: true,
+        enumerable: true,
+        configurable: true
+    });
+    next();
+});
 
-// ── Security Middleware ─────────────────────────────────────────────────────────
 app.use(mongoSanitize());  // Prevent MongoDB operator injection ($gt, $ne, etc.)
 app.use(xssClean());       // Sanitize user input against XSS payloads
+// ── Security Middleware ─────────────────────────────────────────────────────────
 app.use(compression());    // Gzip compress all responses
 app.use(resolveTenant);    // Global Tenant Context Resolution
 
@@ -303,7 +312,7 @@ app.use((req, res) => {
 
 mongoose.connection.once('open', () => {
     console.log("✅ MongoDB Connection Confirmed.");
-    
+
     // 🌟 Start the AI Cron Agent only AFTER DB is completely ready
     initAICronJobs();
     initSubscriptionCronJobs();
