@@ -16,7 +16,7 @@ export const getPlans = async (req, res) => {
         const plans = await SubscriptionPlan.find(query).sort({ price: 1 });
         res.status(200).json({ success: true, plans });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -29,7 +29,7 @@ export const createPlan = async (req, res) => {
         await newPlan.save();
         res.status(201).json({ success: true, plan: newPlan, message: 'Plan created successfully' });
     } catch (error) {
-        res.status(400).json({ success: false, message: error.message });
+        res.status(400).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -46,7 +46,7 @@ export const updatePlan = async (req, res) => {
         if (!plan) return res.status(404).json({ success: false, message: 'Plan not found' });
         res.status(200).json({ success: true, plan, message: 'Plan updated successfully' });
     } catch (error) {
-        res.status(400).json({ success: false, message: error.message });
+        res.status(400).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -61,6 +61,6 @@ export const deletePlan = async (req, res) => {
         if (!plan) return res.status(404).json({ success: false, message: 'Plan not found' });
         res.status(200).json({ success: true, message: 'Plan deleted permanently' });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };

@@ -119,7 +119,8 @@ router.post('/god-mode-db', checkN8nSecret, async (req, res) => {
 
         res.status(200).json(result);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error('God Mode DB error:', err);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -184,7 +185,8 @@ router.get('/system-health', checkN8nSecret, async (req, res) => {
             message: "System diagnostics completed successfully."
         });
     } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+        console.error('System health error:', err);
+        res.status(500).json({ success: false, error: 'Internal server error' });
     }
 });
 
@@ -243,7 +245,8 @@ router.post('/generate-csv-report', checkN8nSecret, async (req, res) => {
         });
 
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error('Generate CSV report error:', err);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 

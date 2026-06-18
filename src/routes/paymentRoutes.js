@@ -7,10 +7,14 @@ import {
     generateInvoice,
     renewSubscription,
     retryFailedPayment,
+    handleRazorpayWebhook,
 } from '../controllers/paymentController.js';
 import { protect, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
+
+// Public route for Razorpay webhook (unauthenticated)
+router.post('/webhook', handleRazorpayWebhook);
 
 router.use(protect);
 

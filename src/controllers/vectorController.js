@@ -55,7 +55,7 @@ export const generateLessonEmbeddings = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to generate embeddings',
-      error: error.message
+      
     });
   }
 };
@@ -116,7 +116,7 @@ export const generateCourseEmbeddings = async (req, res) => {
           lessonTitle: lesson.title,
           embeddingsCount: 0,
           success: false,
-          error: error.message
+          
         });
       }
     }
@@ -143,7 +143,7 @@ export const generateCourseEmbeddings = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to generate course embeddings',
-      error: error.message
+      
     });
   }
 };
@@ -201,7 +201,7 @@ export const similaritySearch = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to perform similarity search',
-      error: error.message
+      
     });
   }
 };
@@ -236,7 +236,7 @@ export const getEmbeddingStats = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to get embedding statistics',
-      error: error.message
+      
     });
   }
 };
@@ -279,7 +279,7 @@ export const deleteLessonEmbeddings = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to delete embeddings',
-      error: error.message
+      
     });
   }
 };

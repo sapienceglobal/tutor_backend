@@ -19,7 +19,7 @@ export const createSkill = async (req, res) => {
 
         res.status(201).json({ success: true, skill });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -31,7 +31,7 @@ export const getSkills = async (req, res) => {
         const skills = await Skill.find({ tutorId: tutor._id });
         res.status(200).json({ success: true, skills });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -57,7 +57,7 @@ export const createTopic = async (req, res) => {
         const topic = await Topic.create(topicData);
         res.status(201).json({ success: true, topic });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -69,6 +69,6 @@ export const getTopics = async (req, res) => {
         const topics = await Topic.find({ tutorId: tutor._id }).populate('courseId', 'title');
         res.status(200).json({ success: true, topics });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };

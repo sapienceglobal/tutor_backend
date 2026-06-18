@@ -58,6 +58,9 @@ import LearningEvent from '../src/models/LearningEvent.js';
 import PayoutRequest from '../src/models/PayoutRequest.js';
 import Facility from '../src/models/Facility.js';
 import Settings from '../src/models/Settings.js';
+import LectureSummary from '../src/models/LectureSummary.js';
+import GeneratedReport from '../src/models/GeneratedReport.js';
+
 
 // ── Config ───────────────────────────────────────────────────────────────────
 const __filename = fileURLToPath(import.meta.url);
@@ -269,7 +272,7 @@ async function seed() {
             { key: 'nisha',   name: 'Nisha Agarwal',     email: 'nisha.agarwal@gmail.com',     phone: '+913210987649', city: 'Pune',       state: 'Maharashtra',    gender: 'Female', dob: '2003-03-17', inst: 'zenith' },
             { key: 'vivaan',  name: 'Vivaan Kumar',      email: 'vivaan.kumar@gmail.com',      phone: '+913210987648', city: 'Noida',      state: 'Uttar Pradesh',  gender: 'Male',   dob: '2002-10-30', inst: 'zenith' },
             { key: 'sanya',   name: 'Sanya Bhatia',      email: 'sanya.bhatia@gmail.com',      phone: '+913210987647', city: 'Gurugram',   state: 'Haryana',        gender: 'Female', dob: '2004-08-09', inst: 'zenith' },
-            { key: 'riya',    name: 'Riya Choudhury',    email: 'riya.choudhury@gmail.com',    phone: '+913210987646', city: 'Kolkata',    state: 'West Bengal',    gender: 'Female', dob: '2003-06-25', inst: 'both' },
+            { key: 'riya',    name: 'Riya Choudhury',    email: 'riya.choudhury@gmail.com',    phone: '+913210987646', city: 'Kolkata',    state: 'West Bengal',    gender: 'Female', dob: '2003-06-25', inst: 'zenith' },
             { key: 'aditya',  name: 'Aditya Malhotra',   email: 'aditya.malhotra@gmail.com',   phone: '+913210987645', city: 'Delhi',      state: 'Delhi',          gender: 'Male',   dob: '2001-12-03', inst: 'none' },
             { key: 'pooja',   name: 'Pooja Saxena',      email: 'pooja.saxena@gmail.com',      phone: '+913210987644', city: 'Indore',     state: 'Madhya Pradesh', gender: 'Female', dob: '2002-04-15', inst: 'none' },
             { key: 'aryan',   name: 'Aryan Thakur',      email: 'aryan.thakur@gmail.com',      phone: '+913210987643', city: 'Dehradun',   state: 'Uttarakhand',    gender: 'Male',   dob: '2003-08-20', inst: 'none' },
@@ -335,7 +338,7 @@ async function seed() {
 
         // ── Backpatch User.instituteId ────────────────────────────────────────
         console.log('🌱 [6/40] Backpatching user.instituteId...');
-        const apexUserIds = [uApexAdmin, uTutorVikram, uTutorSneha, uStudents.aarav, uStudents.diya, uStudents.ishaan, uStudents.ananya, uStudents.tanvi, uStudents.riya].map(u => u._id);
+        const apexUserIds = [uApexAdmin, uTutorVikram, uTutorSneha, uStudents.aarav, uStudents.diya, uStudents.ishaan, uStudents.ananya, uStudents.tanvi].map(u => u._id);
         const zenithUserIds = [uZenithAdmin, uTutorArjun, uTutorKavita, uStudents.kabir, uStudents.nisha, uStudents.vivaan, uStudents.sanya, uStudents.riya].map(u => u._id);
 
         await User.updateMany({ _id: { $in: apexUserIds } }, { $set: { instituteId: apexInstitute._id } });
@@ -378,7 +381,6 @@ async function seed() {
             { userId: uStudents.ishaan._id, instituteId: apexInstitute._id, roleInInstitute: 'student', status: 'active', joinedVia: 'invite', metadata: { rollNumber: 'APX-2026-003' } },
             { userId: uStudents.ananya._id, instituteId: apexInstitute._id, roleInInstitute: 'student', status: 'active', joinedVia: 'subdomain', metadata: { rollNumber: 'APX-2026-004' } },
             { userId: uStudents.tanvi._id, instituteId: apexInstitute._id, roleInInstitute: 'student', status: 'active', joinedVia: 'subdomain', metadata: { rollNumber: 'APX-2026-005' } },
-            { userId: uStudents.riya._id, instituteId: apexInstitute._id, roleInInstitute: 'student', status: 'active', joinedVia: 'invite', metadata: { rollNumber: 'APX-2026-X01' } },
             // Zenith
             { userId: uZenithAdmin._id, instituteId: zenithInstitute._id, roleInInstitute: 'admin', status: 'active', joinedVia: 'system_created' },
             { userId: uTutorArjun._id, instituteId: zenithInstitute._id, roleInInstitute: 'tutor', status: 'active', joinedVia: 'admin_add', permissions: { canCreateCourses: true, canCreateExams: true, canViewAnalytics: true, canManageStudents: true } },
@@ -714,7 +716,7 @@ async function seed() {
         const zenithStudentIds = [uStudents.kabir, uStudents.nisha, uStudents.vivaan, uStudents.sanya].map(u => u._id);
 
         const b1 = await Batch.create({ name: 'JEE Physics 2026-A', courseId: c3._id, tutorId: tVikram._id, instructors: [tVikram._id], grade: 'A', instituteId: apexInstitute._id, students: apexStudentIds, scheduleDescription: 'Mon, Wed, Fri — 6:00 PM to 7:30 PM IST', status: 'active', startDate: ago(30), endDate: future(60), announcements: [{ title: 'Weekly Test Every Saturday', message: 'Mock test covering last week\'s topics. Mandatory for all students.', createdAt: ago(2) }] });
-        const b2 = await Batch.create({ name: 'NEET Bio 2026-A', courseId: c5._id, tutorId: tSneha._id, instructors: [tSneha._id], grade: 'A', instituteId: apexInstitute._id, students: [uStudents.diya._id, uStudents.ananya._id, uStudents.tanvi._id, uStudents.riya._id], scheduleDescription: 'Tue, Thu, Sat — 4:00 PM to 5:30 PM IST', status: 'active', startDate: ago(25), endDate: future(55) });
+        const b2 = await Batch.create({ name: 'NEET Bio 2026-A', courseId: c5._id, tutorId: tSneha._id, instructors: [tSneha._id], grade: 'A', instituteId: apexInstitute._id, students: [uStudents.diya._id, uStudents.ananya._id, uStudents.tanvi._id], scheduleDescription: 'Tue, Thu, Sat — 4:00 PM to 5:30 PM IST', status: 'active', startDate: ago(25), endDate: future(55) });
         const b3 = await Batch.create({ name: 'MERN Cohort-7', courseId: c1._id, tutorId: tArjun._id, instructors: [tArjun._id], grade: 'A', instituteId: zenithInstitute._id, students: [...zenithStudentIds, uStudents.riya._id], scheduleDescription: 'Mon to Fri — 10:00 AM to 12:00 PM IST', status: 'active', startDate: ago(20), endDate: future(70) });
         const b4 = await Batch.create({ name: 'DSA Cohort-3', courseId: c4._id, tutorId: tKavita._id, instructors: [tKavita._id], grade: 'B', instituteId: zenithInstitute._id, students: [uStudents.kabir._id, uStudents.vivaan._id], scheduleDescription: 'Wed, Fri — 2:00 PM to 4:00 PM IST', status: 'active', startDate: ago(15), endDate: future(45) });
 
@@ -735,7 +737,7 @@ async function seed() {
             { s: 'pooja', c: c2, b: null, d: 7, pct: 25, completed: [c2Lessons[0]] },
             { s: 'kabir', c: c2, b: null, d: 5, pct: 0, completed: [] },
             // C3 JEE Physics — Apex students
-            { s: 'aarav', c: c3, b: b1, d: 30, pct: 75, completed: [c3Lessons[0], c3Lessons[1], c3Lessons[2]] },
+            { s: 'aarav', c: c3, b: b1, d: 30, pct: 100, completed: [c3Lessons[0], c3Lessons[1], c3Lessons[2], c3Lessons[3]] },
             { s: 'diya', c: c3, b: b1, d: 28, pct: 50, completed: [c3Lessons[0], c3Lessons[1]] },
             { s: 'ishaan', c: c3, b: b1, d: 25, pct: 50, completed: [c3Lessons[0], c3Lessons[1]] },
             { s: 'ananya', c: c3, b: b1, d: 22, pct: 25, completed: [c3Lessons[0]] },
@@ -749,7 +751,6 @@ async function seed() {
             { s: 'diya', c: c5, b: b2, d: 25, pct: 66, completed: [c5Lessons[0], c5Lessons[1]] },
             { s: 'ananya', c: c5, b: b2, d: 22, pct: 33, completed: [c5Lessons[0]] },
             { s: 'tanvi', c: c5, b: b2, d: 18, pct: 33, completed: [c5Lessons[0]] },
-            { s: 'riya', c: c5, b: b2, d: 10, pct: 0, completed: [] },
             // C6 Python ML — Independent
             { s: 'pooja', c: c6, b: null, d: 14, pct: 50, completed: [c6Lessons[0], c6Lessons[1]] },
             { s: 'aryan', c: c6, b: null, d: 10, pct: 25, completed: [c6Lessons[0]] },
@@ -761,7 +762,6 @@ async function seed() {
             { s: 'aarav', c: c8, b: null, d: 20, pct: 66, completed: [c8Lessons[0], c8Lessons[1]] },
             { s: 'ishaan', c: c8, b: null, d: 15, pct: 33, completed: [c8Lessons[0]] },
             { s: 'diya', c: c8, b: null, d: 12, pct: 0, completed: [] },
-            { s: 'riya', c: c8, b: null, d: 8, pct: 33, completed: [c8Lessons[0]] },
         ];
 
         for (const e of enrollmentPairs) {
@@ -779,11 +779,11 @@ async function seed() {
         // ══════════════════════════════════════════════════════════════════════
         console.log('🌱 [14/40] Progress (partial video tracking)...');
         const progressData = [
-            // Aarav — 75% through C3, at 45% of the last lesson he's on
+            // Aarav — 100% through C3
             { s: 'aarav', c: c3, l: c3Lessons[0], completed: true, timeSpent: 1400, lastPos: 1400 },
             { s: 'aarav', c: c3, l: c3Lessons[1], completed: true, timeSpent: 1200, lastPos: 1200 },
             { s: 'aarav', c: c3, l: c3Lessons[2], completed: true, timeSpent: 1100, lastPos: 1100 },
-            { s: 'aarav', c: c3, l: c3Lessons[3], completed: false, timeSpent: 540, lastPos: 540 }, // 45% through
+            { s: 'aarav', c: c3, l: c3Lessons[3], completed: true, timeSpent: 1200, lastPos: 1200 },
             // Kabir — 42% through C1
             { s: 'kabir', c: c1, l: c1Lessons[0], completed: true, timeSpent: 900, lastPos: 900 },
             { s: 'kabir', c: c1, l: c1Lessons[1], completed: true, timeSpent: 1100, lastPos: 1100 },
@@ -1203,6 +1203,7 @@ async function seed() {
         // ══════════════════════════════════════════════════════════════════════
         console.log('🌱 [25/40] Certificates...');
         await Certificate.create({ certificateId: 'CERT-SAP-2026-0001', studentId: uStudents.pooja._id, courseId: c7._id, tutorId: uTutorRohan._id, issuedAt: ago(1), qrCodeData: 'https://sapience.io/verify/CERT-SAP-2026-0001' });
+        await Certificate.create({ certificateId: 'CERT-SAP-2026-0002', studentId: uStudents.aarav._id, courseId: c3._id, tutorId: uTutorVikram._id, issuedAt: ago(1), qrCodeData: 'https://sapience.io/verify/CERT-SAP-2026-0002' });
 
         // ══════════════════════════════════════════════════════════════════════
         //  26. NOTIFICATIONS
@@ -1309,6 +1310,68 @@ async function seed() {
             sourceType: 'text', simplifiedText: '**Moment of Inertia (I)** = How hard it is to spin something.\n\n• **Formula:** I = Σmr² (sum of mass × distance²)\n• **Continuous bodies:** I = ∫r²dm\n• **Parallel Axis Theorem:** I = I_cm + Md²\n\nThink of it like: heavier things further from the axis = harder to spin!',
             gradeLevel: '11th Grade', originalWordCount: 72, simplifiedWordCount: 42, wordsReduced: 30, infoRetained: 95,
             title: 'Moment of Inertia — Simplified',
+        });
+
+        // Tutor-shared simplified note
+        await SimplifiedNote.create({
+            userId: uTutorVikram._id, instituteId: apexInstitute._id, courseId: c3._id,
+            originalText: 'Rotational dynamics covers torque, angular momentum, and the conservation of angular momentum. Torque is the rotational equivalent of linear force, defined as the vector product of position vector and force vector. Angular momentum of a rigid body is the product of its moment of inertia and angular velocity.',
+            sourceType: 'text',
+            simplifiedText: '**Rotational Dynamics Made Simple!**\n\n• **Torque (τ):** Rotational force. τ = r × F (r = distance from pivot, F = force applied).\n• **Angular Momentum (L):** Rotational momentum. L = I × ω (I = Moment of Inertia, ω = Angular velocity).\n• **Conservation of L:** If net external torque is zero, angular momentum remains constant!',
+            gradeLevel: '11th Grade', originalWordCount: 42, simplifiedWordCount: 28, wordsReduced: 14, infoRetained: 98,
+            title: 'Rotational Dynamics Cheat Sheet',
+            sharedToCourses: [{
+                courseId: c3._id,
+                lessonId: c3Lessons[1]._id,
+                sharedAt: ago(1)
+            }]
+        });
+
+        // Lecture Summaries
+        await LectureSummary.create({
+            userId: uTutorVikram._id, instituteId: apexInstitute._id, courseId: c3._id, lessonId: c3Lessons[0]._id,
+            title: 'Lecture Summary: Newton\'s Laws & Constraints',
+            sourceType: 'lesson',
+            summary: 'This lecture covers Newton\'s three laws of motion in depth, with a focus on JEE Advanced application. Key topics include drawing Free Body Diagrams (FBDs) for coupled systems, resolving force vectors on inclined planes, and formulation of string constraint equations. We solved 5 distinct pulley-mass systems highlighting massless and mass-bearing pulleys.',
+            keyPoints: [
+                'Always define a coordinate system and draw a clean Free Body Diagram (FBD) for each body.',
+                'For string constraints, assume the string length is constant and differentiate twice to relate accelerations.',
+                'Action-reaction pairs must act on different bodies.'
+            ],
+            keyTakeaways: [
+                'Constraint relations are critical for multi-body pulley problems.',
+                'Moment of inertia must be considered if the pulley is not massless.'
+            ],
+            status: 'ready',
+            pageCount: 3, keyPointCount: 3, minutesSaved: 45, accuracy: 98
+        });
+
+        // Generated Reports
+        await GeneratedReport.create({
+            tutorId: tVikram._id, instituteId: apexInstitute._id, reportType: 'student',
+            title: 'JEE Physics Academic Performance Report',
+            description: 'Comprehensive evaluation of Aarav Patel for the IIT JEE Physics Course.',
+            studentIds: [uStudents.aarav._id], studentNames: ['Aarav Patel'],
+            courseId: c3._id, courseName: c3.title, highlightStrengths: true,
+            summary: 'Aarav has demonstrated exceptional performance across the core concepts of mechanics. He shows a high aptitude for algebraic derivation and application of Faraday\'s laws. His primary area of concern is continuous body moment of inertia calculations.',
+            students: [{
+                studentId: uStudents.aarav._id,
+                name: 'Aarav Patel',
+                avatar: null,
+                avgScore: 88,
+                progress: 100,
+                grade: 'A',
+                strengths: ['Linear Kinematics', 'FBD Vector Resolution', 'Electromagnetic Induction'],
+                weaknesses: ['Rotational Dynamics', 'Continuous Body Moment of Inertia'],
+                skillBreakdown: [
+                    { topic: 'Linear Kinematics', score: 96, color: '#10B981' },
+                    { topic: 'Newton\'s Laws', score: 90, color: '#6366F1' },
+                    { topic: 'Electromagnetism', score: 88, color: '#8B5CF6' },
+                    { topic: 'Rotational Mechanics', score: 68, color: '#EF4444' }
+                ],
+                recommendation: 'Solve 15-20 intermediate to advanced level numericals on rotational torque vectors and moment of inertia. Utilize the newly shared Rotational Dynamics Cheat Sheet.'
+            }],
+            status: 'ready'
         });
 
         // ══════════════════════════════════════════════════════════════════════

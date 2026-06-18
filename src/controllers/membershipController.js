@@ -82,7 +82,7 @@ export const generateInvite = async (req, res) => {
     console.error('Generate invite error:', error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: 'Failed to generate invite'
     });
   }
 };
@@ -141,7 +141,7 @@ export const acceptInvite = async (req, res) => {
     console.error('Accept invite error:', error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: 'Failed to accept invite'
     });
   }
 };
@@ -284,7 +284,7 @@ export const requestJoin = async (req, res) => {
     console.error('Request join error:', error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: 'Failed to request join'
     });
   }
 };
@@ -343,7 +343,7 @@ export const approveMembership = async (req, res) => {
     console.error('Approve membership error:', error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: 'Failed to approve membership'
     });
   }
 };
@@ -390,7 +390,7 @@ export const getMyInstitutes = async (req, res) => {
     console.error('Get my institutes error:', error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: 'Failed to get institutes'
     });
   }
 };
@@ -444,7 +444,7 @@ export const switchInstitute = async (req, res) => {
     console.error('Switch institute error:', error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: 'Failed to switch institute'
     });
   }
 };
@@ -480,7 +480,7 @@ export const getInstituteMembers = async (req, res) => {
     console.error('Get institute members error:', error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: 'Failed to get institute members'
     });
   }
 };
@@ -512,7 +512,7 @@ export const leaveInstitute = async (req, res) => {
     console.error('Leave institute error:', error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: 'Failed to leave institute'
     });
   }
 };

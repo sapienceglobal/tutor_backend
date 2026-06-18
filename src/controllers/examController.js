@@ -137,7 +137,7 @@ export const getExamsByCourse = async (req, res) => {
       exams: visibleExams,
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
 
@@ -1073,7 +1073,6 @@ export const getExamAttempts = async (req, res) => {
   }
 };
 
-
 // @desc    Get Student's Own Attempt History for an Exam
 // @route   GET /api/exams/:examId/my-attempts
 // @access  Private (Student)
@@ -1101,7 +1100,7 @@ export const getMyAllAttempts = async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching my attempts:', error);
-    res.status(500).json({ message: 'Server Error', error: error.message });
+    res.status(500).json({ message: 'Server Error' });
   }
 };
 

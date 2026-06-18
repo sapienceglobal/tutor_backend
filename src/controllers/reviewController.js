@@ -6,7 +6,6 @@ import mongoose from 'mongoose';
 import Tutor from '../models/Tutor.js';
 import OpenAI from 'openai';
 
-
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 // @desc    Create a review
 // @route   POST /api/reviews
@@ -115,7 +114,7 @@ export const createReview = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Failed to create review',
-            error: error.message,
+            
         });
     }
 };
@@ -189,7 +188,7 @@ export const getCourseReviews = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Failed to fetch reviews',
-            error: error.message,
+            
         });
     }
 };
@@ -266,7 +265,7 @@ export const updateReview = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Failed to update review',
-            error: error.message,
+            
         });
     }
 };
@@ -305,7 +304,7 @@ export const deleteReview = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Failed to delete review',
-            error: error.message,
+            
         });
     }
 };
@@ -353,7 +352,7 @@ export const toggleHelpful = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Failed to update helpful vote',
-            error: error.message,
+            
         });
     }
 };
@@ -379,7 +378,7 @@ export const getMyReview = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Failed to fetch review',
-            error: error.message,
+            
         });
     }
 };
@@ -401,7 +400,7 @@ export const getReviewStats = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Failed to fetch statistics',
-            error: error.message,
+            
         });
     }
 };
@@ -447,7 +446,7 @@ export const getTutorReviews = async (req, res) => {
         });
     } catch (error) {
         console.error('❌ Get tutor reviews error:', error);
-        res.status(500).json({ success: false, message: 'Failed to fetch tutor reviews', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to fetch tutor reviews' });
     }
 };
 
@@ -486,7 +485,7 @@ export const getReviewsByTutorId = async (req, res) => {
         });
     } catch (error) {
         console.error('❌ Get reviews by tutor error:', error);
-        res.status(500).json({ success: false, message: 'Failed to fetch reviews', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to fetch reviews' });
     }
 };
 
@@ -528,7 +527,6 @@ export const replyToReview = async (req, res) => {
         await review.populate('studentId', 'name profileImage');
         await review.populate('courseId', 'title');
 
-
         if (review.studentId) {
             await createNotification({
                 userId: review.studentId._id ? review.studentId._id.toString() : review.studentId.toString(),
@@ -551,6 +549,6 @@ export const replyToReview = async (req, res) => {
 
     } catch (error) {
         console.error('❌ Reply review error:', error);
-        res.status(500).json({ success: false, message: 'Failed to post reply', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to post reply' });
     }
 };

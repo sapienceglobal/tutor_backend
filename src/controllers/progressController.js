@@ -127,7 +127,7 @@ export const getCourseProgress = async (req, res) => {
 
     res.status(200).json({ success: true, progress, enrollment });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
 
@@ -141,7 +141,7 @@ export const getLessonProgress = async (req, res) => {
     });
     res.status(200).json({ success: true, progress });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
 
@@ -163,7 +163,6 @@ async function updateEnrollmentProgress(studentId, courseId) {
 
     const uniqueCompletedLessonIds = [...new Set(completedProgress.map(p => p.lessonId.toString()))];
 
-   
     // 3. Calculate Percentage
     let percentage = 0;
     if (totalLessons > 0) {
@@ -188,5 +187,4 @@ async function updateEnrollmentProgress(studentId, courseId) {
     console.error('Update enrollment progress helper error:', error);
   }
 }
-
 

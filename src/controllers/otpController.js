@@ -247,7 +247,7 @@ export const verifyOTPAndRegister = async (req, res) => {
         await session.abortTransaction();
         session.endSession();
         console.error('❌ Verify OTP and Register error:', {
-            message: error.message,
+            message: 'Internal server error',
             stack: error.stack,
             name: error.name
         });

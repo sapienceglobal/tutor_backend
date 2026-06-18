@@ -41,6 +41,16 @@ export const enrollInCourse = async (req, res) => {
       });
     }
 
+    // Institute scope check — prevent cross-institute enrollment
+    if (course.visibilityScope === 'institute' && course.instituteId) {
+      if (String(req.user.instituteId) !== String(course.instituteId)) {
+        return res.status(403).json({
+          success: false,
+          message: 'This course is restricted to its institute members.',
+        });
+      }
+    }
+
     // Check if already enrolled
     const existingEnrollment = await Enrollment.findOne({
       studentId: req.user.id,
@@ -142,18 +152,10 @@ export const enrollInCourse = async (req, res) => {
 // @route   GET /api/enrollments/my-enrollments
 export const getMyEnrollments = async (req, res) => {
   try {
-    console.log('🔍 DEBUG - getMyEnrollments called:', {
-      userId: req.user?.id,
-      userRole: req.user?.role,
-      query: req.query
-    });
-
     const { status, scope } = req.query;
 
     let filter = { studentId: req.user.id };
     if (status) filter.status = status;
-
-    console.log('🔍 DEBUG - Enrollment filter:', filter);
 
     let enrollments = await Enrollment.find(filter)
       .populate({
@@ -173,8 +175,6 @@ export const getMyEnrollments = async (req, res) => {
     } else if (scope === 'institute') {
       enrollments = enrollments.filter(e => e.courseId && e.courseId.visibility === 'institute');
     }
-
-    console.log('🔍 DEBUG - Found enrollments:', enrollments.length);
 
     res.status(200).json({
       success: true,
@@ -283,20 +283,16 @@ export const getCourseStudents = async (req, res) => {
       return isValid;
     });
 
-
-
     res.status(200).json({
       success: true,
       count: validEnrollments.length,
       students: validEnrollments,
     });
   } catch (error) {
-    console.error('❌ Get course students error:', error);
-    console.error('Error stack:', error.stack);
+    console.error('Get course students error:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error',
-      error: error.message,
     });
   }
 };

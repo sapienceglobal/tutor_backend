@@ -89,8 +89,6 @@ async function callGroqAIChat(messages) {
     }
 }
 
-
-
 // @desc    Generate MCQ questions using AI
 // @route   POST /api/ai/generate-questions
 // Helper function to call Groq AI iteratively handling all backend function calls
@@ -317,7 +315,7 @@ Return ONLY a valid JSON array with no additional text:
         res.status(500).json({
             success: false,
             message: 'Failed to generate questions',
-            error: error.message,
+            
         });
     }
 };
@@ -413,7 +411,7 @@ Return ONLY valid JSON array:
         res.status(500).json({
             success: false,
             message: 'Failed to generate quiz',
-            error: error.message,
+            
         });
     }
 };
@@ -506,7 +504,7 @@ export const chatWithTutor = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Failed to communicate with AI Tutor',
-            error: error.message,
+            
         });
     }
 };
@@ -614,7 +612,7 @@ Guidelines:
         res.status(500).json({
             success: false,
             message: 'Failed to communicate with AI Tutor',
-            error: error.message,
+            
         });
     }
 };
@@ -685,7 +683,7 @@ export const generateStudentAnalytics = async (req, res) => {
 
     } catch (error) {
         console.error('Analytics generation error:', error);
-        res.status(500).json({ success: false, message: 'Failed to generate analytics', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to generate analytics' });
     }
 };
 
@@ -743,7 +741,7 @@ Content: "${textContent || 'Video/multimedia content — summarize based on titl
         });
     } catch (error) {
         console.error('Summarize lesson error:', error);
-        res.status(500).json({ success: false, message: 'Failed to summarize lesson', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to summarize lesson' });
     }
 };
 
@@ -800,7 +798,7 @@ Content: "${textContent || 'Video/multimedia content — create notes based on t
         });
     } catch (error) {
         console.error('Revision notes error:', error);
-        res.status(500).json({ success: false, message: 'Failed to generate revision notes', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to generate revision notes' });
     }
 };
 
@@ -857,7 +855,7 @@ Content: "${textContent || 'Video/multimedia content — explain concept based o
         });
     } catch (error) {
         console.error('Explain concept error:', error);
-        res.status(500).json({ success: false, message: 'Failed to explain concept', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to explain concept' });
     }
 };
 
@@ -913,7 +911,7 @@ Content: "${textContent || 'Video/multimedia content — generate practice quest
         });
     } catch (error) {
         console.error('Practice questions error:', error);
-        res.status(500).json({ success: false, message: 'Failed to generate practice questions', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to generate practice questions' });
     }
 };
 
@@ -1092,7 +1090,7 @@ export const contextualChat = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Failed to communicate with AI',
-            error: error.message,
+            
         });
     }
 };
@@ -1524,7 +1522,6 @@ Format replies cleanly using Markdown.`
 
 };
 
-
 export const getTutorAIDashboardStats = async (req, res) => {
     try {
         const tutorUserId = req.user._id;
@@ -1716,7 +1713,6 @@ export const getTutorAIDashboardStats = async (req, res) => {
     }
 };
 
-
 // @desc    Solve a doubt using Groq AI + save to DoubtLog
 // @route   POST /api/ai/solve-doubt
 // @access  Private
@@ -1815,10 +1811,9 @@ Instructions:
 
     } catch (error) {
         console.error('Solve doubt error:', error);
-        res.status(500).json({ success: false, message: 'Failed to solve doubt', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to solve doubt' });
     }
 };
-
 
 // @desc    Get doubt history for logged-in user
 // @route   GET /api/ai/doubts
@@ -1879,7 +1874,6 @@ export const getDoubtHistory = async (req, res) => {
     }
 };
 
-
 // @desc    Get a single doubt with full answer
 // @route   GET /api/ai/doubts/:id
 // @access  Private
@@ -1899,7 +1893,6 @@ export const getDoubtById = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to fetch doubt' });
     }
 };
-
 
 // @desc    Rate a doubt answer (1–5 stars)
 // @route   PATCH /api/ai/doubts/:id/rate
@@ -1928,7 +1921,6 @@ export const rateDoubt = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to rate doubt' });
     }
 };
-
 
 // @desc    Get distinct subjects from tutor's doubt history
 //          + topics from Taxonomy
@@ -1978,8 +1970,6 @@ export const getDoubtTopics = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to fetch topics' });
     }
 };
-
-
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -2164,7 +2154,7 @@ Return ONLY a valid JSON object (no markdown, no backticks):
 
     } catch (error) {
         console.error('Simplify notes error:', error);
-        res.status(500).json({ success: false, message: 'Failed to simplify notes', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to simplify notes' });
     }
 };
 
@@ -2208,7 +2198,6 @@ export const getSimplifiedNotes = async (req, res) => {
     }
 };
 
-
 // @desc    Get a single simplified note with full content
 // @route   GET /api/ai/simplified-notes/:id
 // @access  Private
@@ -2223,7 +2212,6 @@ export const getSimplifiedNoteById = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to fetch note' });
     }
 };
-
 
 // @desc    Share simplified note to a course as a lesson attachment
 // @route   POST /api/ai/simplified-notes/:id/share
@@ -2311,10 +2299,9 @@ export const shareNoteToCourse = async (req, res) => {
 
     } catch (error) {
         console.error('Share note to course error:', error);
-        res.status(500).json({ success: false, message: 'Failed to share note', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to share note' });
     }
 };
-
 
 // @desc    Delete a simplified note
 // @route   DELETE /api/ai/simplified-notes/:id
@@ -2328,7 +2315,6 @@ export const deleteSimplifiedNote = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to delete note' });
     }
 };
-
 
 // @desc    Get trending topics for Knowledge Bank
 //          Uses: Taxonomy topics + most-used subjects in SimplifiedNotes
@@ -2381,8 +2367,6 @@ export const getNotesKnowledgeBank = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to fetch knowledge bank' });
     }
 };
-
-
 
 // ── Helper: letter grade from percentage ─────────────────────────────────────
 function getLetterGrade(pct) {
@@ -2442,7 +2426,6 @@ Evaluate thoroughly and return ONLY a valid JSON object (no markdown, no backtic
     return JSON.parse(raw.slice(jsonStart, jsonEnd));
 }
 
-
 // @desc    Get tutor's assignments with submission stats (for evaluator list)
 // @route   GET /api/ai/evaluator/assignments
 // @access  Private (tutor)
@@ -2501,7 +2484,6 @@ export const getEvaluatorAssignments = async (req, res) => {
     }
 };
 
-
 // @desc    Get submissions for one assignment (with AI eval status)
 // @route   GET /api/ai/evaluator/assignments/:assignmentId/submissions
 // @access  Private (tutor)
@@ -2533,7 +2515,6 @@ export const getEvaluatorSubmissions = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to fetch submissions' });
     }
 };
-
 
 // @desc    AI evaluate a single submission (returns suggestion — does NOT save grade)
 // @route   POST /api/ai/evaluator/submissions/:submissionId/evaluate
@@ -2574,10 +2555,9 @@ export const aiEvaluateSubmission = async (req, res) => {
         });
     } catch (error) {
         console.error('aiEvaluateSubmission error:', error);
-        res.status(500).json({ success: false, message: 'AI evaluation failed', error: error.message });
+        res.status(500).json({ success: false, message: 'AI evaluation failed' });
     }
 };
-
 
 // @desc    Confirm & save AI grade to submission
 //          Tutor reviews AI suggestion then confirms — saves via gradeSubmission logic
@@ -2622,10 +2602,9 @@ export const confirmAIGrade = async (req, res) => {
         res.status(200).json({ success: true, submission });
     } catch (error) {
         console.error('confirmAIGrade error:', error);
-        res.status(500).json({ success: false, message: 'Failed to save grade', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to save grade' });
     }
 };
-
 
 // @desc    Bulk AI evaluate ALL pending submissions of an assignment
 // @route   POST /api/ai/evaluator/assignments/:assignmentId/bulk-evaluate
@@ -2676,12 +2655,9 @@ export const bulkAIEvaluate = async (req, res) => {
         res.status(200).json({ success: true, total: submissions.length, results });
     } catch (error) {
         console.error('bulkAIEvaluate error:', error);
-        res.status(500).json({ success: false, message: 'Bulk evaluation failed', error: error.message });
+        res.status(500).json({ success: false, message: 'Bulk evaluation failed' });
     }
 };
-
-
-
 
 // ── Helper: estimate minutes saved based on word count ────────────────────────
 function estimateMinutesSaved(text = '') {
@@ -2695,7 +2671,6 @@ function estimatePages(text = '') {
     const words = text.trim().split(/\s+/).filter(Boolean).length;
     return Math.max(1, Math.round(words / 250)); // ~250 words per page
 }
-
 
 // @desc    Generate lecture summary (file / lesson / text / youtube)
 // @route   POST /api/ai/lecture-summary/generate
@@ -2916,10 +2891,9 @@ Return ONLY a valid JSON object (no markdown, no backticks):
 
     } catch (error) {
         console.error('generateLectureSummary error:', error);
-        res.status(500).json({ success: false, message: 'Failed to generate summary', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to generate summary' });
     }
 };
-
 
 // @desc    Get lecture summary history
 // @route   GET /api/ai/lecture-summaries
@@ -2960,7 +2934,6 @@ export const getLectureSummaries = async (req, res) => {
     }
 };
 
-
 // @desc    Get single lecture summary with full content
 // @route   GET /api/ai/lecture-summaries/:id
 // @access  Private
@@ -2976,7 +2949,6 @@ export const getLectureSummaryById = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to fetch summary' });
     }
 };
-
 
 // @desc    Delete a lecture summary
 // @route   DELETE /api/ai/lecture-summaries/:id
@@ -3039,7 +3011,6 @@ export const shareLectureSummary = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to share lecture summary.' });
     }
 };
-
 
 // @desc    Get lecture summary stats for tutor
 // @route   GET /api/ai/lecture-summary-stats
@@ -3128,7 +3099,6 @@ export const getLectureSummaryStats = async (req, res) => {
     }
 };
 
-
 // @desc    Get related lectures (same course, same lesson type)
 // @route   GET /api/ai/lecture-summaries/:id/related
 // @access  Private
@@ -3157,7 +3127,6 @@ export const getRelatedLectures = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to fetch related lectures' });
     }
 };
-
 
 // @desc    Get weak topics analysis for tutor's students
 // @route   GET /api/ai/weak-topics
@@ -3447,10 +3416,9 @@ Return ONLY valid JSON (no markdown):
 
     } catch (error) {
         console.error('getWeakTopics error:', error);
-        res.status(500).json({ success: false, message: 'Failed to fetch weak topics', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to fetch weak topics' });
     }
 };
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // STUDY PLAN CONTROLLERS
@@ -3561,10 +3529,9 @@ export const getStudyPlanStudents = async (req, res) => {
 
     } catch (error) {
         console.error('getStudyPlanStudents error:', error);
-        res.status(500).json({ success: false, message: 'Failed to fetch students', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to fetch students' });
     }
 };
-
 
 // @desc    Generate AI study plan for a student
 // @route   POST /api/ai/study-plan/generate
@@ -3728,10 +3695,9 @@ Rules:
 
     } catch (error) {
         console.error('generateStudyPlan error:', error);
-        res.status(500).json({ success: false, message: 'Failed to generate study plan', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to generate study plan' });
     }
 };
-
 
 // @desc    Get all study plans created by tutor
 // @route   GET /api/ai/study-plans
@@ -3794,7 +3760,6 @@ export const getStudyPlans = async (req, res) => {
     }
 };
 
-
 // @desc    Get single study plan with full weeklyPlan
 // @route   GET /api/ai/study-plans/:id
 // @access  Private (tutor)
@@ -3819,7 +3784,6 @@ export const getStudyPlanById = async (req, res) => {
     }
 };
 
-
 // @desc    Delete a study plan
 // @route   DELETE /api/ai/study-plans/:id
 // @access  Private (tutor)
@@ -3839,9 +3803,6 @@ export const deleteStudyPlan = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to delete study plan' });
     }
 };
-
-
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RISK PREDICTOR CONTROLLER
@@ -4174,11 +4135,9 @@ Return ONLY valid JSON array (no markdown):
 
     } catch (error) {
         console.error('getRiskPrediction error:', error);
-        res.status(500).json({ success: false, message: 'Failed to fetch risk predictions', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to fetch risk predictions' });
     }
 };
-
-
 
 // ── Helper: compute risk score for one student ────────────────────────────────
 async function computeStudentRisk(studentId, courseIds) {
@@ -4237,7 +4196,6 @@ async function computeStudentRisk(studentId, courseIds) {
 
     return { score, riskLevel, avgProgress, avgQuizScore, avgGrade, failedQuizzes, missedSubs, causes };
 }
-
 
 // @desc    Get dropout risk analysis for all students in tutor's courses
 // @route   GET /api/ai/dropout-risk
@@ -4371,10 +4329,9 @@ export const getDropoutRiskAnalysis = async (req, res) => {
 
     } catch (error) {
         console.error('getDropoutRiskAnalysis error:', error);
-        res.status(500).json({ success: false, message: 'Failed to analyze dropout risk', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to analyze dropout risk' });
     }
 };
-
 
 // @desc    Get dropout risk for a single student
 // @route   GET /api/ai/dropout-risk/student/:studentId
@@ -4432,15 +4389,13 @@ Write a 2-3 sentence personalized recommendation for the tutor on how to help th
         });
     } catch (error) {
         console.error('getStudentDropoutRisk error:', error);
-        res.status(500).json({ success: false, message: 'Failed to get student risk', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to get student risk' });
     }
 };
-
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ═══  STUDENT-FACING AI ENDPOINTS  ═════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════════════════
-
 
 // @desc    Get simplified notes shared TO student's enrolled courses
 // @route   GET /api/ai/student/shared-notes
@@ -4507,7 +4462,6 @@ export const getStudentSharedNotes = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to fetch shared notes' });
     }
 };
-
 
 // @desc    Get lecture summaries for student's enrolled courses
 // @route   GET /api/ai/student/lecture-summaries
@@ -4591,7 +4545,6 @@ export const getStudentLectureSummaryById = async (req, res) => {
     }
 };
 
-
 // @desc    Get study plans created FOR this student
 // @route   GET /api/ai/student/study-plans
 // @access  Private (student)
@@ -4652,7 +4605,6 @@ export const getMyStudyPlans = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to fetch study plans' });
     }
 };
-
 
 // @desc    Get student's own weak topics based on quiz attempt scores
 // @route   GET /api/ai/student/weak-topics
@@ -5136,11 +5088,9 @@ Rules:
 
     } catch (error) {
         console.error('checkPlagiarism error:', error);
-        res.status(500).json({ success: false, message: 'Failed to check plagiarism', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to check plagiarism' });
     }
 };
-
-
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ═══  AI AUTOMATION: SMART NOTIFICATIONS  ══════════════════════════════════════
@@ -5175,7 +5125,6 @@ Do not wrap in markdown or quotes. Return only the plain string text.`;
         res.status(500).json({ success: false, message: 'AI failed to draft notification.' });
     }
 };
-
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ═══  AI COURSE BUILDER  ════════════════════════════════════════════════════════
@@ -5319,11 +5268,9 @@ Evaluate thoroughly across 4 dimensions. Return ONLY valid JSON (no markdown, no
 
     } catch (error) {
         console.error('checkSubjectiveAnswer error:', error);
-        res.status(500).json({ success: false, message: 'Failed to evaluate answer', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to evaluate answer' });
     }
 };
-
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // REPORT GENERATOR CONTROLLERS
@@ -5396,7 +5343,6 @@ export const getReportStudents = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to fetch students' });
     }
 };
-
 
 // @desc    Generate AI report for selected students / course
 // @route   POST /api/ai/report-gen/generate
@@ -5643,10 +5589,9 @@ Generate one entry per student in the same order as provided.
 
     } catch (error) {
         console.error('generateReport error:', error);
-        res.status(500).json({ success: false, message: 'Failed to generate report', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to generate report' });
     }
 };
-
 
 // @desc    Get recent generated reports
 // @route   GET /api/ai/report-gen/recent
@@ -5697,7 +5642,6 @@ export const getRecentReports = async (req, res) => {
     }
 };
 
-
 // @desc    Delete a report
 // @route   DELETE /api/ai/report-gen/:id
 // @access  Private (tutor)
@@ -5717,8 +5661,6 @@ export const deleteReport = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to delete report' });
     }
 };
-
-
 
 // ── Helper: timeAgo ───────────────────────────────────────────────────────────
 function timeAgo(date) {
@@ -5756,7 +5698,6 @@ function extractKeyIssues(attempt) {
     });
     return issues;
 }
-
 
 // @desc    Get proctoring alerts dashboard for tutor
 // @route   GET /api/ai/proctoring/alerts
@@ -5872,10 +5813,9 @@ export const getProctoringAlerts = async (req, res) => {
 
     } catch (error) {
         console.error('getProctoringAlerts error:', error);
-        res.status(500).json({ success: false, message: 'Failed to load proctoring alerts', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to load proctoring alerts' });
     }
 };
-
 
 // @desc    AI generate proctoring summary for an attempt
 // @route   POST /api/ai/proctoring/review/:attemptId/summary
@@ -5921,11 +5861,9 @@ Write a 3-4 sentence professional integrity assessment. State the risk level, de
 
     } catch (error) {
         console.error('generateProctoringAISummary error:', error);
-        res.status(500).json({ success: false, message: 'Failed to generate summary', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to generate summary' });
     }
 };
-
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // COURSE BUILDER CONTROLLERS
@@ -6233,10 +6171,9 @@ Rules:
 
     } catch (error) {
         console.error('generateAICourse error:', error);
-        res.status(500).json({ success: false, message: 'Failed to generate course', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to generate course' });
     }
 };
-
 
 // getRecentAICourses — AICourse → Course model
 export const getRecentAICourses = async (req, res) => {
@@ -6297,7 +6234,6 @@ export const getRecentAICourses = async (req, res) => {
     }
 };
 
-
 // deleteAICourse — AICourse → Course model
 
 export const deleteAICourse = async (req, res) => {
@@ -6334,7 +6270,6 @@ export const deleteAICourse = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to delete course' });
     }
 };
-
 
 // @desc    Super Admin Agentic Chat (God Mode)
 // @route   POST /api/ai/superadmin-coordinator
@@ -6498,7 +6433,7 @@ When explicitly commanded to block/unblock a user or suspend/activate an institu
 
     } catch (error) {
         console.error('superAdminCoordinatorChat error:', error.message);
-        res.status(500).json({ success: false, message: error.message || 'Failed to process AI Super Admin Chat' });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -6519,7 +6454,7 @@ export const getSemanticSearch = async (req, res) => {
         res.status(200).json({ success: true, results });
     } catch (error) {
         console.error('getSemanticSearch error:', error.message);
-        res.status(500).json({ success: false, message: error.message || 'Failed to perform semantic search' });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -6554,10 +6489,9 @@ export const getPlatformAnalytics = async (req, res) => {
         });
     } catch (error) {
         console.error('getPlatformAnalytics error:', error.message);
-        res.status(500).json({ success: false, message: error.message || 'Failed to fetch platform metrics' });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
-
 
 // @route   POST /api/ai/execute-action
 export const executeAIAction = async (req, res) => {
@@ -6608,7 +6542,6 @@ export const executeAIAction = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to execute AI action' });
     }
 };
-
 
 // @desc    Generate Proactive Daily AI Report (For Cron Job)
 export const generateDailyAIReport = async () => {
@@ -6787,7 +6720,7 @@ export const getActiveProctoringSessions = async (req, res) => {
         });
     } catch (error) {
         console.error('getActiveProctoringSessions error:', error);
-        res.status(500).json({ success: false, message: 'Failed to fetch active proctoring sessions', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to fetch active proctoring sessions' });
     }
 };
 
@@ -6833,6 +6766,6 @@ export const terminateExamSession = async (req, res) => {
         });
     } catch (error) {
         console.error('terminateExamSession error:', error);
-        res.status(500).json({ success: false, message: 'Failed to terminate session', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to terminate session' });
     }
 };

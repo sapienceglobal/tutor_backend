@@ -70,7 +70,7 @@ export const createPage = async (req, res) => {
         res.status(201).json({ success: true, data: page });
     } catch (error) {
         if (error.code === 11000) return res.status(400).json({ success: false, message: 'Slug already exists' });
-        res.status(500).json({ success: false, message: 'Server Error', error: error.message });
+        res.status(500).json({ success: false, message: 'Server Error' });
     }
 };
 
@@ -82,7 +82,7 @@ export const updatePage = async (req, res) => {
         page = await Page.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
         res.status(200).json({ success: true, data: page });
     } catch (error) {
-        res.status(500).json({ success: false, message: 'Server Error', error: error.message });
+        res.status(500).json({ success: false, message: 'Server Error' });
     }
 };
 
@@ -96,7 +96,6 @@ export const deletePage = async (req, res) => {
         res.status(500).json({ success: false, message: 'Server Error' });
     }
 };
-
 
 // --- BLOGS ---
 
@@ -161,7 +160,7 @@ export const createBlog = async (req, res) => {
         res.status(201).json({ success: true, data: blog });
     } catch (error) {
         if (error.code === 11000) return res.status(400).json({ success: false, message: 'Slug already exists' });
-        res.status(500).json({ success: false, message: 'Server Error', error: error.message });
+        res.status(500).json({ success: false, message: 'Server Error' });
     }
 };
 
@@ -173,7 +172,7 @@ export const updateBlog = async (req, res) => {
         blog = await Blog.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
         res.status(200).json({ success: true, data: blog });
     } catch (error) {
-        res.status(500).json({ success: false, message: 'Server Error', error: error.message });
+        res.status(500).json({ success: false, message: 'Server Error' });
     }
 };
 

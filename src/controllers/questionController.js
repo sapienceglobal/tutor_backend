@@ -180,7 +180,7 @@ export const createQuestion = async (req, res) => {
         const question = await Question.create(questionData);
         res.status(201).json({ success: true, question });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -219,7 +219,7 @@ export const importQuestions = async (req, res) => {
                 await Question.create(row.questionDoc);
                 importedCount += 1;
             } catch (error) {
-                errors.push({ row: row.row, message: error.message });
+                errors.push({ row: row.row, message: 'Internal server error' });
             }
         }
 
@@ -237,7 +237,7 @@ export const importQuestions = async (req, res) => {
             errors: errors.slice(0, 100),
         });
     } catch (error) {
-        return res.status(500).json({ success: false, message: error.message });
+        return res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -260,7 +260,7 @@ export const getQuestions = async (req, res) => {
             .sort({ createdAt: -1 });
         res.status(200).json({ success: true, questions });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -274,7 +274,7 @@ export const getQuestionById = async (req, res) => {
         }
         res.status(200).json({ success: true, question });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -292,7 +292,7 @@ export const updateQuestion = async (req, res) => {
         }
         res.status(200).json({ success: true, question });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -304,7 +304,7 @@ export const deleteQuestion = async (req, res) => {
         }
         res.status(200).json({ success: true, message: 'Question deleted' });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -342,7 +342,7 @@ export const createComprehension = async (req, res) => {
 
         res.status(201).json({ success: true, comprehension });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -357,6 +357,6 @@ export const getComprehensions = async (req, res) => {
             .populate('questions');
         res.status(200).json({ success: true, comprehensions });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };

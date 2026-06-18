@@ -2,6 +2,14 @@ import Institute from '../models/Institute.js';
 
 export const resolveTenant = async (req, res, next) => {
     try {
+        // Reuse already resolved tenant context from protect middleware if available
+        if (req.tenant) {
+            if (!req.tenant.isActive) {
+                return res.status(403).json({ success: false, message: 'This Institute account has been suspended or deactivated.' });
+            }
+            return next();
+        }
+
         // Superadmins bypass tenant isolation by default unless testing
         if (req.user && req.user.role === 'superadmin') {
             req.tenant = null;

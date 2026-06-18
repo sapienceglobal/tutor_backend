@@ -78,7 +78,6 @@ const buildWeeklyBuckets = (weeks, now = new Date()) => {
     return buckets;
 };
 
-
 // 1. Get All Institutes
 
 export const getInstitutes = async (req, res) => {
@@ -237,7 +236,7 @@ export const createInstitute = async (req, res) => {
         await session.abortTransaction();
         session.endSession();
         console.error(error);
-        res.status(500).json({ success: false, message: error.message || 'Server error creating institute' });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -860,7 +859,6 @@ export const impersonateUser = async (req, res) => {
     }
 };
 
-
 // @desc    Get complete subscriptions overview for dashboard
 // @route   GET /api/superadmin/subscriptions-overview
 // @access  Superadmin
@@ -962,10 +960,9 @@ export const getSubscriptionsOverview = async (req, res) => {
 
     } catch (error) {
         console.error('Overview Error:', error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
-
 
 // Delete Institute Permanently (Safe for Global Users)
 export const deleteInstitute = async (req, res) => {

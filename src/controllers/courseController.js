@@ -758,7 +758,6 @@ try {
   }
 };
 
-
 // @desc    Get course students with details (Tutor only)
 // @route   GET /api/courses/:id/students
 export const getCourseStudentsDetailed = async (req, res) => {
@@ -901,7 +900,6 @@ export const getInProgressCourses = async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error' });
   }
 };
-
 
 //SuperAdmin 
 

@@ -992,7 +992,6 @@ export const getTutorStats = async (req, res) => {
 
     const totalQuestions = questionSetCount + examQuestionCount;
 
-
     res.status(200).json({
       success: true,
       stats: {
@@ -1033,7 +1032,6 @@ export const getTutorStats = async (req, res) => {
     });
   }
 };
-
 
 // @desc    Get all students enrolled in tutor's courses
 // @route   GET /api/dashboard/students

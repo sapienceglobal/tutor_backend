@@ -94,22 +94,22 @@ router.post('/cloudinary-signature', protect, (req, res, next) => {
   try {
     const { type } = req.body || {};
     const timestamp = Math.round((new Date()).getTime() / 1000);
-    
+
     const isHls = type === 'hls';
     const folder = isHls ? 'tutor-app-hls' : 'tutor-app-resources';
-    
+
     const params_to_sign = {
       timestamp: timestamp,
       folder: folder,
     };
-    
+
     if (isHls) {
       params_to_sign.eager = 'sp_auto/m3u8';
       params_to_sign.eager_async = 'true';
     }
-    
+
     const signature = cloudinary.utils.api_sign_request(params_to_sign, process.env.CLOUDINARY_API_SECRET);
-    
+
     res.json({
       success: true,
       signature,
@@ -178,7 +178,7 @@ router.post(
         if (req.file && fs.existsSync(req.file.path)) {
           fs.unlinkSync(req.file.path);
         }
-      } catch (_) {}
+      } catch (_) { }
       res.status(500).json({ success: false, message: 'Server error during upload' });
     }
   });
@@ -186,8 +186,9 @@ router.post(
 // @route   GET /api/upload/secure-hls/*cloudinaryPath
 // @desc    Token-gated secure HLS streaming proxy for Cloudinary
 // @access  Private (Authenticated Students/Tutors/Admins)
-router.get('/secure-hls/{*cloudinaryPath}', protect, async (req, res) => {
-  let pathSuffix = req.params.cloudinaryPath;
+router.get(/^\/secure-hls\/(.*)/, protect, async (req, res) => {
+  let pathSuffix = req.params[0];
+
   if (Array.isArray(pathSuffix)) {
     pathSuffix = pathSuffix.join('/');
   }
@@ -212,7 +213,8 @@ router.get('/secure-hls/{*cloudinaryPath}', protect, async (req, res) => {
         responseType: 'text'
       });
 
-      const token = req.query.token || (req.headers.authorization ? req.headers.authorization.split(' ')[1] : null);
+      const token = req.query.token || req.cookies?.token || (req.headers.authorization ? req.headers.authorization.split(' ')[1] : null);
+      const isCookieAuth = !req.query.token && req.cookies?.token;
       let manifestText = response.data;
 
       // Rewrite absolute and root-relative Cloudinary URLs, and append token to all playlist/segment files
@@ -234,8 +236,8 @@ router.get('/secure-hls/{*cloudinaryPath}', protect, async (req, res) => {
           rewrittenUri = `/api/proxy/upload/secure-hls/${cloudName}/video/upload/${rest}`;
         }
 
-        // Append JWT authentication token if present
-        if (token) {
+        // Append JWT authentication token if present (skip if using cookie auth to prevent URL exposure)
+        if (token && !isCookieAuth) {
           const separator = rewrittenUri.includes('?') ? '&' : '?';
           if (!rewrittenUri.includes('token=')) {
             rewrittenUri = `${rewrittenUri}${separator}token=${token}`;

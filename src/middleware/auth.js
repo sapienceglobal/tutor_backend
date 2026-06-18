@@ -3,13 +3,49 @@ import User from '../models/User.js';
 import Settings from '../models/Settings.js';
 import Institute from '../models/Institute.js';
 
+// ── Settings Cache (avoids DB query on every request) ───────────────────────
+let _cachedSettings = null;
+let _settingsCacheTime = 0;
+const SETTINGS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+const getCachedSettings = async () => {
+    const now = Date.now();
+    if (!_cachedSettings || (now - _settingsCacheTime) > SETTINGS_CACHE_TTL) {
+        _cachedSettings = await Settings.findOne().lean();
+        _settingsCacheTime = now;
+    }
+    return _cachedSettings;
+};
+
+// ── Institute Cache (avoids DB query on every request) ───────────────────────
+let _instituteCache = new Map();
+const INST_CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache
+
+const getCachedInstitute = async (id) => {
+    if (!id) return null;
+    const key = id.toString();
+    const now = Date.now();
+    const cached = _instituteCache.get(key);
+    if (cached && (now - cached.time) < INST_CACHE_TTL) {
+        return cached.data;
+    }
+    const institute = await Institute.findById(id).lean();
+    if (institute) {
+        // Ensure _id is present as object or string
+        _instituteCache.set(key, { data: institute, time: now });
+    }
+    return institute;
+};
+
 export const protect = async (req, res, next) => {
   try {
     let token;
 
-    // Check for token in headers or query parameters (crucial for native HLS players)
+    // Check for token in headers, cookies, or query parameters
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
       token = req.headers.authorization.split(' ')[1];
+    } else if (req.cookies && req.cookies.token) {
+      token = req.cookies.token;
     } else if (req.query && req.query.token) {
       token = req.query.token;
     }
@@ -106,7 +142,7 @@ export const protect = async (req, res, next) => {
 
     // --- Subscription Expiry Check ---
     if (req.user.instituteId) {
-      const institute = await Institute.findById(req.user.instituteId);
+      const institute = await getCachedInstitute(req.user.instituteId);
       req.tenant = institute || null;
       const reqUrl = req.originalUrl || req.url; // Full URL path for reliable matching
 
@@ -171,8 +207,8 @@ export const protect = async (req, res, next) => {
       }
     }
 
-    // Check Maintenance Mode
-    const settings = await Settings.findOne();
+    // Check Maintenance Mode (cached — refreshes every 5 min)
+    const settings = await getCachedSettings();
     if (settings && settings.maintenanceMode) {
       // Allow only admins to bypass maintenance mode
       if (req.user.role !== 'superadmin') {
@@ -233,7 +269,7 @@ export const optionalAuth = async (req, res, next) => {
         if (!decoded.pending2FA) {
           req.user = await User.findById(decoded.id);
           if (req.user?.instituteId) {
-            req.tenant = await Institute.findById(req.user.instituteId);
+            req.tenant = await getCachedInstitute(req.user.instituteId);
           }
         }
       }

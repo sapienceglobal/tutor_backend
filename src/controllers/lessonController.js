@@ -338,7 +338,7 @@ export const createLesson = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Internal server error',
-      error: error.message, // ✅ Better error debugging
+       // ✅ Better error debugging
     });
   }
 };
@@ -429,7 +429,7 @@ export const updateLesson = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Internal server error',
-      error: error.message,
+      
     });
   }
 };
@@ -479,7 +479,6 @@ export const deleteLesson = async (req, res) => {
     });
   }
 };
-
 
 // File
 

@@ -24,7 +24,7 @@ export const createQuestionSet = async (req, res) => {
 
     res.status(201).json({ success: true, data: questionSet });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
 
@@ -38,7 +38,7 @@ export const getQuestionSetsByCourse = async (req, res) => {
     }).sort({ createdAt: -1 });
     res.status(200).json({ success: true, data: sets });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
 
@@ -56,7 +56,7 @@ export const updateQuestionSet = async (req, res) => {
     
     res.status(200).json({ success: true, data: updatedSet });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
 
@@ -67,7 +67,7 @@ export const deleteQuestionSet = async (req, res) => {
     await QuestionSet.findByIdAndUpdate(req.params.id, { isArchived: true });
     res.status(200).json({ success: true, message: 'Question set deleted' });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
 
@@ -179,6 +179,6 @@ export const publishSetToExam = async (req, res) => {
 
   } catch (error) {
     console.error(error);
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };

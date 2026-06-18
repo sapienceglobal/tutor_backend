@@ -24,7 +24,7 @@ const generateToken = (id, role) => {
 // Generate refresh token (long-lived)
 const generateRefreshToken = (id) => {
   return jwt.sign({ id, type: 'refresh' }, process.env.JWT_SECRET, {
-    expiresIn: '24h'
+    expiresIn: '7d'
   });
 };
 
@@ -368,7 +368,6 @@ export const registerUserWithInvite = async (req, res) => {
     });
   }
 };
-
 
 // @desc    Login user
 // @route   POST /api/auth/login

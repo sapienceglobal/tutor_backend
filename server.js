@@ -5,9 +5,19 @@ import { initSocket } from './src/services/socketService.js';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import mongoSanitize from 'express-mongo-sanitize';
+import xssClean from 'xss-clean';
+import compression from 'compression';
+import cookieParser from 'cookie-parser';
 import { initAICronJobs } from './src/services/aiCronJob.js';
 import { initSubscriptionCronJobs } from './src/services/subscriptionCronJob.js';
-import mongoose from 'mongoose'; 
+import mongoose from 'mongoose';
+
+// ── Startup Validation ─────────────────────────────────────────────────────────
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+    console.error('❌ FATAL: JWT_SECRET must be at least 32 characters. Server cannot start.');
+    process.exit(1);
+} 
 
 // Import routes
 import connectDB from './src/config/database.js';
@@ -65,6 +75,7 @@ import userInstituteRoutes from './src/routes/userInstitute.js';
 import entitlementRoutes from './src/routes/entitlements.js';
 
 import { verifyApiKey } from './src/middleware/apiKey.js';
+import { resolveTenant } from './src/middleware/tenant.js';
 import { auditMiddleware } from './src/middleware/auditMiddleware.js';
 import settingsRouter from './src/routes/settingsRoutes.js';
 import subscriptionRoutes from './src/routes/subscriptionRoutes.js';
@@ -126,8 +137,20 @@ app.use(cors({
     allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key']
 }));
 
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({
+    limit: '10mb',
+    verify: (req, res, buf) => {
+        req.rawBody = buf.toString();
+    }
+}));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(cookieParser());
+
+// ── Security Middleware ─────────────────────────────────────────────────────────
+app.use(mongoSanitize());  // Prevent MongoDB operator injection ($gt, $ne, etc.)
+app.use(xssClean());       // Sanitize user input against XSS payloads
+app.use(compression());    // Gzip compress all responses
+app.use(resolveTenant);    // Global Tenant Context Resolution
 
 // Global Rate Limiting — 500 req/15min per IP
 const globalLimiter = rateLimit({
@@ -148,9 +171,9 @@ const authLimiter = rateLimit({
 });
 
 app.use('/api', globalLimiter);
-// app.use('/api/auth/login', authLimiter);
-// app.use('/api/auth/register', authLimiter);
-// app.use('/api/auth/forgot-password', authLimiter);
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/register', authLimiter);
+app.use('/api/auth/forgot-password', authLimiter);
 
 // Serve uploaded media (HLS videos, etc.)
 import path from 'path';
@@ -258,12 +281,12 @@ app.use('/api/superadmin/reports', superadminReportRoutes);
 app.use('/api/superadmin/communication', superadminCommunicationRoutes);
 app.use('/api/superadmin/security', superadminSecurityRoutes);
 
-// Error handling middleware
+// Error handling middleware — never leak internal error details to clients
 app.use((err, req, res, next) => {
     console.error('Error:', err);
     res.status(err.status || 500).json({
         success: false,
-        message: err.message || 'Internal server error'
+        message: 'Internal server error'
     });
 });
 
@@ -295,4 +318,24 @@ mongoose.connection.once('open', () => {
 mongoose.connection.on('error', (err) => {
     console.error("❌ MongoDB Error:", err);
 });
+
+// ── Graceful Shutdown ───────────────────────────────────────────────────────────
+const gracefulShutdown = (signal) => {
+    console.log(`\n⏳ ${signal} received. Shutting down gracefully...`);
+    server.close(() => {
+        console.log('🔌 HTTP server closed.');
+        mongoose.connection.close(false).then(() => {
+            console.log('🗄️  MongoDB connection closed.');
+            process.exit(0);
+        });
+    });
+    // Force exit after 10 seconds if graceful shutdown fails
+    setTimeout(() => {
+        console.error('⚠️  Forced shutdown after timeout.');
+        process.exit(1);
+    }, 10000);
+};
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 

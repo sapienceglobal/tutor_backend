@@ -66,7 +66,7 @@ export const createBatch = async (req, res) => {
         res.status(201).json({ success: true, message: 'Batch created successfully', batch });
     } catch (error) {
         console.error('❌ Create batch error:', error);
-        res.status(500).json({ success: false, message: error.message || 'Server error' });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -124,7 +124,7 @@ export const updateBatch = async (req, res) => {
         res.status(200).json({ success: true, message: 'Batch updated successfully', batch });
     } catch (error) {
         console.error('Update batch error:', error);
-        res.status(500).json({ success: false, message: error.message || 'Server error' });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -173,7 +173,6 @@ export const getMyBatches = async (req, res) => {
     try {
         const studentId = req.user._id; 
         let filter = { students: studentId };
-    
 
         if (req.query.scope === 'global') {
             filter.instituteId = null;
@@ -299,8 +298,6 @@ export const joinBatch = async (req, res) => {
         res.status(500).json({ success: false, message: 'Server error' });
     }
 };
-
-
 
 // @desc    Get single batch details
 // @route   GET /api/batches/:id

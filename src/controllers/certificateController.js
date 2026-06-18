@@ -189,7 +189,7 @@ export const generateCertificate = async (req, res) => {
 
     } catch (error) {
         console.error('Generate certificate error:', error);
-        res.status(500).json({ success: false, message: 'Failed to generate certificate', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to generate certificate' });
     }
 };
 

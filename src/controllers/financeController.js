@@ -81,7 +81,6 @@ export const getFinanceOverview = async (req, res) => {
         ]);
         const pendingPayouts = pendingPayoutsAgg.length > 0 ? pendingPayoutsAgg[0].total : 0;
 
-
         // ─── 2. Chart Data (Last 6 Months Revenue Volume) ───
         const sixMonthsAgo = new Date();
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
@@ -103,7 +102,6 @@ export const getFinanceOverview = async (req, res) => {
             revenue: item.revenue
         }));
 
-
         // ─── 3. Recent Transactions ───
         const recentPayments = await Payment.find({ status: { $in: ['paid', 'failed', 'refunded'] } })
             .sort({ createdAt: -1 })
@@ -121,7 +119,6 @@ export const getFinanceOverview = async (req, res) => {
             status: p.status === 'paid' ? 'successful' : p.status === 'refunded' ? 'refunded' : 'failed',
             createdAt: p.createdAt
         }));
-
 
         // ─── 4. Pending Settlements (Grouped by Exact Unsettled Institute Dues) ───
         const settlementsAgg = await Payment.aggregate([
@@ -146,7 +143,6 @@ export const getFinanceOverview = async (req, res) => {
                 amount: s.totalAmount
             };
         }));
-
 
         // ─── Send Final Response ───
         res.status(200).json({

@@ -51,7 +51,6 @@ export const getMonitoringOverview = async (req, res) => {
             .limit(5)
             .select('method path statusCode action createdAt ip platform');
 
-
         // ─── 3. STORAGE CALCULATION (From Lesson Documents) ───
         // Aggregating bytes from lesson.content.documents
         const storageAgg = await Lesson.aggregate([
@@ -62,17 +61,14 @@ export const getMonitoringOverview = async (req, res) => {
         const totalDocumentBytes = storageAgg.length > 0 ? storageAgg[0].totalBytes : 0;
         const totalDocumentMB = (totalDocumentBytes / (1024 * 1024)).toFixed(2);
 
-
         // ─── 4. AI USAGE METRICS (From AIUsageLog) ───
         const aiAgg = await AIUsageLog.aggregate([
             { $group: { _id: null, totalTokens: { $sum: "$tokenCount" } } }
         ]);
         const totalAITokens = aiAgg.length > 0 ? aiAgg[0].totalTokens : 0;
 
-
         // ─── 5. PENDING REPORTS (From Report Schema) ───
         const pendingReportsCount = await Report.countDocuments({ status: 'Pending' });
-
 
         // ─── 6. SEND FINAL RESPONSE ───
         res.status(200).json({

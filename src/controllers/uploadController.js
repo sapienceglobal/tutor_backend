@@ -92,7 +92,7 @@ export const uploadImage = async (req, res) => {
         // Safe Cleanup even if upload fails
         if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
         console.error('Upload error:', error);
-        res.status(500).json({ success: false, message: error.message || 'Upload failed' });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -128,7 +128,7 @@ export const uploadFile = async (req, res) => {
         console.error('File upload error:', error);
         res.status(500).json({
             success: false,
-            message: error.message || 'File upload failed'
+            message: 'Internal server error'
         });
     }
 };

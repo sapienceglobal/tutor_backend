@@ -42,6 +42,16 @@ export const createOrder = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Course not found' });
         }
 
+        // Institute scope check — prevent cross-institute course purchasing
+        if (course.visibilityScope === 'institute' && course.instituteId) {
+            if (String(req.user.instituteId) !== String(course.instituteId)) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'This course is restricted to its institute members.'
+                });
+            }
+        }
+
         if (course.isFree || course.price === 0) {
             return res.status(400).json({ success: false, message: 'This course is free. No payment needed.' });
         }
@@ -132,17 +142,8 @@ export const verifyPayment = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Payment verification failed' });
         }
 
-        // Update payment record
-        const payment = await Payment.findOneAndUpdate(
-            { razorpayOrderId },
-            {
-                razorpayPaymentId,
-                razorpaySignature,
-                status: 'paid',
-                paidAt: new Date(),
-            },
-            { new: true }
-        );
+        // Find payment record
+        let payment = await Payment.findOne({ razorpayOrderId });
 
         if (!payment) {
             await logBillingEvent(req.user.id, 'BILLING_PAYMENT_FAILED', {
@@ -152,114 +153,8 @@ export const verifyPayment = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Payment record not found' });
         }
 
-        // Log successful billing event
-        await logBillingEvent(payment.studentId, 'BILLING_PAYMENT_SUCCESS', {
-            paymentId: payment._id,
-            amount: payment.amount,
-            type: payment.type,
-            planId: payment.planId || null,
-            courseId: payment.courseId || null,
-            razorpayOrderId: payment.razorpayOrderId,
-            razorpayPaymentId: payment.razorpayPaymentId
-        });
-
-        // Auto-enroll the student if it's a course purchase
-        if (payment.type === 'course_purchase' && payment.courseId) {
-            const existingEnrollment = await Enrollment.findOne({
-                studentId: payment.studentId,
-                courseId: payment.courseId,
-            });
-
-            if (!existingEnrollment) {
-                await Enrollment.create({
-                    studentId: payment.studentId,
-                    courseId: payment.courseId,
-                });
-
-                // Update enrolled count
-                await Course.findByIdAndUpdate(payment.courseId, { $inc: { enrolledCount: 1 } });
-
-                // Notification
-                const course = await Course.findById(payment.courseId);
-                await createNotification({
-                    userId: payment.studentId,
-                    type: 'course_enrolled',
-                    title: '🎉 Payment Successful!',
-                    message: `You've been enrolled in "${course?.title}". Happy learning!`,
-                    data: { courseId: payment.courseId },
-                });
-            }
-        } else if (payment.type === 'subscription_renewal' && payment.planId) {
-            // Fetch the plan
-            const plan = await SubscriptionPlan.findById(payment.planId);
-            if (plan) {
-                // Calculate new expiry date based on billingCycle
-                const currentDate = new Date();
-                let expiryDate = new Date(currentDate);
-                
-                if (plan.billingCycle === 'monthly') {
-                    expiryDate.setMonth(expiryDate.getMonth() + 1);
-                } else if (plan.billingCycle === 'yearly') {
-                    expiryDate.setFullYear(expiryDate.getFullYear() + 1);
-                } else {
-                    expiryDate = null; // Lifetime
-                }
-
-                if (payment.instituteId) {
-                    // Update Institute
-                    await Institute.findByIdAndUpdate(payment.instituteId, {
-                        subscriptionPlan: plan.name,
-                        subscriptionExpiresAt: expiryDate,
-                        features: {
-                            ...plan.features, // Spread new plan features
-                            manageTutors: true, // Keep defaults active
-                            manageStudents: true
-                        }
-                    });
-
-                    await createNotification({
-                        userId: payment.studentId, // the admin who paid
-                        type: 'fee_paid',
-                        title: '🚀 Subscription Upgraded!',
-                        message: `Your institute has successfully upgraded to the ${plan.name} plan.`,
-                    });
-                } else {
-                    // 🌟 Update Tutor/Student's Personal Subscription!
-                    const personalFeatures = {
-                        aiAssistant: plan.features?.aiAssistant === true,
-                        aiAssessment: plan.features?.aiAssessment === true,
-                        aiIntelligence: plan.features?.aiIntelligence === true,
-                        aiCreditsPerMonth: plan.features?.aiCreditsPerMonth || 0,
-                        aiUsageCount: 0,
-                        hlsStreaming: plan.features?.hlsStreaming === true,
-                        zoomIntegration: plan.features?.zoomIntegration === true
-                    };
-
-                    await User.findByIdAndUpdate(payment.studentId, {
-                        $set: {
-                            "personalSubscription.planName": plan.name,
-                            "personalSubscription.isActive": true,
-                            "personalSubscription.subscriptionExpiresAt": expiryDate,
-                            "personalSubscription.features": personalFeatures
-                        }
-                    });
-
-                    await createNotification({
-                        userId: payment.studentId,
-                        type: 'fee_paid',
-                        title: '🚀 Personal Plan Activated!',
-                        message: `Your account has successfully upgraded to the "${plan.name}" personal plan.`,
-                    });
-                }
-            }
-        } else if (payment.type === 'institute_fee') {
-             await createNotification({
-                 userId: payment.studentId,
-                 type: 'fee_paid',
-                 title: '✅ Fee Paid Successfully!',
-                 message: `Your payment for "${payment.title || 'Institute Fee'}" has been received.`,
-             });
-        }
+        // Fulfill payment
+        payment = await fulfillPayment(payment, razorpayPaymentId, razorpaySignature);
 
         res.status(200).json({
             success: true,
@@ -274,6 +169,180 @@ export const verifyPayment = async (req, res) => {
     } catch (error) {
         console.error('Verify payment error:', error);
         res.status(500).json({ success: false, message: 'Payment verification failed' });
+    }
+};
+
+// ── Fulfill Payment Order Utility (reusable for verification and webhooks) ──────
+export const fulfillPayment = async (payment, razorpayPaymentId, razorpaySignature) => {
+    if (payment.status === 'paid') return payment;
+
+    payment.status = 'paid';
+    payment.paidAt = new Date();
+    if (razorpayPaymentId) payment.razorpayPaymentId = razorpayPaymentId;
+    if (razorpaySignature) payment.razorpaySignature = razorpaySignature;
+    await payment.save();
+
+    // Log successful billing event
+    await logBillingEvent(payment.studentId, 'BILLING_PAYMENT_SUCCESS', {
+        paymentId: payment._id,
+        amount: payment.amount,
+        type: payment.type,
+        planId: payment.planId || null,
+        courseId: payment.courseId || null,
+        razorpayOrderId: payment.razorpayOrderId,
+        razorpayPaymentId: payment.razorpayPaymentId
+    });
+
+    // Auto-enroll the student if it's a course purchase
+    if (payment.type === 'course_purchase' && payment.courseId) {
+        const existingEnrollment = await Enrollment.findOne({
+            studentId: payment.studentId,
+            courseId: payment.courseId,
+        });
+
+        if (!existingEnrollment) {
+            await Enrollment.create({
+                studentId: payment.studentId,
+                courseId: payment.courseId,
+            });
+
+            // Update enrolled count
+            await Course.findByIdAndUpdate(payment.courseId, { $inc: { enrolledCount: 1 } });
+
+            // Notification
+            const course = await Course.findById(payment.courseId);
+            await createNotification({
+                userId: payment.studentId,
+                type: 'course_enrolled',
+                title: '🎉 Payment Successful!',
+                message: `You've been enrolled in "${course?.title}". Happy learning!`,
+                data: { courseId: payment.courseId },
+            });
+        }
+    } else if (payment.type === 'subscription_renewal' && payment.planId) {
+        // Fetch the plan
+        const plan = await SubscriptionPlan.findById(payment.planId);
+        if (plan) {
+            // Calculate new expiry date based on billingCycle
+            const currentDate = new Date();
+            let expiryDate = new Date(currentDate);
+            
+            if (plan.billingCycle === 'monthly') {
+                expiryDate.setMonth(expiryDate.getMonth() + 1);
+            } else if (plan.billingCycle === 'yearly') {
+                expiryDate.setFullYear(expiryDate.getFullYear() + 1);
+            } else {
+                expiryDate = null; // Lifetime
+            }
+
+            if (payment.instituteId) {
+                // Update Institute
+                await Institute.findByIdAndUpdate(payment.instituteId, {
+                    subscriptionPlan: plan.name,
+                    subscriptionExpiresAt: expiryDate,
+                    features: {
+                        ...plan.features, // Spread new plan features
+                        manageTutors: true, // Keep defaults active
+                        manageStudents: true
+                    }
+                });
+
+                await createNotification({
+                    userId: payment.studentId, // the admin who paid
+                    type: 'fee_paid',
+                    title: '🚀 Subscription Upgraded!',
+                    message: `Your institute has successfully upgraded to the ${plan.name} plan.`,
+                });
+            } else {
+                // 🌟 Update Tutor/Student's Personal Subscription!
+                const personalFeatures = {
+                    aiAssistant: plan.features?.aiAssistant === true,
+                    aiAssessment: plan.features?.aiAssessment === true,
+                    aiIntelligence: plan.features?.aiIntelligence === true,
+                    aiCreditsPerMonth: plan.features?.aiCreditsPerMonth || 0,
+                    aiUsageCount: 0,
+                    hlsStreaming: plan.features?.hlsStreaming === true,
+                    zoomIntegration: plan.features?.zoomIntegration === true
+                };
+
+                await User.findByIdAndUpdate(payment.studentId, {
+                    $set: {
+                        "personalSubscription.planName": plan.name,
+                        "personalSubscription.isActive": true,
+                        "personalSubscription.subscriptionExpiresAt": expiryDate,
+                        "personalSubscription.features": personalFeatures
+                    }
+                });
+
+                await createNotification({
+                    userId: payment.studentId,
+                    type: 'fee_paid',
+                    title: '🚀 Personal Plan Activated!',
+                    message: `Your account has successfully upgraded to the "${plan.name}" personal plan.`,
+                });
+            }
+        }
+    } else if (payment.type === 'institute_fee') {
+         await createNotification({
+             userId: payment.studentId,
+             type: 'fee_paid',
+             title: '✅ Fee Paid Successfully!',
+             message: `Your payment for "${payment.title || 'Institute Fee'}" has been received.`,
+         });
+    }
+
+    return payment;
+};
+
+// @desc    Handle Razorpay webhook event
+// @route   POST /api/payments/webhook
+// @access  Public
+export const handleRazorpayWebhook = async (req, res) => {
+    try {
+        const signature = req.headers['x-razorpay-signature'];
+        if (!signature) {
+            return res.status(400).json({ success: false, message: 'Webhook signature is required' });
+        }
+
+        const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+        if (!webhookSecret) {
+            console.error('RAZORPAY_WEBHOOK_SECRET is not configured in .env');
+            return res.status(500).json({ success: false, message: 'Webhook secret is not configured' });
+        }
+
+        const rawBody = req.rawBody || JSON.stringify(req.body);
+        const expectedSignature = crypto
+            .createHmac('sha256', webhookSecret)
+            .update(rawBody)
+            .digest('hex');
+
+        if (expectedSignature !== signature) {
+            console.warn('⚠️ Razorpay webhook signature verification failed');
+            return res.status(400).json({ success: false, message: 'Invalid webhook signature' });
+        }
+
+        const event = req.body;
+        console.log(`Razorpay Webhook Event Received: ${event.event}`);
+
+        if (event.event === 'order.paid' || event.event === 'payment.captured') {
+            const paymentEntity = event.payload?.payment?.entity;
+            const orderId = paymentEntity?.order_id;
+            const paymentId = paymentEntity?.id;
+
+            if (orderId) {
+                let payment = await Payment.findOne({ razorpayOrderId: orderId });
+                if (payment && payment.status !== 'paid') {
+                    console.log(`Fulfilling payment for order: ${orderId} via Webhook`);
+                    await fulfillPayment(payment, paymentId, signature);
+                }
+            }
+        }
+
+        // Webhook handler must return 200 OK to acknowledge receipt
+        res.status(200).json({ success: true });
+    } catch (error) {
+        console.error('Webhook processing error:', error);
+        res.status(500).json({ success: false, message: 'Webhook processing failed' });
     }
 };
 
@@ -507,7 +576,7 @@ export const renewSubscription = async (req, res) => {
         console.error('Renew subscription error:', error);
         res.status(500).json({ 
             success: false, 
-            message: error.message || 'Failed to create subscription order' 
+            message: 'Internal server error' 
         });
     }
 };
