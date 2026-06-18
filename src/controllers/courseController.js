@@ -80,7 +80,7 @@ export const getAllCourses = async (req, res) => {
       if (!token) {
         return res.status(401).json({
           success: false,
-          message: 'Guest browsing is currently disabled. Please log in to view courses.'
+          message: 'Guest browsing is currently disabled. Log in to view courses.'
         });
       }
 
@@ -89,7 +89,7 @@ export const getAllCourses = async (req, res) => {
       } catch (err) {
         return res.status(401).json({
           success: false,
-          message: 'Session expired. Please log in to view courses.'
+          message: 'Session expired. Log in to view courses.'
         });
       }
     }
@@ -874,8 +874,33 @@ export const addCourseAnnouncement = async (req, res) => {
   }
 };
 
+// @desc    Get student's in-progress courses
+// @route   GET /api/courses/in-progress
+// @access  Private (Student)
+export const getInProgressCourses = async (req, res) => {
+  try {
+    const enrollments = await Enrollment.find({
+      studentId: req.user.id,
+      status: 'active'
+    }).populate('courseId');
 
+    const courses = enrollments
+      .filter(e => e.courseId) // ensure course is not null
+      .map(e => ({
+        _id: e.courseId._id,
+        title: e.courseId.title,
+        progress: e.progress?.percentage || 0
+      }));
 
+    res.status(200).json({
+      success: true,
+      courses
+    });
+  } catch (error) {
+    console.error('Get in-progress courses error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
 
 
 //SuperAdmin 

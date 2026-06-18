@@ -3,17 +3,17 @@ import mongoose from 'mongoose';
 const pageSchema = new mongoose.Schema({
     title: {
         type: String,
-        required: [true, 'Please add a page title'],
+        required: [true, 'Page title is required'],
     },
     slug: {
         type: String,
-        required: [true, 'Please add a unique slug'],
+        required: [true, 'Unique slug is required'],
         unique: true,
         lowercase: true,
     },
     content: {
         type: String,
-        required: [true, 'Please add page content'],
+        required: [true, 'Page content is required'],
     },
     isPublished: {
         type: Boolean,

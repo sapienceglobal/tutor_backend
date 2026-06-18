@@ -88,7 +88,7 @@ export const registerUser = async (req, res) => {
     if (settings && settings.allowRegistration === false) {
       return res.status(403).json({
         success: false,
-        message: 'Registration is currently disabled by the Administrator. Please try again later.'
+        message: 'Registration is currently disabled by the Administrator. Try again later.'
       });
     }
 
@@ -150,7 +150,7 @@ export const registerUser = async (req, res) => {
       if (!invite) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid or expired invite token. Please contact your institute admin.'
+          message: 'Invalid or expired invite token. Contact the institute administrator.'
         });
       }
 
@@ -158,7 +158,7 @@ export const registerUser = async (req, res) => {
       if (req.body.email.toLowerCase() !== invite.email.toLowerCase()) {
         return res.status(400).json({
           success: false,
-          message: 'Email does not match the invite email. Please use the email from your invite.'
+          message: 'Email does not match the invite email. Use the invited email address.'
         });
       }
 
@@ -397,7 +397,7 @@ export const loginUser = async (req, res) => {
     if (user.isBlocked) {
       return res.status(403).json({
         success: false,
-        message: 'Your account has been blocked by the Administrator. Please contact support.'
+        message: 'Account blocked by the Administrator. Contact support.'
       });
     }
 
@@ -447,7 +447,7 @@ export const loginUser = async (req, res) => {
         success: true,
         requires2FA: true,
         tempToken,
-        message: 'Please enter your 2FA code to complete login'
+        message: '2FA code is required to complete login'
       });
     }
 
@@ -894,7 +894,7 @@ export const setInitialPassword = async (req, res) => {
     if (user.password) {
       return res.status(400).json({
         success: false,
-        message: 'User already has a password. Please use Change Password.'
+        message: 'User password already exists. Use the change password feature.'
       });
     }
 
@@ -1061,7 +1061,7 @@ export const googleCallback = async (req, res) => {
     const savedState = req.cookies?.oauth_state;
     res.clearCookie('oauth_state');
     if (!state || !savedState || state !== savedState) {
-      return res.redirect(`${FRONTEND_URL}/login?error=Invalid OAuth state. Please try again.`);
+      return res.redirect(`${FRONTEND_URL}/login?error=Invalid OAuth state. Retry login.`);
     }
 
     if (!code) {
@@ -1105,7 +1105,7 @@ export const googleCallback = async (req, res) => {
 
     if (user) {
       if (user.isBlocked) {
-        return res.redirect(`${FRONTEND_URL}/login?error=Your account has been blocked by the Administrator. Please contact support.`);
+        return res.redirect(`${FRONTEND_URL}/login?error=Account blocked by the Administrator. Contact support.`);
       }
 
       // Existing user - update provider info & profile image if from OAuth
@@ -1121,7 +1121,7 @@ export const googleCallback = async (req, res) => {
       // Check if Registration is globally allowed by Admin
       const settings = await Settings.findOne();
       if (settings && settings.allowRegistration === false) {
-        return res.redirect(`${FRONTEND_URL}/login?error=Registration is currently disabled by the Administrator. Please try again later.`);
+        return res.redirect(`${FRONTEND_URL}/login?error=Registration is currently disabled by the Administrator. Try again later.`);
       }
 
       // New user
@@ -1187,7 +1187,7 @@ export const githubCallback = async (req, res) => {
     const savedState = req.cookies?.oauth_state_gh;
     res.clearCookie('oauth_state_gh');
     if (!state || !savedState || state !== savedState) {
-      return res.redirect(`${FRONTEND_URL}/login?error=Invalid OAuth state. Please try again.`);
+      return res.redirect(`${FRONTEND_URL}/login?error=Invalid OAuth state. Retry login.`);
     }
 
     if (!code) {
@@ -1238,7 +1238,7 @@ export const githubCallback = async (req, res) => {
     }
 
     if (!email) {
-      return res.redirect(`${FRONTEND_URL}/login?error=Could not get email from GitHub. Please make your email public.`);
+      return res.redirect(`${FRONTEND_URL}/login?error=Could not retrieve email from GitHub. Ensure the email is public.`);
     }
 
     // Find or create user
@@ -1247,7 +1247,7 @@ export const githubCallback = async (req, res) => {
 
     if (user) {
       if (user.isBlocked) {
-        return res.redirect(`${FRONTEND_URL}/login?error=Your account has been blocked by the Administrator. Please contact support.`);
+        return res.redirect(`${FRONTEND_URL}/login?error=Account blocked by the Administrator. Contact support.`);
       }
 
       // Existing user - update provider info
@@ -1263,7 +1263,7 @@ export const githubCallback = async (req, res) => {
       // Check if Registration is globally allowed by Admin
       const settings = await Settings.findOne();
       if (settings && settings.allowRegistration === false) {
-        return res.redirect(`${FRONTEND_URL}/login?error=Registration is currently disabled by the Administrator. Please try again later.`);
+        return res.redirect(`${FRONTEND_URL}/login?error=Registration is currently disabled by the Administrator. Try again later.`);
       }
 
       // New user
@@ -1397,7 +1397,7 @@ export const verify2FA = async (req, res) => {
 
     const user = await User.findById(req.user.id).select('+twoFactorSecret');
     if (!user || !user.twoFactorSecret) {
-      return res.status(400).json({ success: false, message: 'Please initiate 2FA setup first' });
+      return res.status(400).json({ success: false, message: '2FA setup must be initiated first' });
     }
 
     const verified = speakeasy.totp.verify({
@@ -1474,7 +1474,7 @@ export const verify2FALogin = async (req, res) => {
     try {
       decoded = jwt.verify(tempToken, process.env.JWT_SECRET);
     } catch (e) {
-      return res.status(401).json({ success: false, message: '2FA session expired. Please login again.' });
+      return res.status(401).json({ success: false, message: '2FA session has expired. Re-authentication is required.' });
     }
 
     if (!decoded.pending2FA) {
@@ -1606,7 +1606,7 @@ export const refreshAccessToken = async (req, res) => {
     try {
       decoded = jwt.verify(incomingRefreshToken, process.env.JWT_SECRET);
     } catch (err) {
-      return res.status(401).json({ success: false, message: 'Invalid or expired refresh token. Please login again.' });
+      return res.status(401).json({ success: false, message: 'Invalid or expired refresh token. Re-authentication is required.' });
     }
 
     if (decoded.type !== 'refresh') {
@@ -1624,7 +1624,7 @@ export const refreshAccessToken = async (req, res) => {
       await user.save();
       return res.status(401).json({
         success: false,
-        message: 'Refresh token reuse detected. All sessions revoked. Please login again.',
+        message: 'Refresh token reuse detected. All sessions revoked. Re-authentication is required.',
       });
     }
 

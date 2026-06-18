@@ -9,6 +9,7 @@ import {
   getMyCourses,
   getCourseStudentsDetailed,
   addCourseAnnouncement,
+  getInProgressCourses,
 } from '../controllers/courseController.js';
 import { protect, authorize, optionalAuth } from '../middleware/auth.js';
 
@@ -20,6 +21,7 @@ router.get('/tutor/:tutorId', getCoursesByTutor);
 
 // Protected routes
 router.get('/my-courses', protect, authorize('tutor', 'admin'), getMyCourses);
+router.get('/in-progress', protect, getInProgressCourses);
 router.get('/:id/students', protect, authorize('tutor', 'admin'), getCourseStudentsDetailed);
 router.get('/:id', protect, getCourseById); // Students still need to view courses
 router.post('/', protect, authorize('tutor', 'admin'), createCourse);

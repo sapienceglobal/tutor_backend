@@ -10,6 +10,7 @@ router.get('/generate/:courseId', generateCertificate);
 
 // Get a list of certificates earned by the logged-in user
 router.get('/my-certificates', protect, getMyCertificates);
+router.get('/student', protect, getMyCertificates);
 
 // Public route to verify a certificate by its unique ID
 router.get('/verify/:certificateId', verifyCertificate);

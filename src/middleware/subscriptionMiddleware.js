@@ -172,7 +172,7 @@ export const requireFeature = (featureKey) => {
                         success: false,
                         featureLocked: true,
                         requiredFeature: featureKey,
-                        message: `This feature '${featureKey}' is not available in your institute's subscription plan. Please upgrade to access it.`
+                        message: `Feature '${featureKey}' is not included in the institute subscription plan. Upgrade to access this feature.`
                     });
                 }
             } else {
@@ -186,7 +186,7 @@ export const requireFeature = (featureKey) => {
                         featureLocked: true,
                         personalLocked: true,
                         requiredFeature: featureKey,
-                        message: `This is a personal/global asset. To use this feature, please purchase a Personal Subscription Plan.`
+                        message: `Personal subscription plan is required to access this feature.`
                     });
                 }
 
@@ -203,7 +203,7 @@ export const requireFeature = (featureKey) => {
                         featureLocked: true,
                         personalLocked: true,
                         requiredFeature: featureKey,
-                        message: `This feature is not unlocked in your personal subscription tier. Please upgrade your personal plan.`
+                        message: `Feature is not available in the current personal subscription tier. Upgrade the personal plan.`
                     });
                 }
             }
@@ -240,7 +240,7 @@ export const requireLimit = (resourceType) => {
 
             if (resourceType === 'tutors') {
                 if (!features.manageTutors) {
-                    return res.status(403).json({ success: false, message: 'Your plan does not allow managing tutors. Please upgrade.' });
+                    return res.status(403).json({ success: false, message: 'Plan does not permit tutor management. Upgrade is required.' });
                 }
                 const maxTutors = features.maxTutors !== undefined ? features.maxTutors : 5; 
                 if (maxTutors !== -1) {
@@ -259,7 +259,7 @@ export const requireLimit = (resourceType) => {
 
             if (resourceType === 'students') {
                  if (!features.manageStudents) {
-                    return res.status(403).json({ success: false, message: 'Your plan does not allow managing students. Please upgrade.' });
+                    return res.status(403).json({ success: false, message: 'Plan does not permit student management. Upgrade is required.' });
                 }
                 const maxStudents = features.maxStudents !== undefined ? features.maxStudents : 50;
                 if (maxStudents !== -1) {
@@ -349,7 +349,7 @@ export const consumeAICredits = (cost = 1) => {
                         success: false,
                         featureLocked: true,
                         creditExhausted: true,
-                        message: `AI Credits exhausted! This action requires ${cost} credits, but your institute only has ${remaining} left. Please ask your Admin to upgrade.`
+                        message: `AI credits exhausted. Action requires ${cost} credits, but only ${remaining} are available. Contact the administrator to upgrade.`
                     });
                 }
 
@@ -377,7 +377,7 @@ export const consumeAICredits = (cost = 1) => {
                         featureLocked: true,
                         personalLocked: true,
                         code: "PERSONAL_SUBSCRIPTION_REQUIRED",
-                        message: "This is a personal/global asset. To use AI here, please purchase a Personal AI Subscription."
+                        message: "Personal AI subscription is required to access AI features for this asset."
                     });
                 }
 
@@ -405,7 +405,7 @@ export const consumeAICredits = (cost = 1) => {
                         success: false,
                         featureLocked: true,
                         creditExhausted: true,
-                        message: `Your Personal AI Credits are exhausted! This action requires ${cost} credits, but you only have ${personalCredits} left. Please upgrade your personal plan.`
+                        message: `Personal AI credits exhausted. Action requires ${cost} credits, but only ${personalCredits} are available. Upgrade the personal plan.`
                     });
                 }
 
@@ -417,7 +417,7 @@ export const consumeAICredits = (cost = 1) => {
             console.error('AI Credit consumption error:', error);
             res.status(500).json({
                 success: false,
-                message: 'Failed to process AI request. Please try again.'
+                message: 'Failed to process AI request. Try again later.'
             });
         }
     };

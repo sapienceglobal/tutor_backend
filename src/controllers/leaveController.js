@@ -8,13 +8,6 @@ export const applyLeave = async (req, res) => {
     try {
         const { startDate, endDate, reason, documents, substituteId } = req.body;
 
-        if (!startDate || !endDate || !reason) {
-            return res.status(400).json({
-                success: false,
-                message: 'Please provide start date, end date, and reason'
-            });
-        }
-
         // Check for overlapping pending or approved leaves
         const existingLeave = await Leave.findOne({
             userId: req.user.id,
@@ -118,10 +111,6 @@ export const getAllLeaves = async (req, res) => {
 export const updateLeaveStatus = async (req, res) => {
     try {
         const { status, adminComment } = req.body;
-
-        if (!['approved', 'rejected', 'pending'].includes(status)) {
-            return res.status(400).json({ success: false, message: 'Invalid status' });
-        }
 
         const leave = await Leave.findById(req.params.id);
 

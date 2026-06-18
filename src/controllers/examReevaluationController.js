@@ -66,7 +66,7 @@ export const createReevaluationRequest = async (req, res) => {
     if (!reason || reason.length < 15) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide a clear reason with at least 15 characters',
+        message: 'A clear reason of at least 15 characters is required',
       });
     }
 

@@ -148,15 +148,6 @@ export const markAttendance = async (req, res) => {
   try {
     const { batchId, date, records } = req.body;
 
-    if (!batchId || !date || !records || !Array.isArray(records)) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "Please provide batchId, date, and records array",
-        });
-    }
-
     const batch = await Batch.findById(batchId);
     if (!batch) {
       return res

@@ -3,11 +3,11 @@ import mongoose from 'mongoose';
 const blogSchema = new mongoose.Schema({
     title: {
         type: String,
-        required: [true, 'Please add a blog title'],
+        required: [true, 'Blog title is required'],
     },
     slug: {
         type: String,
-        required: [true, 'Please add a unique slug'],
+        required: [true, 'Unique slug is required'],
         unique: true,
         lowercase: true,
     },
@@ -17,7 +17,7 @@ const blogSchema = new mongoose.Schema({
     },
     content: {
         type: String,
-        required: [true, 'Please add blog content'],
+        required: [true, 'Blog content is required'],
     },
     thumbnail: {
         type: String,

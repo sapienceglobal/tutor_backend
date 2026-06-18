@@ -114,7 +114,7 @@ otpSchema.statics.verifyOTP = async function(email, otp, purpose) {
     // Check attempts
     if (otpDoc.attempts >= otpDoc.maxAttempts) {
         await otpDoc.updateOne({ isUsed: true });
-        return { valid: false, message: 'Maximum attempts reached. Please request a new OTP.' };
+        return { valid: false, message: 'Maximum verification attempts reached. Request a new OTP.' };
     }
 
     // Increment attempts

@@ -32,11 +32,10 @@ export const generateCertificate = async (req, res) => {
             return res.status(404).json({ success: false, message: 'You are not enrolled in this course.' });
         }
 
-        // You might want to calculate completion dynamically if percentage isn't always updated perfectly
-        // For now, we rely on the enrollment progress or status
-        if (enrollment.status !== 'completed' && enrollment.progress.percentage !== 100) {
-            // Allow some flexibility for testing if needed
-            // return res.status(403).json({ success: false, message: 'Course must be 100% completed to earn a certificate.' });
+        // Enforce 100% completion requirement
+        const isCompleted = enrollment.status === 'completed' || (enrollment.progress && enrollment.progress.percentage === 100);
+        if (!isCompleted) {
+            return res.status(403).json({ success: false, message: 'Course must be 100% completed to earn a certificate.' });
         }
 
         const course = await Course.findById(courseId).populate('tutorId');
@@ -194,8 +193,6 @@ export const generateCertificate = async (req, res) => {
     }
 };
 
-// @desc    Get a student's certificates
-// @route   GET /api/certificates/my-certificates
 export const getMyCertificates = async (req, res) => {
     try {
         const studentId = req.user.id;
@@ -203,9 +200,30 @@ export const getMyCertificates = async (req, res) => {
             .populate('courseId', 'title thumbnail displayStatus')
             .sort({ issuedAt: -1 });
 
+        const mappedCertificates = certificates.map(c => {
+            const downloadToken = jwt.sign(
+                { id: studentId }, 
+                process.env.JWT_SECRET, 
+                { expiresIn: '1d' }
+            );
+
+            return {
+                _id: c._id,
+                certificateId: c.certificateId,
+                credentialId: c.certificateId,
+                courseId: c.courseId?._id || c.courseId,
+                title: c.courseId?.title || '',
+                courseName: c.courseId?.title || '',
+                issuedAt: c.issuedAt,
+                qrCodeData: c.qrCodeData,
+                downloadUrl: `/api/certificates/generate/${c.courseId?._id || c.courseId}?token=${downloadToken}`
+            };
+        });
+
         res.status(200).json({
             success: true,
-            data: certificates
+            data: mappedCertificates,
+            certificates: mappedCertificates
         });
     } catch (error) {
         console.error('Get my certificates error:', error);

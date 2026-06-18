@@ -506,7 +506,7 @@ export const createUser = async (req, res) => {
         } = req.body;
 
         if (!name || !email || !password || !role) {
-            return res.status(400).json({ success: false, message: 'Please provide all required fields' });
+            return res.status(400).json({ success: false, message: 'Required fields are missing' });
         }
 
         if (!['student', 'tutor', 'admin'].includes(role)) {

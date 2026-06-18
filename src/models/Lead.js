@@ -3,15 +3,15 @@ import mongoose from 'mongoose';
 const leadSchema = new mongoose.Schema({
     name: {
         type: String,
-        required: [true, 'Please add a name'],
+        required: [true, 'Name is required'],
         trim: true,
     },
     email: {
         type: String,
-        required: [true, 'Please add an email'],
+        required: [true, 'Email is required'],
         match: [
             /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/,
-            'Please add a valid email',
+            'Invalid email format',
         ],
     },
     phone: {

@@ -1,5 +1,7 @@
 import express from 'express';
 import { protect, authorize } from '../middleware/auth.js';
+import { validate } from '../middleware/validation.js';
+import { createBatchSchema, updateBatchSchema } from '../validations/batchValidation.js';
 import {
     createBatch,
     getBatches,
@@ -23,10 +25,10 @@ router.get('/available', authorize('student'), getAvailableBatches);
 router.post('/:id/join', authorize('student'), joinBatch);
 
 // Admin / Tutor shared routes
-router.post('/', authorize('admin', 'tutor'), createBatch);
+router.post('/', authorize('admin', 'tutor'), validate(createBatchSchema), createBatch);
 router.get('/', authorize('admin', 'tutor'), getBatches);
 router.get('/:id', getBatchById);
-router.put('/:id', authorize('admin', 'tutor'), updateBatch);
+router.put('/:id', authorize('admin', 'tutor'), validate(updateBatchSchema), updateBatch);
 router.put('/:id/students', authorize('admin', 'tutor'), updateBatchStudents);
 
 // Batch announcements & analytics

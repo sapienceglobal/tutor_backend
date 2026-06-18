@@ -68,7 +68,7 @@ export const protect = async (req, res, next) => {
           return res.status(403).json({
             success: false,
             userBlocked: true,
-            message: 'Your account has been blocked by the platform administrator. Please contact support.',
+            message: 'Account has been blocked by the administrator. Contact support for assistance.',
           });
         }
       }
@@ -85,7 +85,7 @@ export const protect = async (req, res, next) => {
           return res.status(403).json({
             success: false,
             userBlocked: true,
-            message: 'Your account has been blocked. You can view your purchased courses but no new activity is allowed.',
+            message: 'Account has been blocked. Access is restricted to viewing purchased courses.',
           });
         }
       }
@@ -99,7 +99,7 @@ export const protect = async (req, res, next) => {
         return res.status(401).json({
           success: false,
           sessionRevoked: true,
-          message: 'Session has been revoked. Please login again.'
+          message: 'Session has been revoked. Login is required.'
         });
       }
     }
@@ -127,7 +127,7 @@ export const protect = async (req, res, next) => {
             return res.status(403).json({
               success: false,
               subscriptionExpired: true,
-              message: 'Your institute subscription has expired. Please renew to continue.',
+              message: 'Institute subscription has expired. Renewal is required to continue.',
             });
           }
         }
@@ -147,7 +147,7 @@ export const protect = async (req, res, next) => {
             return res.status(403).json({
               success: false,
               instituteSuspended: true,
-              message: 'Your institute has been suspended by the platform administrator. Please contact support.',
+              message: 'Institute has been suspended by the administrator. Contact support for assistance.',
             });
           }
         }
@@ -164,7 +164,7 @@ export const protect = async (req, res, next) => {
             return res.status(403).json({
               success: false,
               instituteSuspended: true,
-              message: 'Your institute has been suspended. You can view your purchased courses but no new activity is allowed.',
+              message: 'Institute has been suspended. Access is restricted to viewing purchased courses.',
             });
           }
         }
@@ -179,7 +179,7 @@ export const protect = async (req, res, next) => {
         return res.status(503).json({
           success: false,
           isMaintenanceMode: true,
-          message: 'Platform is currently under maintenance. Please try again later.'
+          message: 'Platform is currently under maintenance. Try again later.'
         });
       }
     }

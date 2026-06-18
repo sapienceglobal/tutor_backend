@@ -30,7 +30,7 @@ export const bulkCreateInvites = async (req, res) => {
         if (!invites || !Array.isArray(invites) || invites.length === 0) {
             return res.status(400).json({
                 success: false,
-                message: 'Please provide valid invites array'
+                message: 'Invites array is required and must be valid'
             });
         }
 

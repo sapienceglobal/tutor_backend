@@ -148,14 +148,14 @@ export const initSocket = (server) => {
         const exam = await Exam.findById(examId);
         if (!exam) {
           socket.emit('exam_error', {
-            message: 'No active exam found. Please start the exam properly.'
+            message: 'Active exam not found. Verify start status.'
           });
           return;
         }
         
         if (exam.status !== 'published') {
           socket.emit('exam_error', {
-            message: 'No active exam found. Please start the exam properly.'
+            message: 'Active exam not found. Verify start status.'
           });
           return;
         }

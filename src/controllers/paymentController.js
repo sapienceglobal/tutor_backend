@@ -535,7 +535,7 @@ export const retryFailedPayment = async (req, res) => {
         // Max 3 retries (not for institute fees)
         const retryCount = payment.retryCount || 0;
         if (payment.type !== 'institute_fee' && retryCount >= 3) {
-            return res.status(400).json({ success: false, message: 'Maximum retry attempts (3) reached. Please create a new order.' });
+            return res.status(400).json({ success: false, message: 'Maximum retry attempts (3) reached. Create a new order.' });
         }
 
         // Create a new Razorpay order

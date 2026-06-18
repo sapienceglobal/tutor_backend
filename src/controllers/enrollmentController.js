@@ -572,7 +572,7 @@ export const rejectEnrollment = async (req, res) => {
       userId: enrollment.studentId.toString(),
       type: 'general',
       title: '❌ Enrollment Request Declined',
-      message: `Your request to join "${enrollment.courseId.title}" was not approved. Please contact the tutor for more information.`,
+      message: `Your request to join "${enrollment.courseId.title}" was not approved. Contact the tutor for more information.`,
       data: { courseId: enrollment.courseId._id }
     });
 

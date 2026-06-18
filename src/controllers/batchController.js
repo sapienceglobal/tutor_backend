@@ -34,22 +34,8 @@ export const createBatch = async (req, res) => {
             }
         }
 
-        if (!name || !courseId || !startDate || !tutorId) {
-            return res.status(400).json({ success: false, message: 'Please provide all required fields (name, courseId, startDate, tutorId)' });
-        }
-
-        if (startDate) {
-            const startDateObj = new Date(startDate);
-            if (isNaN(startDateObj.getTime())) {
-                return res.status(400).json({ success: false, message: 'Invalid startDate format' });
-            }
-        }
-
-        if (endDate) {
-            const endDateObj = new Date(endDate);
-            if (isNaN(endDateObj.getTime())) {
-                return res.status(400).json({ success: false, message: 'Invalid endDate format' });
-            }
+        if (!tutorId) {
+            return res.status(400).json({ success: false, message: 'Tutor ID is required' });
         }
 
         const batch = await Batch.create({

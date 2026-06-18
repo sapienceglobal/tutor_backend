@@ -2050,7 +2050,7 @@ export const simplifyNotes = async (req, res) => {
         }
 
         if (!rawText || rawText.length < 20) {
-            return res.status(400).json({ success: false, message: 'Please provide notes text (min 20 characters) or upload a file.' });
+            return res.status(400).json({ success: false, message: 'Notes text (minimum 20 characters) or file upload is required.' });
         }
 
         const { courseId, title } = req.body;
@@ -2101,7 +2101,7 @@ Return ONLY a valid JSON object (no markdown, no backticks):
             const jsonEnd = raw.lastIndexOf('}') + 1;
             parsed = JSON.parse(raw.slice(jsonStart, jsonEnd));
         } catch {
-            return res.status(500).json({ success: false, message: 'AI returned invalid format. Please try again.' });
+            return res.status(500).json({ success: false, message: 'AI returned invalid format. Try again later.' });
         }
 
         const simplifiedText = (parsed.simplifiedText || '').trim();
@@ -2843,7 +2843,7 @@ Return ONLY a valid JSON object (no markdown, no backticks):
             const s = raw.indexOf('{'), e = raw.lastIndexOf('}') + 1;
             parsed = JSON.parse(raw.slice(s, e));
         } catch {
-            return res.status(500).json({ success: false, message: 'AI returned invalid format. Please retry.' });
+            return res.status(500).json({ success: false, message: 'AI returned invalid format. Try again later.' });
         }
 
         const minutesSaved = estimateMinutesSaved(rawText);
@@ -3664,7 +3664,7 @@ Rules:
             const s = raw.indexOf('{'), e = raw.lastIndexOf('}') + 1;
             parsed = JSON.parse(raw.slice(s, e));
         } catch {
-            return res.status(500).json({ success: false, message: 'AI returned invalid format. Please retry.' });
+            return res.status(500).json({ success: false, message: 'AI returned invalid format. Try again later.' });
         }
 
         // ── Compute stats ─────────────────────────────────────────────
@@ -5003,7 +5003,7 @@ export const checkPlagiarism = async (req, res) => {
         }
 
         if (!rawText || rawText.length < 30) {
-            return res.status(400).json({ success: false, message: 'Please provide text (min 30 characters) or upload a file.' });
+            return res.status(400).json({ success: false, message: 'Text content (minimum 30 characters) or file upload is required.' });
         }
 
         const {
@@ -5092,7 +5092,7 @@ Rules:
             const s = raw.indexOf('{'), e = raw.lastIndexOf('}') + 1;
             result = JSON.parse(raw.slice(s, e));
         } catch {
-            return res.status(500).json({ success: false, message: 'AI returned invalid format. Please retry.' });
+            return res.status(500).json({ success: false, message: 'AI returned invalid format. Try again later.' });
         }
 
         // ── 3. Sanitize & compute ─────────────────────────────────────
@@ -5154,7 +5154,7 @@ export const draftNotification = async (req, res) => {
         const { targetType, targetId, contextTopic, tone } = req.body;
 
         if (!contextTopic) {
-            return res.status(400).json({ success: false, message: 'Please provide a context or reason for the notification.' });
+            return res.status(400).json({ success: false, message: 'Context or reason is required to dispatch the notification.' });
         }
 
         const prompt = `You are an AI Tutor Assistant drafting a notification message to a student.
@@ -5290,7 +5290,7 @@ Evaluate thoroughly across 4 dimensions. Return ONLY valid JSON (no markdown, no
             const s = raw.indexOf('{'), e = raw.lastIndexOf('}') + 1;
             result = JSON.parse(raw.slice(s, e));
         } catch {
-            return res.status(500).json({ success: false, message: 'AI returned invalid format. Please retry.' });
+            return res.status(500).json({ success: false, message: 'AI returned invalid format. Try again later.' });
         }
 
         // Sanitize
@@ -6053,7 +6053,7 @@ Rules:
             const s = raw.indexOf('{'), e = raw.lastIndexOf('}') + 1;
             parsed = JSON.parse(raw.slice(s, e));
         } catch {
-            return res.status(500).json({ success: false, message: 'AI returned invalid format. Please retry.' });
+            return res.status(500).json({ success: false, message: 'AI returned invalid format. Try again later.' });
         }
 
         // ── Get user info ─────────────────────────────────────────────

@@ -90,7 +90,7 @@ export const createLiveClass = async (req, res) => {
       return res.status(400).json({
         success: false,
         message:
-          "Cannot schedule a class in the past. Please select a future time.",
+          "Cannot schedule a class in the past. Select a future time.",
       });
     }
 
