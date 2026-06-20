@@ -65,7 +65,7 @@ const courseSchema = new mongoose.Schema({
       type: String,
       enum: Object.values(AUDIENCE_SCOPES),
       default: function () {
-        return this.instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.GLOBAL;
+        return this?.instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.GLOBAL;
       },
       index: true,
     },
@@ -91,7 +91,7 @@ const courseSchema = new mongoose.Schema({
   isFree: {
     type: Boolean,
     default: function () {
-      return this.price === 0;
+      return this?.price === 0;
     },
   },
   level: {

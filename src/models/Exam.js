@@ -89,8 +89,8 @@ const examSchema = new mongoose.Schema({
       type: String,
       enum: Object.values(AUDIENCE_SCOPES),
       default: function () {
-        if (this.batchId) return AUDIENCE_SCOPES.BATCH;
-        return this.instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.GLOBAL;
+        if (this?.batchId) return AUDIENCE_SCOPES.BATCH;
+        return this?.instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.GLOBAL;
       },
       index: true,
     },

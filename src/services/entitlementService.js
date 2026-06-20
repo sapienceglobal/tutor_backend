@@ -38,7 +38,7 @@ export const getForUser = async (userOrId, activeInstituteId = null) => {
 
     const enrollments = await Enrollment.find({
         studentId: user._id,
-        status: 'active',
+        status: { $in: ['active', 'completed'] },
     })
         .populate('courseId', '_id instituteId')
         .select('courseId batchId');

@@ -238,7 +238,7 @@ export const verifyCertificate = async (req, res) => {
         const { certificateId } = req.params;
 
         const certificate = await Certificate.findOne({ certificateId })
-            .populate('studentId', 'name email avatar')
+            .populate('studentId', 'name email avatar profileImage')
             .populate('courseId', 'title thumbnail')
             .populate('tutorId', 'name');
 
@@ -251,19 +251,15 @@ export const verifyCertificate = async (req, res) => {
 
         res.status(200).json({
             success: true,
-            data: {
+            certificate: {
                 certificateId: certificate.certificateId,
                 issuedAt: certificate.issuedAt,
-                student: {
-                    name: certificate.studentId.name,
-                },
-                course: {
-                    title: certificate.courseId.title,
-                    thumbnail: certificate.courseId.thumbnail
-                },
-                tutor: {
-                    name: certificate.tutorId?.name || "Instructor"
-                }
+                studentName: certificate.studentId?.name || "Student",
+                studentEmail: certificate.studentId?.email || "",
+                studentAvatar: certificate.studentId?.avatar || certificate.studentId?.profileImage || "",
+                tutorName: certificate.tutorId?.name || "Instructor",
+                courseName: certificate.courseId?.title || "Course",
+                courseThumbnail: certificate.courseId?.thumbnail || ""
             }
         });
 
