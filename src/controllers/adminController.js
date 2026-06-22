@@ -278,7 +278,8 @@ export const getAllTutors = async (req, res) => {
                 ...user,
                 tutorId: profile ? profile._id : null,
                 isVerified: profile ? profile.isVerified : false,
-                rating: profile ? profile.rating : 0
+                rating: profile ? profile.rating : 0,
+                subjects: profile ? profile.subjects : []
             };
         });
 
@@ -373,6 +374,7 @@ export const getAllCourses = async (req, res) => {
     try {
         const courses = await Course.find(courseScope(req))
             .populate('tutorId', 'name email')
+            .populate('categoryId', 'name')
             .sort({ createdAt: -1 });
 
         const stats = {
@@ -502,7 +504,7 @@ export const createUser = async (req, res) => {
             name, email, password, phone, role,
             dob, gender, alternatePhone, studentSmartphoneNo,
             assignedBranch, parentDetails, address, profileImage,
-            website, subjects
+            website, subjects, grade, isVerified
         } = req.body;
 
         if (!name || !email || !password || !role) {
@@ -532,6 +534,8 @@ export const createUser = async (req, res) => {
             role,
             dob: dob || null,
             gender: gender || null,
+            grade: grade || 'Class 9',
+            isVerified: isVerified !== undefined ? isVerified : true,
             alternatePhone: alternatePhone || '',
             studentSmartphoneNo: studentSmartphoneNo || '',
             assignedBranch: assignedBranch || null,
@@ -576,7 +580,7 @@ export const updateUser = async (req, res) => {
             name, email, phone, role,
             dob, gender, alternatePhone, studentSmartphoneNo,
             assignedBranch, parentDetails, address, profileImage,
-            website, subjects
+            website, subjects, grade, isVerified
         } = req.body;
 
         if (name !== undefined) user.name = name;
@@ -586,6 +590,8 @@ export const updateUser = async (req, res) => {
         
         if (dob !== undefined) user.dob = dob;
         if (gender !== undefined) user.gender = gender;
+        if (grade !== undefined) user.grade = grade;
+        if (isVerified !== undefined) user.isVerified = isVerified;
         if (alternatePhone !== undefined) user.alternatePhone = alternatePhone;
         if (studentSmartphoneNo !== undefined) user.studentSmartphoneNo = studentSmartphoneNo;
         if (assignedBranch !== undefined) user.assignedBranch = assignedBranch;
@@ -1019,7 +1025,7 @@ export const getAdminCourseDetails = async (req, res) => {
         const course = await Course.findOne({
             _id: req.params.id,
             instituteId: getAdminInstituteId(req)
-        }).populate('tutorId', 'name email profileImage');
+        }).populate('tutorId', 'name email profileImage').populate('categoryId', 'name');
         if (!course) {
             return res.status(404).json({ success: false, message: 'Course not found' });
         }
@@ -1381,3 +1387,50 @@ export const issueStudentFee = async (req, res) => {
         res.status(500).json({ success: false, message: 'Server error issuing fee' });
     }
 };
+
+// @desc    Delete fee payment record
+// @route   DELETE /api/admin/fees/:id
+// @access  Private (Admin)
+export const deleteFee = async (req, res) => {
+    try {
+        const instituteId = getAdminInstituteId(req);
+        const Payment = (await import('../models/Payment.js')).default;
+        const fee = await Payment.findOne({ _id: req.params.id, instituteId, type: 'institute_fee' });
+        
+        if (!fee) {
+            return res.status(404).json({ success: false, message: 'Fee record not found' });
+        }
+        
+        await fee.deleteOne();
+        res.status(200).json({ success: true, message: 'Fee record deleted successfully' });
+    } catch (error) {
+        console.error('Delete fee error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+// @desc    Update fee status
+// @route   PUT /api/admin/fees/:id/status
+// @access  Private (Admin)
+export const updateFeeStatus = async (req, res) => {
+    try {
+        const { status } = req.body; // 'paid', 'created', 'failed'
+        const instituteId = getAdminInstituteId(req);
+        const Payment = (await import('../models/Payment.js')).default;
+        
+        const fee = await Payment.findOne({ _id: req.params.id, instituteId, type: 'institute_fee' });
+        
+        if (!fee) {
+            return res.status(404).json({ success: false, message: 'Fee record not found' });
+        }
+        
+        fee.status = status;
+        await fee.save();
+        
+        res.status(200).json({ success: true, message: 'Fee status updated successfully', fee });
+    } catch (error) {
+        console.error('Update fee status error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+

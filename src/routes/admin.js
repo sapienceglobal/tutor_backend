@@ -24,8 +24,11 @@ import {
     verifyTutor,
     removeUserFromInstitute,
     getAdminFees,
-    issueStudentFee
+    issueStudentFee,
+    deleteFee,
+    updateFeeStatus
 } from '../controllers/adminController.js';
+
 import { getAllPayouts, updatePayoutStatus } from '../controllers/payoutController.js';
 
 const router = express.Router();
@@ -43,6 +46,10 @@ router.put('/courses/:id', updateAdminCourse);
 router.put('/courses/:id/status', updateCourseStatus);
 
 router.post('/users', createUser);
+router.put('/users/:id', updateUser);
+router.delete('/users/:id', deleteUser);
+router.put('/users/:id/status', updateUserStatus);
+router.delete('/users/:id/remove-from-institute', removeUserFromInstitute);
 // System Settings (Admin Only)
 router.get('/settings', getSettings);
 router.put('/settings', updateSettings);
@@ -62,6 +69,9 @@ router.get('/courses/:id', getAdminCourseDetails);
 // Fee Management Routes
 router.get('/fees', getAdminFees);
 router.post('/fees/issue', issueStudentFee);
+router.delete('/fees/:id', deleteFee);
+router.put('/fees/:id/status', updateFeeStatus);
+
 
 // Payout Routes
 router.get('/payouts', getAllPayouts);

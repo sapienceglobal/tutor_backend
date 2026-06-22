@@ -518,3 +518,37 @@ export const getBatchAnalytics = async (req, res) => {
         res.status(500).json({ success: false, message: 'Server error' });
     }
 };
+
+// @desc    Delete a batch
+// @route   DELETE /api/batches/:id
+// @access  Private (Admin or Tutor)
+export const deleteBatch = async (req, res) => {
+    try {
+        const batch = await Batch.findById(req.params.id);
+        if (!batch) {
+            return res.status(404).json({ success: false, message: 'Batch not found' });
+        }
+
+        // Authorization check for tutors
+        if (req.user.role === 'tutor') {
+            const tutor = await Tutor.findOne({ userId: req.user._id });
+            if (!tutor || batch.tutorId.toString() !== tutor._id.toString()) {
+                return res.status(403).json({ success: false, message: 'Not authorized to delete this batch' });
+            }
+        }
+
+        // Remove batchId from enrolled students
+        await Enrollment.updateMany(
+            { batchId: batch._id },
+            { $set: { batchId: null } }
+        );
+
+        await Batch.deleteOne({ _id: batch._id });
+
+        res.status(200).json({ success: true, message: 'Batch deleted successfully' });
+    } catch (error) {
+        console.error('Delete batch error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+

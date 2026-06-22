@@ -17,6 +17,8 @@ import GeneratedReport from '../src/models/GeneratedReport.js';
 import Category from '../src/models/Category.js';
 import { Exam, ExamAttempt } from '../src/models/Exam.js';
 import Payment from '../src/models/Payment.js';
+import Assignment from '../src/models/Assignment.js';
+import Batch from '../src/models/Batch.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -612,6 +614,29 @@ async function run() {
         );
         console.log(`🧪 Created/Updated Assessment Chemistry Exam: ${chemExam2.title}`);
 
+        // Create/Update Chemistry Assignment
+        const chemAssignment = await Assignment.findOneAndUpdate(
+            { courseId: chemCourse._id, title: 'Chemistry Assignment — Coordination Compounds & Ligand Field Theory' },
+            {
+                $set: {
+                    instituteId: apexInstituteId,
+                    audience: { scope: 'institute', instituteId: apexInstituteId, batchIds: [], studentIds: [] },
+                    moduleId: module1Id,
+                    description: 'Analyze the crystal field splitting in octahedral and tetrahedral complexes. Calculate Crystal Field Stabilization Energy (CFSE) for various d-electron configurations.',
+                    dueDate: future(10),
+                    totalMarks: 100,
+                    rubric: [
+                        { criterion: 'Splitting Diagrams', description: 'Accurate drawing of t2g and eg orbital energy levels.', points: 40 },
+                        { criterion: 'CFSE Calculations', description: 'Correct calculations of Crystal Field Stabilization Energy.', points: 40 },
+                        { criterion: 'Neatness & Presentation', description: 'Logical steps and clear presentation.', points: 20 }
+                    ],
+                    status: 'published'
+                }
+            },
+            { upsert: true, new: true }
+        );
+        console.log(`📝 Created/Updated Chemistry Assignment: "${chemAssignment.title}" with 10 days deadline.`);
+
         // Seeding Aarav's attempts for Chemistry exams
         // Attempt 1 for chemExam1
         const existingAttempt1 = await ExamAttempt.findOne({ examId: chemExam1._id, studentId: studentUser._id });
@@ -982,6 +1007,101 @@ async function run() {
             }
         }
         console.log('✅ Payments seeded successfully.');
+
+        // ══════════════════════════════════════════════════════════════════════
+        //  11. SEED GLOBAL BATCHES
+        // ══════════════════════════════════════════════════════════════════════
+        console.log('\n🏫 Seeding global batches...');
+        
+        // Fetch other student users
+        const diyaStudent = await User.findOne({ email: 'diya.sharma@gmail.com' });
+        const ishaanStudent = await User.findOne({ email: 'ishaan.gupta@gmail.com' });
+        const ananyaStudent = await User.findOne({ email: 'ananya.reddy@gmail.com' });
+        const tanviStudent = await User.findOne({ email: 'tanvi.mishra@gmail.com' });
+
+        // Fetch courses for global batches
+        const reactCourseDoc = await Course.findOne({ title: { $in: ['Next.js & React Advanced Concepts', 'Advanced React Patterns & Performance'] } });
+        const chemCourseDoc = await Course.findOne({ title: { $in: ['Chemistry — Organic Mechanisms & Coordination Compounds', 'JEE Chemistry — Organic Mechanisms & Coordination Compounds'] } });
+        const mathCourseDoc = await Course.findOne({ title: { $in: ['Mathematics — Calculus & Algebra Mastery', 'JEE Maths — Calculus & Algebra Mastery'] } });
+        const pythonCourseDoc = await Course.findOne({ title: 'Python for Data Science & Machine Learning' });
+        const uiuxCourseDoc = await Course.findOne({ title: 'Complete UI/UX Design Thinking with Figma' });
+
+        const globalBatchesData = [
+            {
+                name: 'React Advanced Cohort — Global',
+                course: reactCourseDoc,
+                tutorId: reactCourseDoc?.tutorId,
+                scheduleDescription: 'Mon, Wed, Fri — 6:00 PM to 7:30 PM IST',
+                status: 'active',
+                startDate: ago(5),
+                students: [diyaStudent?._id, ishaanStudent?._id].filter(Boolean)
+            },
+            {
+                name: 'Chemistry Masterclass — Global',
+                course: chemCourseDoc,
+                tutorId: chemCourseDoc?.tutorId,
+                scheduleDescription: 'Tue, Thu, Sat — 2:00 PM to 3:30 PM IST',
+                status: 'active',
+                startDate: ago(2),
+                students: [ananyaStudent?._id, tanviStudent?._id].filter(Boolean)
+            },
+            {
+                name: 'Mathematics Calculus & Algebra Cohort — Global',
+                course: mathCourseDoc,
+                tutorId: mathCourseDoc?.tutorId,
+                scheduleDescription: 'Mon, Wed — 4:00 PM to 5:30 PM IST',
+                status: 'upcoming',
+                startDate: future(5),
+                students: [diyaStudent?._id, tanviStudent?._id].filter(Boolean)
+            },
+            {
+                name: 'Python Data Science Bootcamp — Global',
+                course: pythonCourseDoc,
+                tutorId: pythonCourseDoc?.tutorId,
+                scheduleDescription: 'Tue, Thu — 7:00 PM to 8:30 PM IST',
+                status: 'active',
+                startDate: ago(3),
+                students: [ishaanStudent?._id, ananyaStudent?._id].filter(Boolean)
+            },
+            {
+                name: 'UI/UX Design Masterclass — Global',
+                course: uiuxCourseDoc,
+                tutorId: uiuxCourseDoc?.tutorId,
+                scheduleDescription: 'Friday — 5:00 PM to 7:00 PM IST',
+                status: 'active',
+                startDate: ago(4),
+                students: [tanviStudent?._id].filter(Boolean)
+            }
+        ];
+
+        for (const batchData of globalBatchesData) {
+            if (batchData.course && batchData.tutorId) {
+                const updatedBatch = await Batch.findOneAndUpdate(
+                    { name: batchData.name },
+                    {
+                        $set: {
+                            name: batchData.name,
+                            courseId: batchData.course._id,
+                            tutorId: batchData.tutorId,
+                            instructors: [batchData.tutorId],
+                            grade: 'A',
+                            instituteId: null,
+                            scheduleDescription: batchData.scheduleDescription,
+                            status: batchData.status,
+                            startDate: batchData.startDate,
+                            endDate: future(60)
+                        },
+                        $setOnInsert: {
+                            students: batchData.students
+                        }
+                    },
+                    { upsert: true, new: true }
+                );
+                console.log(`✅ Seeded batch: ${batchData.name} (ID: ${updatedBatch._id})`);
+            } else {
+                console.log(`⚠️ Skipped seeding batch ${batchData.name} - Course or tutor not found`);
+            }
+        }
 
         console.log('\n🎉 Additional seeding completed successfully!');
     } catch (err) {

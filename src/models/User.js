@@ -73,6 +73,15 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  isVerified: {
+    type: Boolean,
+    default: true
+  },
+  grade: {
+    type: String,
+    enum: ['Class 8', 'Class 9', 'Class 10', 'Class 11', 'Class 12', null],
+    default: 'Class 9'
+  },
   isEmailVerified: {
     type: Boolean,
     default: false

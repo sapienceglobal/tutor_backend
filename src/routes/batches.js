@@ -12,7 +12,8 @@ import {
     updateBatch,
     updateBatchStudents,
     addBatchAnnouncement,
-    getBatchAnalytics
+    getBatchAnalytics,
+    deleteBatch
 } from '../controllers/batchController.js';
 
 const router = express.Router();
@@ -29,6 +30,7 @@ router.post('/', authorize('admin', 'tutor'), validate(createBatchSchema), creat
 router.get('/', authorize('admin', 'tutor'), getBatches);
 router.get('/:id', getBatchById);
 router.put('/:id', authorize('admin', 'tutor'), validate(updateBatchSchema), updateBatch);
+router.delete('/:id', authorize('admin', 'tutor'), deleteBatch);
 router.put('/:id/students', authorize('admin', 'tutor'), updateBatchStudents);
 
 // Batch announcements & analytics
