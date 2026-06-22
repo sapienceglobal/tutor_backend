@@ -27,7 +27,22 @@ import Course from '../src/models/Course.js';
 import Lesson from '../src/models/Lesson.js';
 import Batch from '../src/models/Batch.js';
 import { Exam, ExamAttempt } from '../src/models/Exam.js';
+import Question from '../src/models/Question.js';
+import { QuestionSet } from '../src/models/QuestionSet.js';
 import Payment from '../src/models/Payment.js';
+import {
+    getPhysicsMechanicsQuestions,
+    getMernBackendQuestions,
+    getMathsLimitsQuestions,
+    getBiologyGeneticsQuestions,
+    getDsaTreesQuestions,
+    getReactPerformanceQuestions,
+    getPhysicsElectroQuestions,
+    getPhysicsThermoQuestions,
+    getMathsIntegrationQuestions,
+    getMathsQuadraticQuestions,
+    getGenericQuestionBankQuestions
+} from './questionLibrary.js';
 import SubscriptionPlan from '../src/models/SubscriptionPlan.js';
 import InstituteMembership from '../src/models/InstituteMembership.js';
 import { Institute } from '../src/models/Institute.js';
@@ -75,6 +90,84 @@ const ago = (days, hours = 0, mins = 0) =>
 const future = (days, hours = 0) =>
     new Date(Date.now() + days * 86400000 + hours * 3600000);
 const oid = () => new mongoose.Types.ObjectId();
+
+function generateAttemptsAnswers(exam, targetPercentage, studentAnswersSeed = {}) {
+    let totalScore = 0;
+    const answers = [];
+    
+    for (let idx = 0; idx < exam.questions.length; idx++) {
+        const q = exam.questions[idx];
+        const points = q.points || 10;
+        
+        let isCorrect = Math.random() * 100 < targetPercentage;
+        if (studentAnswersSeed[idx] !== undefined) {
+            isCorrect = studentAnswersSeed[idx];
+        }
+        
+        const ansObj = {
+            questionId: q._id,
+            isCorrect: isCorrect,
+            pointsEarned: isCorrect ? points : (exam.negativeMarking ? -Math.round(points / 4) : 0),
+        };
+        
+        let correctOptIdx = 0;
+        if (q.questionType === 'mcq' && q.options) {
+            correctOptIdx = q.options.findIndex(opt => opt.isCorrect);
+            if (correctOptIdx === -1) correctOptIdx = 0;
+        }
+        
+        ansObj.questionData = {
+            question: q.question,
+            options: q.options ? q.options.map(opt => ({ text: opt.text })) : [],
+            correctOption: q.questionType === 'mcq' ? correctOptIdx : null,
+            explanation: q.explanation,
+            points: points,
+            difficulty: q.difficulty,
+            questionType: q.questionType,
+            numericAnswer: q.numericAnswer,
+            tolerance: q.tolerance,
+            pairs: q.pairs || [],
+        };
+        
+        if (q.questionType === 'mcq') {
+            if (isCorrect) {
+                ansObj.selectedOption = correctOptIdx;
+                ansObj.selectedOptionText = q.options[correctOptIdx].text;
+            } else {
+                const wrongIndices = [];
+                q.options.forEach((opt, oIdx) => {
+                    if (!opt.isCorrect) wrongIndices.push(oIdx);
+                });
+                const chosenWrongIdx = wrongIndices.length > 0 ? wrongIndices[Math.floor(Math.random() * wrongIndices.length)] : 0;
+                ansObj.selectedOption = chosenWrongIdx;
+                ansObj.selectedOptionText = q.options[chosenWrongIdx] ? q.options[chosenWrongIdx].text : 'Incorrect Option';
+            }
+        } else if (q.questionType === 'numeric') {
+            if (isCorrect) {
+                ansObj.numericAnswer = q.numericAnswer;
+            } else {
+                ansObj.numericAnswer = q.numericAnswer + (Math.random() > 0.5 ? 10 : -10);
+            }
+        } else if (q.questionType === 'match_the_following') {
+            const matchAnswers = {};
+            q.pairs.forEach(pair => {
+                if (isCorrect) {
+                    matchAnswers[pair.left] = pair.right;
+                } else {
+                    matchAnswers[pair.left] = 'Incorrect Match';
+                }
+            });
+            ansObj.matchAnswers = matchAnswers;
+        } else {
+            ansObj.textAnswer = isCorrect ? (q.idealAnswer || 'Correct explanation') : 'Incorrect response';
+        }
+        
+        totalScore += ansObj.pointsEarned;
+        answers.push(ansObj);
+    }
+    
+    return { answers, totalScore };
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // ▸  MAIN SEED FUNCTION
@@ -486,6 +579,14 @@ async function seed() {
         await Category.findByIdAndUpdate(cat['Data Science & ML']._id, { $inc: { tutorCount: 1 } });
 
         // ══════════════════════════════════════════════════════════════════════
+        //  9.5. TUTOR QUESTION BANK
+        // ══════════════════════════════════════════════════════════════════════
+        console.log('🌱 [9.5/40] Seeding Tutor Question Bank (120 questions)...');
+        const qBankData = getGenericQuestionBankQuestions(tVikram._id, tSneha._id, tArjun._id, tKavita._id, tRohanV._id, tMeera._id);
+        await Question.insertMany(qBankData);
+        console.log(`   Seeded ${qBankData.length} questions in Tutor Question Bank.`);
+
+        // ══════════════════════════════════════════════════════════════════════
         //  10. COURSES (8 courses)
         // ══════════════════════════════════════════════════════════════════════
         console.log('🌱 [10/40] Courses (8 courses with modules)...');
@@ -737,7 +838,9 @@ async function seed() {
             { s: 'pooja', c: c2, b: null, d: 7, pct: 25, completed: [c2Lessons[0]] },
             { s: 'kabir', c: c2, b: null, d: 5, pct: 0, completed: [] },
             // C3 JEE Physics — Apex students
-            { s: 'aarav', c: c3, b: b1, d: 30, pct: 100, completed: [c3Lessons[0], c3Lessons[1], c3Lessons[2], c3Lessons[3]] },
+            { s: 'aarav', c: c3, b: b1, d: 30, pct: 75, completed: [c3Lessons[0], c3Lessons[1], c3Lessons[2]] },
+            { s: 'aarav', c: c6, b: null, d: 15, pct: 50, completed: [c6Lessons[0], c6Lessons[1]] },
+            { s: 'aarav', c: c2, b: null, d: 10, pct: 25, completed: [c2Lessons[0]] },
             { s: 'diya', c: c3, b: b1, d: 28, pct: 50, completed: [c3Lessons[0], c3Lessons[1]] },
             { s: 'ishaan', c: c3, b: b1, d: 25, pct: 50, completed: [c3Lessons[0], c3Lessons[1]] },
             { s: 'ananya', c: c3, b: b1, d: 22, pct: 25, completed: [c3Lessons[0]] },
@@ -779,11 +882,11 @@ async function seed() {
         // ══════════════════════════════════════════════════════════════════════
         console.log('🌱 [14/40] Progress (partial video tracking)...');
         const progressData = [
-            // Aarav — 100% through C3
+            // Aarav — 75% through C3
             { s: 'aarav', c: c3, l: c3Lessons[0], completed: true, timeSpent: 1400, lastPos: 1400 },
             { s: 'aarav', c: c3, l: c3Lessons[1], completed: true, timeSpent: 1200, lastPos: 1200 },
             { s: 'aarav', c: c3, l: c3Lessons[2], completed: true, timeSpent: 1100, lastPos: 1100 },
-            { s: 'aarav', c: c3, l: c3Lessons[3], completed: true, timeSpent: 1200, lastPos: 1200 },
+            { s: 'aarav', c: c3, l: c3Lessons[3], completed: false, timeSpent: 400, lastPos: 400 },
             // Kabir — 42% through C1
             { s: 'kabir', c: c1, l: c1Lessons[0], completed: true, timeSpent: 900, lastPos: 900 },
             { s: 'kabir', c: c1, l: c1Lessons[1], completed: true, timeSpent: 1100, lastPos: 1100 },
@@ -860,18 +963,13 @@ async function seed() {
         const exam1 = await Exam.create({
             courseId: c3._id, tutorId: tVikram._id, batchId: b1._id, instituteId: apexInstitute._id,
             audience: { scope: 'batch', instituteId: apexInstitute._id, batchIds: [b1._id], studentIds: [] },
-            title: 'JEE Physics Mock Test — Mechanics', description: 'Full-length mock test covering Newton\'s laws, rotational mechanics, and gravitation.',
+            title: 'Physics Mock Test — Mechanics', description: 'Full-length mock test covering Newton\'s laws, rotational mechanics, and gravitation.',
             type: 'assessment', instructions: 'Ensure your webcam is ON. Tab switching will be flagged.',
-            duration: 60, passingMarks: 20, passingPercentage: 40,
+            duration: 60, passingMarks: 120, passingPercentage: 40,
             negativeMarking: true, isProctoringEnabled: true, isAudioProctoringEnabled: true, strictTabSwitching: true,
             shuffleQuestions: true, showResultImmediately: true, showCorrectAnswers: true, allowRetake: false, maxAttempts: 1,
             startDate: ago(5), endDate: future(5), isScheduled: true, status: 'published', isPublished: true,
-            questions: [
-                { question: 'A block of mass 5 kg is placed on a frictionless inclined plane of angle 30°. What is the acceleration of the block?', questionType: 'mcq', options: [{ text: '4.9 m/s²', isCorrect: true }, { text: '9.8 m/s²', isCorrect: false }, { text: '2.45 m/s²', isCorrect: false }, { text: '7.35 m/s²', isCorrect: false }], explanation: 'a = g·sin(30°) = 9.8 × 0.5 = 4.9 m/s²', points: 10, difficulty: 'easy', tags: ['mechanics', 'incline'] },
-                { question: 'The moment of inertia of a solid disc about its diameter is (1/4)MR². What is it about a tangent parallel to the diameter?', questionType: 'mcq', options: [{ text: '(5/4)MR²', isCorrect: true }, { text: '(3/4)MR²', isCorrect: false }, { text: '(3/2)MR²', isCorrect: false }, { text: '2MR²', isCorrect: false }], explanation: 'By parallel axis theorem: I = I_cm + Md² = (1/4)MR² + MR² = (5/4)MR²', points: 10, difficulty: 'medium', tags: ['rotational'] },
-                { question: 'What is the escape velocity from Earth\'s surface in km/s (approximately)?', questionType: 'numeric', numericAnswer: 11.2, tolerance: 0.3, explanation: 'v_e = √(2gR) ≈ 11.2 km/s', points: 10, difficulty: 'easy', tags: ['gravitation'] },
-                { question: 'Match the physical quantity with its SI unit:', questionType: 'match_the_following', pairs: [{ left: 'Torque', right: 'N·m' }, { left: 'Angular momentum', right: 'kg·m²/s' }, { left: 'Moment of inertia', right: 'kg·m²' }], explanation: 'Standard SI units for rotational quantities.', points: 10, difficulty: 'easy', tags: ['units'] },
-            ],
+            questions: getPhysicsMechanicsQuestions(),
         });
 
         const exam2 = await Exam.create({
@@ -879,45 +977,35 @@ async function seed() {
             audience: { scope: 'batch', instituteId: zenithInstitute._id, batchIds: [b3._id], studentIds: [] },
             title: 'MERN Bootcamp — Backend Assessment', description: 'Test your Node.js, Express, and MongoDB knowledge.',
             type: 'assessment', instructions: 'Open-book assessment. You may refer to documentation but no tab switching beyond docs.',
-            duration: 45, passingMarks: 12, passingPercentage: 40,
+            duration: 45, passingMarks: 100, passingPercentage: 40,
             isProctoringEnabled: true, isAudioProctoringEnabled: false, strictTabSwitching: false,
             showResultImmediately: true, showCorrectAnswers: true, allowRetake: true, maxAttempts: 2,
             startDate: ago(3), endDate: future(7), isScheduled: true, status: 'published', isPublished: true,
-            questions: [
-                { question: 'What does the Express middleware next() function do?', questionType: 'mcq', options: [{ text: 'Sends response to client', isCorrect: false }, { text: 'Passes control to the next middleware', isCorrect: true }, { text: 'Terminates the request', isCorrect: false }, { text: 'Logs the request', isCorrect: false }], explanation: 'next() passes control to the next middleware function in the stack.', points: 10, difficulty: 'easy', tags: ['express'] },
-                { question: 'In MongoDB, which aggregation stage filters documents?', questionType: 'mcq', options: [{ text: '$project', isCorrect: false }, { text: '$match', isCorrect: true }, { text: '$group', isCorrect: false }, { text: '$sort', isCorrect: false }], explanation: '$match filters documents by condition, similar to find().', points: 10, difficulty: 'easy', tags: ['mongodb'] },
-                { question: 'What is the default port number for MongoDB?', questionType: 'numeric', numericAnswer: 27017, tolerance: 0, explanation: 'MongoDB default port is 27017.', points: 10, difficulty: 'easy', tags: ['mongodb'] },
-            ],
+            questions: getMernBackendQuestions(),
         });
 
         const exam3 = await Exam.create({
             courseId: c8._id, tutorId: tVikram._id, instituteId: apexInstitute._id,
             audience: { scope: 'institute', instituteId: apexInstitute._id, batchIds: [], studentIds: [] },
-            title: 'JEE Maths — Limits & Derivatives Practice', description: 'Practice set focusing on limits, continuity, differentiability, and L\'Hopital\'s rule.',
+            title: 'Mathematics — Limits & Derivatives Practice', description: 'Practice set focusing on limits, continuity, differentiability, and L\'Hopital\'s rule.',
             type: 'practice', instructions: 'Attempt all questions. Correct answers have detailed solutions.',
-            duration: 30, passingMarks: 10, passingPercentage: 50,
+            duration: 30, passingMarks: 150, passingPercentage: 50,
             isProctoringEnabled: false, isAudioProctoringEnabled: false, strictTabSwitching: false,
             showResultImmediately: true, showCorrectAnswers: true, allowRetake: true, maxAttempts: 5,
             startDate: ago(4), endDate: future(10), isScheduled: true, status: 'published', isPublished: true,
-            questions: [
-                { question: 'What is the limit of (sin x)/x as x approaches 0?', questionType: 'numeric', numericAnswer: 1, tolerance: 0, explanation: 'Standard limit result.', points: 10, difficulty: 'easy', tags: ['limits', 'calculus'] },
-                { question: 'If f(x) = x², find the derivative f\'(3).', questionType: 'numeric', numericAnswer: 6, tolerance: 0, explanation: 'f\'(x) = 2x, so f\'(3) = 6.', points: 10, difficulty: 'easy', tags: ['derivative'] },
-            ],
+            questions: getMathsLimitsQuestions(),
         });
 
         const exam4 = await Exam.create({
             courseId: c5._id, tutorId: tSneha._id, batchId: b2._id, instituteId: apexInstitute._id,
             audience: { scope: 'batch', instituteId: apexInstitute._id, batchIds: [b2._id], studentIds: [] },
-            title: 'NEET Biology — Genetics Unit Test', description: 'Unit test covering cell division, Mendelian inheritance, and molecular basis of genetics.',
+            title: 'Biology — Genetics Unit Test', description: 'Unit test covering cell division, Mendelian inheritance, and molecular basis of genetics.',
             type: 'assessment', instructions: 'Webcam monitoring is enabled. No external calculators needed.',
-            duration: 45, passingMarks: 15, passingPercentage: 50,
+            duration: 45, passingMarks: 175, passingPercentage: 50,
             isProctoringEnabled: true, isAudioProctoringEnabled: false, strictTabSwitching: true,
             showResultImmediately: true, showCorrectAnswers: true, allowRetake: false, maxAttempts: 1,
             startDate: ago(2), endDate: future(3), isScheduled: true, status: 'published', isPublished: true,
-            questions: [
-                { question: 'Which of the following is considered the powerhouse of the cell?', questionType: 'mcq', options: [{ text: 'Mitochondria', isCorrect: true }, { text: 'Nucleus', isCorrect: false }, { text: 'Ribosome', isCorrect: false }, { text: 'Golgi Apparatus', isCorrect: false }], explanation: 'Mitochondria generate most of the cell\'s supply of adenosine triphosphate (ATP).', points: 10, difficulty: 'easy', tags: ['cell'] },
-                { question: 'What is the phenotypic ratio of a dihybrid cross in Mendel\'s experiments?', questionType: 'mcq', options: [{ text: '9:3:3:1', isCorrect: true }, { text: '3:1', isCorrect: false }, { text: '1:2:1', isCorrect: false }, { text: '9:7', isCorrect: false }], explanation: 'The classic dihybrid ratio is 9:3:3:1.', points: 10, difficulty: 'medium', tags: ['genetics'] },
-            ],
+            questions: getBiologyGeneticsQuestions(),
         });
 
         const exam5 = await Exam.create({
@@ -925,14 +1013,11 @@ async function seed() {
             audience: { scope: 'batch', instituteId: zenithInstitute._id, batchIds: [b4._id], studentIds: [] },
             title: 'DSA — Trees & Graphs Midterm', description: 'Assesses tree traversals, BST properties, DFS/BFS implementations, and cycle detection.',
             type: 'midterm', instructions: 'Strict proctoring active. Answer all questions within time limit.',
-            duration: 50, passingMarks: 12, passingPercentage: 40,
+            duration: 50, passingMarks: 100, passingPercentage: 40,
             isProctoringEnabled: true, isAudioProctoringEnabled: true, strictTabSwitching: true,
             showResultImmediately: false, showCorrectAnswers: false, allowRetake: false, maxAttempts: 1,
             startDate: ago(1), endDate: future(4), isScheduled: true, status: 'published', isPublished: true,
-            questions: [
-                { question: 'What is the worst-case time complexity of searching in a Binary Search Tree (BST)?', questionType: 'mcq', options: [{ text: 'O(N)', isCorrect: true }, { text: 'O(log N)', isCorrect: false }, { text: 'O(1)', isCorrect: false }, { text: 'O(N log N)', isCorrect: false }], explanation: 'In a skewed BST, search takes O(N) time.', points: 15, difficulty: 'medium', tags: ['bst', 'complexity'] },
-                { question: 'Which algorithm is used to find the shortest path in a weighted graph with non-negative edge weights?', questionType: 'mcq', options: [{ text: 'Dijkstra\'s algorithm', isCorrect: true }, { text: 'Prim\'s algorithm', isCorrect: false }, { text: 'Kruskal\'s algorithm', isCorrect: false }, { text: 'Bellman-Ford algorithm', isCorrect: false }], explanation: 'Dijkstra\'s algorithm finds shortest paths from single source with non-negative weights.', points: 15, difficulty: 'easy', tags: ['graphs', 'shortest-path'] },
-            ],
+            questions: getDsaTreesQuestions(),
         });
 
         const exam6 = await Exam.create({
@@ -940,79 +1025,119 @@ async function seed() {
             audience: { scope: 'global', instituteId: null, batchIds: [], studentIds: [] },
             title: 'React Performance Optimization Assessment', description: 'Covers React.memo, useMemo, useCallback, virtualization, and lazy loading.',
             type: 'assessment', instructions: 'Open exam. Test your React performance optimization concepts.',
-            duration: 20, passingMarks: 5, passingPercentage: 50,
+            duration: 20, passingMarks: 125, passingPercentage: 50,
             isProctoringEnabled: false, isAudioProctoringEnabled: false, strictTabSwitching: false,
             showResultImmediately: true, showCorrectAnswers: true, allowRetake: true, maxAttempts: 3,
             startDate: ago(3), endDate: future(15), isScheduled: true, status: 'published', isPublished: true,
-            questions: [
-                { question: 'Which hook should be used to memoize a computed value between re-renders?', questionType: 'mcq', options: [{ text: 'useMemo', isCorrect: true }, { text: 'useCallback', isCorrect: false }, { text: 'useEffect', isCorrect: false }, { text: 'useRef', isCorrect: false }], explanation: 'useMemo memoizes values, whereas useCallback memoizes callbacks.', points: 10, difficulty: 'easy', tags: ['react', 'performance'] },
-            ],
+            questions: getReactPerformanceQuestions(),
         });
 
         const exam7 = await Exam.create({
             courseId: c3._id, tutorId: tVikram._id, batchId: b1._id, instituteId: apexInstitute._id,
             audience: { scope: 'batch', instituteId: apexInstitute._id, batchIds: [b1._id], studentIds: [] },
-            title: 'JEE Physics Chapter Test — Electromagnetism', description: 'Covers electric fields, Gauss\'s law, capacitance, and magnetic force equations.',
+            title: 'Physics Chapter Test — Electromagnetism', description: 'Covers electric fields, Gauss\'s law, capacitance, and magnetic force equations.',
             type: 'assessment', instructions: 'Formula sheets are not allowed. Scientific calculator is permitted.',
-            duration: 40, passingMarks: 10, passingPercentage: 50,
+            duration: 40, passingMarks: 150, passingPercentage: 50,
             isProctoringEnabled: true, isAudioProctoringEnabled: false, strictTabSwitching: true,
             showResultImmediately: true, showCorrectAnswers: true, allowRetake: false, maxAttempts: 1,
             startDate: future(2), endDate: future(7), isScheduled: true, status: 'published', isPublished: true,
-            questions: [
-                { question: 'What is the capacitance of a parallel plate capacitor of area A and plate separation d in vacuum?', questionType: 'mcq', options: [{ text: 'ε₀A/d', isCorrect: true }, { text: 'ε₀d/A', isCorrect: false }, { text: 'A/(ε₀d)', isCorrect: false }, { text: 'd/(ε₀A)', isCorrect: false }], explanation: 'C = ε₀A/d by Gauss\'s law derivation.', points: 10, difficulty: 'easy', tags: ['capacitance', 'physics'] },
-            ],
+            questions: getPhysicsElectroQuestions(),
         });
 
         const exam8 = await Exam.create({
             courseId: c3._id, tutorId: tVikram._id, instituteId: apexInstitute._id,
             audience: { scope: 'institute', instituteId: apexInstitute._id, batchIds: [], studentIds: [] },
-            title: 'JEE Physics Practice Set — Thermodynamics', description: 'Practice thermodynamics cycles, ideal gas equations, and heat engine efficiency.',
+            title: 'Physics Practice Set — Thermodynamics', description: 'Practice thermodynamics cycles, ideal gas equations, and heat engine efficiency.',
             type: 'practice', instructions: 'Optional practice. Free retakes enabled.',
-            duration: 30, passingMarks: 8, passingPercentage: 40,
+            duration: 30, passingMarks: 120, passingPercentage: 40,
             isProctoringEnabled: false, isAudioProctoringEnabled: false, strictTabSwitching: false,
             showResultImmediately: true, showCorrectAnswers: true, allowRetake: true, maxAttempts: 10,
             startDate: ago(10), endDate: future(20), isScheduled: true, status: 'published', isPublished: true,
-            questions: [
-                { question: 'In an adiabatic process, what is the relation between pressure and volume?', questionType: 'mcq', options: [{ text: 'PV^γ = constant', isCorrect: true }, { text: 'PV = constant', isCorrect: false }, { text: 'P/V = constant', isCorrect: false }, { text: 'P^γV = constant', isCorrect: false }], explanation: 'For adiabatic processes, PV^γ = constant where γ is the ratio of specific heats.', points: 10, difficulty: 'medium', tags: ['thermodynamics'] },
-            ],
+            questions: getPhysicsThermoQuestions(),
         });
 
         const exam9 = await Exam.create({
             courseId: c8._id, tutorId: tVikram._id, instituteId: apexInstitute._id,
             audience: { scope: 'institute', instituteId: apexInstitute._id, batchIds: [], studentIds: [] },
-            title: 'JEE Maths Mock Test — Integration & Area', description: 'Mock test covering definite integration, integration by parts, and area bounded by curves.',
+            title: 'Mathematics Mock Test — Integration & Area', description: 'Mock test covering definite integration, integration by parts, and area bounded by curves.',
             type: 'assessment', instructions: 'No calculators allowed. Strictly timed.',
-            duration: 45, passingMarks: 15, passingPercentage: 50,
+            duration: 45, passingMarks: 200, passingPercentage: 50,
             isProctoringEnabled: true, isAudioProctoringEnabled: true, strictTabSwitching: true,
             showResultImmediately: false, showCorrectAnswers: false, allowRetake: false, maxAttempts: 1,
             startDate: future(1), endDate: future(6), isScheduled: true, status: 'published', isPublished: true,
-            questions: [
-                { question: 'Evaluate the definite integral of x from 0 to 2.', questionType: 'numeric', numericAnswer: 2, tolerance: 0, explanation: '∫x dx = [x²/2] from 0 to 2 = 4/2 - 0 = 2.', points: 10, difficulty: 'easy', tags: ['integration'] },
-            ],
+            questions: getMathsIntegrationQuestions(),
         });
 
         const exam10 = await Exam.create({
             courseId: c8._id, tutorId: tVikram._id,
             audience: { scope: 'global', instituteId: null, batchIds: [], studentIds: [] },
-            title: 'JEE Maths Practice Set — Quadratic Equations', description: 'Practice roots of equations, discriminant properties, and graphing quadratic functions.',
+            title: 'Mathematics Practice Set — Quadratic Equations', description: 'Practice roots of equations, discriminant properties, and graphing quadratic functions.',
             type: 'practice', instructions: 'Solve and review explanations.',
-            duration: 25, passingMarks: 10, passingPercentage: 50,
+            duration: 25, passingMarks: 175, passingPercentage: 50,
             isProctoringEnabled: false, isAudioProctoringEnabled: false, strictTabSwitching: false,
             showResultImmediately: true, showCorrectAnswers: true, allowRetake: true, maxAttempts: 5,
             startDate: ago(8), endDate: future(14), isScheduled: true, status: 'published', isPublished: true,
-            questions: [
-                { question: 'What is the sum of roots for the equation ax² + bx + c = 0?', questionType: 'mcq', options: [{ text: '-b/a', isCorrect: true }, { text: 'b/a', isCorrect: false }, { text: 'c/a', isCorrect: false }, { text: '-c/a', isCorrect: false }], explanation: 'By Vieta\'s formulas, sum of roots is -b/a.', points: 10, difficulty: 'easy', tags: ['quadratic'] },
-            ],
+            questions: getMathsQuadraticQuestions(),
+        });
+
+        const exam11 = await Exam.create({
+            courseId: c3._id, tutorId: tVikram._id, batchId: b1._id, instituteId: apexInstitute._id,
+            audience: { scope: 'batch', instituteId: apexInstitute._id, batchIds: [b1._id], studentIds: [] },
+            title: 'Physics Advanced Practice — Wave Optics', description: 'Test your understanding of Young\'s double slit experiment, diffraction, and wave interference.',
+            type: 'assessment', instructions: 'This is an AI-proctored exam. Ensure your webcam is working and background noise is minimized.',
+            duration: 40, passingMarks: 120, passingPercentage: 40,
+            negativeMarking: true, isProctoringEnabled: true, isAudioProctoringEnabled: true, strictTabSwitching: true,
+            shuffleQuestions: true, showResultImmediately: true, showCorrectAnswers: true, allowRetake: true, maxAttempts: 8,
+            startDate: ago(2), endDate: future(10), isScheduled: true, status: 'published', isPublished: true,
+            questions: getPhysicsElectroQuestions(),
+        });
+
+        const exam12 = await Exam.create({
+            courseId: c8._id, tutorId: tVikram._id, instituteId: apexInstitute._id,
+            audience: { scope: 'institute', instituteId: apexInstitute._id, batchIds: [], studentIds: [] },
+            title: 'Mathematics Advanced Practice — Complex Numbers', description: 'Advanced problems on complex algebra, polar form, Euler\'s formula, and geometry of complex numbers.',
+            type: 'practice', instructions: 'Attempt all questions. Retakes are enabled.',
+            duration: 45, passingMarks: 175, passingPercentage: 50,
+            isProctoringEnabled: false, isAudioProctoringEnabled: false, strictTabSwitching: false,
+            showResultImmediately: true, showCorrectAnswers: true, allowRetake: true, maxAttempts: 8,
+            startDate: ago(1), endDate: future(15), isScheduled: true, status: 'published', isPublished: true,
+            questions: getMathsQuadraticQuestions(),
+        });
+
+        const exam13 = await Exam.create({
+            courseId: c6._id, tutorId: tMeera._id,
+            audience: { scope: 'global', instituteId: null, batchIds: [], studentIds: [] },
+            title: 'Python ML Challenge — Neural Networks', description: 'Evaluate your knowledge of neural networks, forward/backward propagation, activation functions, and optimization.',
+            type: 'assessment', instructions: 'Proctored exam. Tab tracking is active but not strict.',
+            duration: 50, passingMarks: 125, passingPercentage: 50,
+            isProctoringEnabled: true, isAudioProctoringEnabled: false, strictTabSwitching: false,
+            showResultImmediately: true, showCorrectAnswers: true, allowRetake: true, maxAttempts: 9,
+            startDate: ago(3), endDate: future(12), isScheduled: true, status: 'published', isPublished: true,
+            questions: getReactPerformanceQuestions(),
+        });
+
+        const exam14 = await Exam.create({
+            courseId: c2._id, tutorId: tRohanV._id,
+            audience: { scope: 'global', instituteId: null, batchIds: [], studentIds: [] },
+            title: 'React Advanced Optimization — Rendering Lifecycles', description: 'Covers React fiber architecture, concurrent rendering, and resource scheduling optimizations.',
+            type: 'practice', instructions: 'Solve and study explanations to master advanced patterns.',
+            duration: 30, passingMarks: 100, passingPercentage: 40,
+            isProctoringEnabled: false, isAudioProctoringEnabled: false, strictTabSwitching: false,
+            showResultImmediately: true, showCorrectAnswers: true, allowRetake: true, maxAttempts: 9,
+            startDate: ago(4), endDate: future(20), isScheduled: true, status: 'published', isPublished: true,
+            questions: getReactPerformanceQuestions(),
         });
 
         // ══════════════════════════════════════════════════════════════════════
         //  19. EXAM ATTEMPTS (with AI proctoring)
         // ══════════════════════════════════════════════════════════════════════
         console.log('🌱 [19/40] Exam Attempts (AI proctoring edge cases)...');
-        // Aarav — Suspicious Detected
+        // Aarav — Suspicious Detected (exam1)
+        const aaravAttemptAnswers = generateAttemptsAnswers(exam1, 85);
         await ExamAttempt.create({
             examId: exam1._id, studentId: uStudents.aarav._id, courseId: c3._id, attemptNumber: 1,
-            score: 30, percentage: 75, isPassed: true, timeSpent: 2400, percentile: 88,
+            score: aaravAttemptAnswers.totalScore, percentage: Math.round((aaravAttemptAnswers.totalScore / exam1.totalMarks) * 100),
+            isPassed: aaravAttemptAnswers.totalScore >= exam1.passingMarks, timeSpent: 2400, percentile: 88,
             startedAt: ago(2, 0, 60), submittedAt: ago(2),
             tabSwitchCount: 5, tabSwitchLog: [{ switchedAt: ago(2, 0, 50), count: 1 }, { switchedAt: ago(2, 0, 40), count: 1 }, { switchedAt: ago(2, 0, 25), count: 1 }],
             proctoringEvents: [
@@ -1023,51 +1148,106 @@ async function seed() {
             ],
             aiRiskScore: 7, aiRiskLevel: 'Suspicious Detected',
             aiProctoringSummary: 'Multiple anomalies detected: 5 tab switches, 2 faces visible at timestamp 35:00, face absence at 40:00. Background voice detected. High risk of external assistance.',
-            answers: [
-                { questionId: exam1.questions[0]._id, selectedOption: 0, selectedOptionText: '4.9 m/s²', isCorrect: true, pointsEarned: 10, questionData: { question: exam1.questions[0].question, options: exam1.questions[0].options, correctOption: 0, explanation: exam1.questions[0].explanation, points: 10, difficulty: 'easy', questionType: 'mcq' } },
-                { questionId: exam1.questions[1]._id, selectedOption: 0, selectedOptionText: '(5/4)MR²', isCorrect: true, pointsEarned: 10, questionData: { question: exam1.questions[1].question, options: exam1.questions[1].options, correctOption: 0, explanation: exam1.questions[1].explanation, points: 10, difficulty: 'medium', questionType: 'mcq' } },
-                { questionId: exam1.questions[2]._id, numericAnswer: 11.2, isCorrect: true, pointsEarned: 10, questionData: { question: exam1.questions[2].question, options: [], correctOption: null, explanation: exam1.questions[2].explanation, points: 10, difficulty: 'easy', questionType: 'numeric', numericAnswer: 11.2, tolerance: 0.3 } },
-            ],
+            answers: aaravAttemptAnswers.answers,
         });
-        // Diya — Low Confidence
+
+        // Diya — Low Confidence (exam1)
+        const diyaAttemptAnswers = generateAttemptsAnswers(exam1, 65);
         await ExamAttempt.create({
             examId: exam1._id, studentId: uStudents.diya._id, courseId: c3._id, attemptNumber: 1,
-            score: 20, percentage: 50, isPassed: true, timeSpent: 3200, percentile: 60,
+            score: diyaAttemptAnswers.totalScore, percentage: Math.round((diyaAttemptAnswers.totalScore / exam1.totalMarks) * 100),
+            isPassed: diyaAttemptAnswers.totalScore >= exam1.passingMarks, timeSpent: 3200, percentile: 60,
             startedAt: ago(2, 0, 60), submittedAt: ago(2, 0, 7),
             tabSwitchCount: 1, tabSwitchLog: [{ switchedAt: ago(2, 0, 30), count: 1 }],
             proctoringEvents: [{ eventType: 'tab_switch', severity: 'low', details: 'Single tab switch — possibly accidental', timestamp: ago(2, 0, 30) }],
             aiRiskScore: 3, aiRiskLevel: 'Low Confidence Detected',
             aiProctoringSummary: 'Single tab switch detected. Consistent face presence otherwise. Low risk — likely accidental.',
-            answers: [
-                { questionId: exam1.questions[0]._id, selectedOption: 0, selectedOptionText: '4.9 m/s²', isCorrect: true, pointsEarned: 10, questionData: { question: exam1.questions[0].question, options: exam1.questions[0].options, correctOption: 0, points: 10, difficulty: 'easy', questionType: 'mcq' } },
-                { questionId: exam1.questions[1]._id, selectedOption: 1, selectedOptionText: '(3/4)MR²', isCorrect: false, pointsEarned: 0, questionData: { question: exam1.questions[1].question, options: exam1.questions[1].options, correctOption: 0, points: 10, difficulty: 'medium', questionType: 'mcq' } },
-                { questionId: exam1.questions[2]._id, numericAnswer: 11, isCorrect: true, pointsEarned: 10, questionData: { question: exam1.questions[2].question, options: [], correctOption: null, points: 10, difficulty: 'easy', questionType: 'numeric', numericAnswer: 11.2, tolerance: 0.3 } },
-            ],
+            answers: diyaAttemptAnswers.answers,
         });
-        // Ishaan — Safe
+
+        // Ishaan — Safe (exam1)
+        const ishaanAttemptAnswers = generateAttemptsAnswers(exam1, 35);
         await ExamAttempt.create({
             examId: exam1._id, studentId: uStudents.ishaan._id, courseId: c3._id, attemptNumber: 1,
-            score: 10, percentage: 25, isPassed: false, timeSpent: 3500, percentile: 30,
+            score: ishaanAttemptAnswers.totalScore, percentage: Math.round((ishaanAttemptAnswers.totalScore / exam1.totalMarks) * 100),
+            isPassed: ishaanAttemptAnswers.totalScore >= exam1.passingMarks, timeSpent: 3500, percentile: 30,
             startedAt: ago(2, 0, 60), submittedAt: ago(2, 0, 2),
             tabSwitchCount: 0, proctoringEvents: [],
             aiRiskScore: 0, aiRiskLevel: 'Safe', aiProctoringSummary: 'Clean exam. Stable webcam feed, zero tab switches.',
-            answers: [
-                { questionId: exam1.questions[0]._id, selectedOption: 0, selectedOptionText: '4.9 m/s²', isCorrect: true, pointsEarned: 10, questionData: { question: exam1.questions[0].question, options: exam1.questions[0].options, correctOption: 0, points: 10, difficulty: 'easy', questionType: 'mcq' } },
-                { questionId: exam1.questions[1]._id, selectedOption: 2, selectedOptionText: '(3/2)MR²', isCorrect: false, pointsEarned: 0, questionData: { question: exam1.questions[1].question, options: exam1.questions[1].options, correctOption: 0, points: 10, difficulty: 'medium', questionType: 'mcq' } },
-            ],
+            answers: ishaanAttemptAnswers.answers,
         });
-        // Kabir — MERN exam, Safe
+
+        // Kabir — MERN exam, Safe (exam2)
+        const kabirAttemptAnswers = generateAttemptsAnswers(exam2, 100);
         await ExamAttempt.create({
             examId: exam2._id, studentId: uStudents.kabir._id, courseId: c1._id, attemptNumber: 1,
-            score: 30, percentage: 100, isPassed: true, timeSpent: 1800, percentile: 95,
+            score: kabirAttemptAnswers.totalScore, percentage: Math.round((kabirAttemptAnswers.totalScore / exam2.totalMarks) * 100),
+            isPassed: kabirAttemptAnswers.totalScore >= exam2.passingMarks, timeSpent: 1800, percentile: 95,
             startedAt: ago(1, 0, 45), submittedAt: ago(1),
             tabSwitchCount: 0, proctoringEvents: [],
             aiRiskScore: 0, aiRiskLevel: 'Safe', aiProctoringSummary: 'Perfect exam — no anomalies.',
-            answers: exam2.questions.map((q, i) => ({ questionId: q._id, selectedOption: i === 2 ? undefined : 1, numericAnswer: i === 2 ? 27017 : undefined, selectedOptionText: i < 2 ? q.options[1].text : undefined, isCorrect: true, pointsEarned: 10, questionData: { question: q.question, options: q.options || [], correctOption: 1, points: 10, difficulty: q.difficulty, questionType: q.questionType, numericAnswer: q.numericAnswer, tolerance: q.tolerance } })),
+            answers: kabirAttemptAnswers.answers,
         });
 
-        await Exam.findByIdAndUpdate(exam1._id, { attemptCount: 3, averageScore: 20 });
-        await Exam.findByIdAndUpdate(exam2._id, { attemptCount: 1, averageScore: 30 });
+        // Update exam statistics
+        const exam1Attempts = [aaravAttemptAnswers.totalScore, diyaAttemptAnswers.totalScore, ishaanAttemptAnswers.totalScore];
+        const exam1Avg = Math.round(exam1Attempts.reduce((a, b) => a + b, 0) / exam1Attempts.length);
+        await Exam.findByIdAndUpdate(exam1._id, { attemptCount: 3, averageScore: exam1Avg });
+        await Exam.findByIdAndUpdate(exam2._id, { attemptCount: 1, averageScore: kabirAttemptAnswers.totalScore });
+
+        // Additional attempts for Aarav
+        // Aarav attempt on exam3 (Maths Limits)
+        const aaravExam3Answers = generateAttemptsAnswers(exam3, 90);
+        await ExamAttempt.create({
+            examId: exam3._id, studentId: uStudents.aarav._id, courseId: c8._id, attemptNumber: 1,
+            score: aaravExam3Answers.totalScore, percentage: Math.round((aaravExam3Answers.totalScore / exam3.totalMarks) * 100),
+            isPassed: aaravExam3Answers.totalScore >= exam3.passingMarks, timeSpent: 1200, percentile: 92,
+            startedAt: ago(3, 1), submittedAt: ago(3),
+            tabSwitchCount: 0, proctoringEvents: [],
+            aiRiskScore: 0, aiRiskLevel: 'Safe', aiProctoringSummary: 'Clean attempt. High confidence.',
+            answers: aaravExam3Answers.answers
+        });
+        await Exam.findByIdAndUpdate(exam3._id, { attemptCount: 1, averageScore: aaravExam3Answers.totalScore });
+
+        // Aarav attempt on exam6 (React Performance)
+        const aaravExam6Answers = generateAttemptsAnswers(exam6, 80);
+        await ExamAttempt.create({
+            examId: exam6._id, studentId: uStudents.aarav._id, courseId: c2._id, attemptNumber: 1,
+            score: aaravExam6Answers.totalScore, percentage: Math.round((aaravExam6Answers.totalScore / exam6.totalMarks) * 100),
+            isPassed: aaravExam6Answers.totalScore >= exam6.passingMarks, timeSpent: 900, percentile: 85,
+            startedAt: ago(2, 2), submittedAt: ago(2, 1),
+            tabSwitchCount: 1, tabSwitchLog: [{ switchedAt: ago(2, 1, 30), count: 1 }],
+            proctoringEvents: [{ eventType: 'tab_switch', severity: 'low', details: 'Accidental click outside browser window', timestamp: ago(2, 1, 30) }],
+            aiRiskScore: 2, aiRiskLevel: 'Low Confidence Detected', aiProctoringSummary: 'Single minor tab switch. Rest of feed was normal.',
+            answers: aaravExam6Answers.answers
+        });
+        await Exam.findByIdAndUpdate(exam6._id, { attemptCount: 1, averageScore: aaravExam6Answers.totalScore });
+
+        // Aarav attempt on exam8 (Physics Thermodynamics)
+        const aaravExam8Answers = generateAttemptsAnswers(exam8, 88);
+        await ExamAttempt.create({
+            examId: exam8._id, studentId: uStudents.aarav._id, courseId: c3._id, attemptNumber: 1,
+            score: aaravExam8Answers.totalScore, percentage: Math.round((aaravExam8Answers.totalScore / exam8.totalMarks) * 100),
+            isPassed: aaravExam8Answers.totalScore >= exam8.passingMarks, timeSpent: 1500, percentile: 90,
+            startedAt: ago(4, 5), submittedAt: ago(4, 4),
+            tabSwitchCount: 0, proctoringEvents: [],
+            aiRiskScore: 0, aiRiskLevel: 'Safe', aiProctoringSummary: 'Clean attempt.',
+            answers: aaravExam8Answers.answers
+        });
+        await Exam.findByIdAndUpdate(exam8._id, { attemptCount: 1, averageScore: aaravExam8Answers.totalScore });
+
+        // Aarav attempt on exam10 (Maths Quadratic Equations)
+        const aaravExam10Answers = generateAttemptsAnswers(exam10, 94);
+        await ExamAttempt.create({
+            examId: exam10._id, studentId: uStudents.aarav._id, courseId: c8._id, attemptNumber: 1,
+            score: aaravExam10Answers.totalScore, percentage: Math.round((aaravExam10Answers.totalScore / exam10.totalMarks) * 100),
+            isPassed: aaravExam10Answers.totalScore >= exam10.passingMarks, timeSpent: 1100, percentile: 96,
+            startedAt: ago(1, 3), submittedAt: ago(1, 2),
+            tabSwitchCount: 0, proctoringEvents: [],
+            aiRiskScore: 0, aiRiskLevel: 'Safe', aiProctoringSummary: 'Outstanding score. Zero anomalies detected.',
+            answers: aaravExam10Answers.answers
+        });
+        await Exam.findByIdAndUpdate(exam10._id, { attemptCount: 1, averageScore: aaravExam10Answers.totalScore });
 
         // ══════════════════════════════════════════════════════════════════════
         //  20. ASSIGNMENTS & SUBMISSIONS
@@ -1145,21 +1325,56 @@ async function seed() {
         //  22. PAYMENTS
         // ══════════════════════════════════════════════════════════════════════
         console.log('🌱 [22/40] Payments...');
+        // ══════════════════════════════════════════════════════════════════════
+        //  22. PAYMENTS
+        // ══════════════════════════════════════════════════════════════════════
+        console.log('🌱 [22/40] Payments...');
         const paymentData = [
             // Institute subscriptions
+            { sid: uApexAdmin._id, instId: apexInstitute._id, type: 'subscription_renewal', title: 'Apex Academy — Enterprise Plan Renewal', amount: 9999, status: 'paid', d: 90, settled: false, pf: 0 },
+            { sid: uApexAdmin._id, instId: apexInstitute._id, type: 'subscription_renewal', title: 'Apex Academy — Enterprise Plan Renewal', amount: 9999, status: 'paid', d: 60, settled: false, pf: 0 },
             { sid: uApexAdmin._id, instId: apexInstitute._id, type: 'subscription_renewal', title: 'Apex Academy — Enterprise Plan Renewal', amount: 9999, status: 'paid', d: 30, settled: false, pf: 0 },
+            { sid: uZenithAdmin._id, instId: zenithInstitute._id, type: 'subscription_renewal', title: 'Zenith Tech Space — Pro Plan Renewal', amount: 2999, status: 'paid', d: 45, settled: false, pf: 0 },
             { sid: uZenithAdmin._id, instId: zenithInstitute._id, type: 'subscription_renewal', title: 'Zenith Tech Space — Pro Plan Renewal', amount: 2999, status: 'paid', d: 15, settled: false, pf: 0 },
+            
             // Course purchases
             { sid: uStudents.aarav._id, cid: c3._id, instId: apexInstitute._id, type: 'course_purchase', title: `Enrollment: ${c3.title}`, amount: 3499, status: 'paid', d: 30, settled: true, pf: 349.9, ie: 3149.1, stlAt: 20, pRef: 'pout_ref_APX001' },
+            { sid: uStudents.aarav._id, cid: c8._id, instId: apexInstitute._id, type: 'course_purchase', title: `Enrollment: ${c8.title}`, amount: 2999, status: 'paid', d: 25, settled: true, pf: 299.9, ie: 2699.1, stlAt: 15, pRef: 'pout_ref_APX003' },
+            { sid: uStudents.aarav._id, cid: c6._id, type: 'course_purchase', title: `Enrollment: ${c6.title}`, amount: 2499, status: 'paid', d: 15, settled: false, pf: 249.9, ie: 0 },
+            { sid: uStudents.aarav._id, cid: c2._id, type: 'course_purchase', title: `Enrollment: ${c2.title}`, amount: 1999, status: 'paid', d: 10, settled: false, pf: 199.9, ie: 0 },
+            
             { sid: uStudents.diya._id, cid: c3._id, instId: apexInstitute._id, type: 'course_purchase', title: `Enrollment: ${c3.title}`, amount: 3499, status: 'paid', d: 28, settled: true, pf: 349.9, ie: 3149.1, stlAt: 18, pRef: 'pout_ref_APX002' },
+            { sid: uStudents.diya._id, cid: c5._id, instId: apexInstitute._id, type: 'course_purchase', title: `Enrollment: ${c5.title}`, amount: 2499, status: 'paid', d: 25, settled: true, pf: 249.9, ie: 2249.1, stlAt: 15, pRef: 'pout_ref_APX004' },
+            
+            { sid: uStudents.ishaan._id, cid: c3._id, instId: apexInstitute._id, type: 'course_purchase', title: `Enrollment: ${c3.title}`, amount: 3499, status: 'paid', d: 25, settled: true, pf: 349.9, ie: 3149.1, stlAt: 15, pRef: 'pout_ref_APX005' },
+            { sid: uStudents.ananya._id, cid: c3._id, instId: apexInstitute._id, type: 'course_purchase', title: `Enrollment: ${c3.title}`, amount: 3499, status: 'paid', d: 22, settled: false, pf: 349.9, ie: 3149.1 },
+            { sid: uStudents.tanvi._id, cid: c3._id, instId: apexInstitute._id, type: 'course_purchase', title: `Enrollment: ${c3.title}`, amount: 3499, status: 'paid', d: 20, settled: false, pf: 349.9, ie: 3149.1 },
+            
             { sid: uStudents.kabir._id, cid: c1._id, instId: zenithInstitute._id, type: 'course_purchase', title: `Enrollment: ${c1.title}`, amount: 4999, status: 'paid', d: 20, settled: true, pf: 499.9, ie: 4499.1, stlAt: 10, pRef: 'pout_ref_ZNT001' },
+            { sid: uStudents.kabir._id, cid: c4._id, instId: zenithInstitute._id, type: 'course_purchase', title: `Enrollment: ${c4.title}`, amount: 2999, status: 'paid', d: 15, settled: true, pf: 299.9, ie: 2699.1, stlAt: 5, pRef: 'pout_ref_ZNT002' },
             { sid: uStudents.nisha._id, cid: c1._id, instId: zenithInstitute._id, type: 'course_purchase', title: `Enrollment: ${c1.title}`, amount: 4999, status: 'paid', d: 20, settled: false, pf: 499.9, ie: 4499.1 },
             { sid: uStudents.aditya._id, cid: c2._id, type: 'course_purchase', title: `Enrollment: ${c2.title}`, amount: 1999, status: 'paid', d: 12, settled: false, pf: 199.9, ie: 0 },
             { sid: uStudents.pooja._id, cid: c6._id, type: 'course_purchase', title: `Enrollment: ${c6.title}`, amount: 2499, status: 'paid', d: 14, settled: false, pf: 249.9, ie: 0 },
-            // Failed payment
+            
+            // Failed payments
+            { sid: uStudents.aarav._id, cid: c4._id, instId: zenithInstitute._id, type: 'course_purchase', title: `Enrollment: ${c4.title} (Failed)`, amount: 2999, status: 'failed', d: 5, settled: false, pf: 0 },
+            { sid: uStudents.aarav._id, cid: c1._id, instId: zenithInstitute._id, type: 'course_purchase', title: `Enrollment: ${c1.title} (Failed)`, amount: 4999, status: 'failed', d: 10, settled: false, pf: 0 },
             { sid: uStudents.aryan._id, cid: c4._id, instId: zenithInstitute._id, type: 'course_purchase', title: `Enrollment: ${c4.title} (Failed)`, amount: 2999, status: 'failed', d: 6, settled: false, pf: 0 },
-            // Institute fee
+            
+            // Institute fee payments (Apex Academy)
+            { sid: uStudents.aarav._id, instId: apexInstitute._id, type: 'institute_fee', title: 'Apex Academy — Admission Fee', amount: 10000, status: 'paid', d: 90, settled: true, pf: 1000, ie: 9000, stlAt: 80, pRef: 'pout_ref_FEE000' },
+            { sid: uStudents.aarav._id, instId: apexInstitute._id, type: 'institute_fee', title: 'Apex Academy — Quarterly Tuition Fee Q1 2026', amount: 15000, status: 'paid', d: 75, settled: true, pf: 1500, ie: 13500, stlAt: 65, pRef: 'pout_ref_FEE002' },
             { sid: uStudents.aarav._id, instId: apexInstitute._id, type: 'institute_fee', title: 'Apex Academy — Quarterly Tuition Fee Q2 2026', amount: 15000, status: 'paid', d: 45, settled: true, pf: 1500, ie: 13500, stlAt: 35, pRef: 'pout_ref_FEE001' },
+            { sid: uStudents.aarav._id, instId: apexInstitute._id, type: 'institute_fee', title: 'Apex Academy — Exam & Lab Fee', amount: 2500, status: 'paid', d: 15, settled: true, pf: 250, ie: 2250, stlAt: 5, pRef: 'pout_ref_FEE003' },
+            { sid: uStudents.aarav._id, instId: apexInstitute._id, type: 'institute_fee', title: 'Apex Academy — Monthly Bus Fee June 2026', amount: 1500, status: 'created', d: 2, settled: false, pf: 0, dueDate: future(5) },
+            
+            { sid: uStudents.diya._id, instId: apexInstitute._id, type: 'institute_fee', title: 'Apex Academy — Quarterly Tuition Fee Q2 2026', amount: 15000, status: 'paid', d: 42, settled: true, pf: 1500, ie: 13500, stlAt: 32, pRef: 'pout_ref_FEE004' },
+            { sid: uStudents.ishaan._id, instId: apexInstitute._id, type: 'institute_fee', title: 'Apex Academy — Quarterly Tuition Fee Q2 2026', amount: 15000, status: 'paid', d: 40, settled: true, pf: 1500, ie: 13500, stlAt: 30, pRef: 'pout_ref_FEE005' },
+            { sid: uStudents.ananya._id, instId: apexInstitute._id, type: 'institute_fee', title: 'Apex Academy — Quarterly Tuition Fee Q2 2026', amount: 15000, status: 'paid', d: 38, settled: true, pf: 1500, ie: 13500, stlAt: 28, pRef: 'pout_ref_FEE006' },
+            { sid: uStudents.tanvi._id, instId: apexInstitute._id, type: 'institute_fee', title: 'Apex Academy — Quarterly Tuition Fee Q2 2026', amount: 15000, status: 'paid', d: 35, settled: true, pf: 1500, ie: 13500, stlAt: 25, pRef: 'pout_ref_FEE007' },
+            
+            // Zenith fee payments
+            { sid: uStudents.kabir._id, instId: zenithInstitute._id, type: 'institute_fee', title: 'Zenith Tech Space — Monthly Fee May 2026', amount: 8000, status: 'paid', d: 30, settled: true, pf: 800, ie: 7200, stlAt: 20, pRef: 'pout_ref_FEE008' },
             { sid: uStudents.kabir._id, instId: zenithInstitute._id, type: 'institute_fee', title: 'Zenith Tech Space — Monthly Fee June 2026', amount: 8000, status: 'created', d: 2, settled: false, pf: 0, dueDate: future(5) },
         ];
         let payIdx = 1000;
@@ -1184,6 +1399,9 @@ async function seed() {
         //  23. PAYOUT REQUESTS
         // ══════════════════════════════════════════════════════════════════════
         console.log('🌱 [23/40] Payout Requests...');
+        await PayoutRequest.create({ tutorId: tVikram._id, amount: 25000, status: 'paid', bankDetails: { accountHolderName: 'Vikram Rathore', accountNumber: 'XXXX-XXXX-9901', bankName: 'SBI Bank', ifscCode: 'SBIN0004521', upiId: 'vikram@upi' }, processedDate: ago(25), adminNotes: 'Processed via SBI.', transactionId: 'txn_sbi_vr_001' });
+        await PayoutRequest.create({ tutorId: tVikram._id, amount: 35000, status: 'paid', bankDetails: { accountHolderName: 'Vikram Rathore', accountNumber: 'XXXX-XXXX-9901', bankName: 'SBI Bank', ifscCode: 'SBIN0004521', upiId: 'vikram@upi' }, processedDate: ago(15), adminNotes: 'Processed via SBI.', transactionId: 'txn_sbi_vr_002' });
+        await PayoutRequest.create({ tutorId: tVikram._id, amount: 42000, status: 'pending', bankDetails: { accountHolderName: 'Vikram Rathore', accountNumber: 'XXXX-XXXX-9901', bankName: 'SBI Bank', ifscCode: 'SBIN0004521', upiId: 'vikram@upi' }, adminNotes: 'Under review for monthly cycle.' });
         await PayoutRequest.create({ tutorId: tRohanV._id, amount: 15000, status: 'paid', bankDetails: { accountHolderName: 'Rohan Verma', accountNumber: 'XXXX-XXXX-4521', bankName: 'HDFC Bank', ifscCode: 'HDFC0001234', upiId: 'rohan@upi' }, processedDate: ago(5), adminNotes: 'Processed via RazorpayX.', transactionId: 'txn_rpx_rv_001' });
         await PayoutRequest.create({ tutorId: tMeera._id, amount: 8500, status: 'pending', bankDetails: { accountHolderName: 'Meera Joshi', accountNumber: 'XXXX-XXXX-7890', bankName: 'ICICI Bank', ifscCode: 'ICIC0001234', upiId: 'meera@upi' }, adminNotes: 'Pending approval — monthly settlement cycle.' });
 
@@ -1192,9 +1410,12 @@ async function seed() {
         // ══════════════════════════════════════════════════════════════════════
         console.log('🌱 [24/40] Leave Requests...');
         await Leave.insertMany([
-            { userId: uStudents.aarav._id, role: 'student', startDate: ago(10), endDate: ago(8), reason: 'Family function — cousin\'s wedding in Ahmedabad.', status: 'approved', adminComment: 'Approved. Please collect notes from classmates.' },
+            { userId: uStudents.aarav._id, role: 'student', startDate: ago(35), endDate: ago(33), reason: 'Family trip to Ahmedabad.', status: 'approved', adminComment: 'Approved. Collect notes from classmates.' },
+            { userId: uStudents.aarav._id, role: 'student', startDate: ago(10), endDate: ago(8), reason: 'Severe fever and fatigue.', status: 'approved', adminComment: 'Approved. Medical certificate submitted.' },
+            { userId: uStudents.aarav._id, role: 'student', startDate: future(10), endDate: future(12), reason: 'Participating in National Science Olympiad.', status: 'pending' },
+            { userId: uStudents.aarav._id, role: 'student', startDate: ago(3), endDate: ago(2), reason: 'Personal holiday.', status: 'rejected', adminComment: 'Rejected due to conflicts with JEE practice test scheduled on those days.' },
             { userId: uStudents.diya._id, role: 'student', startDate: future(3), endDate: future(5), reason: 'Not feeling well, have doctor\'s appointment scheduled.', status: 'pending' },
-            { userId: uTutorSneha._id, role: 'tutor', startDate: ago(7), endDate: ago(5), reason: 'Medical conference at AIIMS — presenting research paper.', status: 'approved', adminComment: 'Approved. Dr. Vikram will cover Biology doubts.', substituteId: tVikram._id },
+            { userId: uTutorSneha._id, role: 'tutor', startDate: ago(7), endDate: ago(5), reason: 'Medical conference at AIIMS — presenting research paper.', status: 'approved', adminComment: 'Approved. Dr. Vikram will cover doubts.', substituteId: tVikram._id },
             { userId: uStudents.kabir._id, role: 'student', startDate: ago(5), endDate: ago(4), reason: 'Personal emergency.', status: 'rejected', adminComment: 'Rejected — exam week. Please attend online if possible.' },
         ]);
 
@@ -1415,6 +1636,9 @@ async function seed() {
             { name: 'Rahul Verma', email: 'rahul.v@gmail.com', phone: '+919111222333', courseOfInterest: c3._id, message: 'Interested in JEE Physics crash course. Can I get a trial lecture?', status: 'new', source: 'website', conversionStatus: 'none' },
             { name: 'Shruti Jain', email: 'shruti.j@gmail.com', phone: '+919222333444', courseOfInterest: c1._id, message: 'Looking for MERN bootcamp. Do you offer EMI payment option?', status: 'contacted', source: 'website', conversionStatus: 'trial', assignedCounselor: uApexAdmin._id, notes: [{ text: 'Called and explained EMI options. Interested in MERN Cohort-8.', addedBy: uApexAdmin._id }] },
             { name: 'Deepak Rao', email: 'deepak.rao@gmail.com', phone: '+919333444555', courseOfInterest: c6._id, message: 'Want to transition from manual testing to data science. Is this course right for me?', status: 'qualified', source: 'website', conversionStatus: 'enrolled', convertedAt: ago(5), conversionValue: 2499 },
+            { name: 'Amit Sharma', email: 'amit.s@gmail.com', phone: '+919444555666', courseOfInterest: c3._id, message: 'Enquiring for my son. He is in Class 12 and wants Physics coaching.', status: 'contacted', source: 'website', conversionStatus: 'trial', assignedCounselor: uApexAdmin._id, notes: [{ text: 'Discussed schedule. Invited for face-to-face meet at Kota branch.', addedBy: uApexAdmin._id }] },
+            { name: 'Neha Gupta', email: 'neha.g@gmail.com', phone: '+919555666777', courseOfInterest: c8._id, message: 'Do you cover advanced calculus topics for JEE?', status: 'new', source: 'social_media', conversionStatus: 'none', assignedCounselor: uApexAdmin._id },
+            { name: 'Rohit Sen', email: 'rohit.s@gmail.com', phone: '+919666777888', courseOfInterest: c2._id, message: 'Need advanced training in React performance for my dev team.', status: 'qualified', source: 'referral', conversionStatus: 'none' }
         ]);
 
         // ══════════════════════════════════════════════════════════════════════

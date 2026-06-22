@@ -1081,12 +1081,13 @@ export const getMyAllAttempts = async (req, res) => {
   try {
     const attempts = await ExamAttempt.find({ studentId: req.user._id })
       .sort({ submittedAt: -1 })
-      .populate('examId', 'title totalMarks passingMarks'); // Populate exam details
+      .populate('examId', 'title totalMarks passingMarks type'); // Populate exam details
 
     const formattedAttempts = attempts.map(attempt => ({
       _id: attempt._id,
-      examId: attempt.examId._id,
+      examId: attempt.examId?._id,
       examTitle: attempt.examId?.title || 'Unknown Exam',
+      examType: attempt.examId?.type || 'exam',
       score: attempt.score,
       totalMarks: attempt.examId?.totalMarks || 0, // Fallback
       percentage: attempt.percentage,

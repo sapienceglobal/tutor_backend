@@ -196,7 +196,7 @@ export const getMyBatches = async (req, res) => {
             })
             .sort({ startDate: -1 });
 
-        const activeEnrollments = await Enrollment.find({ studentId, status: 'active' }).select('courseId').lean();
+        const activeEnrollments = await Enrollment.find({ studentId, status: { $in: ['active', 'completed'] } }).select('courseId').lean();
         const enrolledCourseIds = new Set(activeEnrollments.map((enrollment) => enrollment.courseId.toString()));
         const joinableBatches = batches.filter((batch) => {
             const course = batch.courseId;
