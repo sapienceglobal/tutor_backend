@@ -56,6 +56,32 @@ async function callGroqAI(prompt) {
     }
 }
 
+// Helper function to call OpenAI (gpt-4o-mini)
+async function callOpenAI(prompt) {
+    try {
+        const res = await axios.post(
+            'https://api.openai.com/v1/chat/completions',
+            {
+                model: 'gpt-4o-mini',
+                messages: [{ role: 'user', content: prompt }],
+                max_tokens: 4000,
+                temperature: 0.5,
+            },
+            {
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+                },
+            }
+        );
+
+        return res.data.choices[0].message.content;
+    } catch (error) {
+        console.error('OpenAI error:', error.response?.data || error.message);
+        throw new Error('AI generation failed');
+    }
+}
+
 // Helper function to call Groq AI with full messages array
 async function callGroqAIChat(messages) {
     try {
@@ -224,21 +250,23 @@ Return ONLY a valid JSON array with no additional text:
 ]
 `;
 
-        // Call Groq AI
-        const rawResponse = await callGroqAI(prompt);
+        // Call OpenAI
+        const rawResponse = await callOpenAI(prompt);
 
         // Parse JSON safely
         let questions;
         try {
-            // Find JSON array in response
-            const jsonStart = rawResponse.indexOf('[');
-            const jsonEnd = rawResponse.lastIndexOf(']') + 1;
-
+            let cleanedText = rawResponse.replace(/```(?:json)?/gi, '').trim();
+            const jsonStart = cleanedText.indexOf('[');
+            const jsonEnd = cleanedText.lastIndexOf(']') + 1;
+            
             if (jsonStart === -1 || jsonEnd === 0) {
                 throw new Error('No JSON array found in response');
             }
 
-            let jsonText = rawResponse.slice(jsonStart, jsonEnd);
+            let jsonText = cleanedText.slice(jsonStart, jsonEnd);
+            // remove trailing commas just in case
+            jsonText = jsonText.replace(/,\s*([\]}])/g, '$1');
 
             try {
                 questions = JSON.parse(jsonText);
@@ -305,11 +333,12 @@ Return ONLY a valid JSON array with no additional text:
         logAIUsage(req.user.id, 'question_generation', { topic, count: questions.length, difficulty });
 
     } catch (error) {
-        console.error('Generate questions error:', error);
+        console.error('Generate questions error:', error.response?.data || error.message);
+        const isRateLimit = error?.response?.status === 429 || error?.message?.includes('429');
+        
         res.status(500).json({
             success: false,
-            message: 'Failed to generate questions',
-            
+            message: isRateLimit ? 'AI rate limit exceeded (Too many requests). Please try again after 1 minute.' : 'Failed to generate questions. AI might have returned invalid format.',
         });
     }
 };
@@ -5334,8 +5363,15 @@ Ensure that:
 2. The type field MUST be one of: "grammar", "spelling", "key_term", "poor_phrasing", "factual_error".
 3. The output is strictly valid JSON without markdown wrapping.`;
 
-        const aiResponseText = await callGroqAI(prompt);
-        const evaluation = JSON.parse(aiResponseText);
+        const aiResponseText = await callOpenAI(prompt);
+        let cleanedText = aiResponseText.replace(/```(?:json)?/gi, '').trim();
+        const jsonStart = cleanedText.indexOf('{');
+        const jsonEnd = cleanedText.lastIndexOf('}') + 1;
+        if (jsonStart !== -1 && jsonEnd !== 0) {
+            cleanedText = cleanedText.slice(jsonStart, jsonEnd);
+        }
+        
+        const evaluation = JSON.parse(cleanedText);
 
         return {
             isCorrect: evaluation.isCorrect || false,
