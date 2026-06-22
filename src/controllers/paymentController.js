@@ -153,6 +153,15 @@ export const verifyPayment = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Payment record not found' });
         }
 
+        if (payment.studentId.toString() !== req.user.id) {
+            await logBillingEvent(req.user.id, 'BILLING_PAYMENT_FAILED', {
+                razorpayOrderId,
+                reason: 'Payment order does not belong to authenticated user',
+                ownerId: payment.studentId
+            });
+            return res.status(403).json({ success: false, message: 'Unauthorized payment order' });
+        }
+
         // Fulfill payment
         payment = await fulfillPayment(payment, razorpayPaymentId, razorpaySignature);
 

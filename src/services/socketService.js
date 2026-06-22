@@ -1,6 +1,8 @@
 import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
+import { getForUser as getEntitlementsForUser } from './entitlementService.js';
+import { evaluateAccess } from './accessPolicy.js';
 
 let io = null;
 
@@ -94,7 +96,7 @@ export const initSocket = (server) => {
         return next(new Error('Authentication error: Invalid token'));
       }
 
-      const user = await User.findById(decoded.id).select('_id role isBlocked');
+      const user = await User.findById(decoded.id).select('_id role instituteId isBlocked');
       if (!user) {
         return next(new Error('Authentication error: User not found'));
       }
@@ -106,6 +108,7 @@ export const initSocket = (server) => {
       // Attach user details to socket
       socket.userId = user._id.toString();
       socket.userRole = user.role;
+      socket.userInstituteId = user.instituteId || null;
       next();
     } catch (err) {
       console.error('Socket authentication error:', err);
@@ -144,7 +147,7 @@ export const initSocket = (server) => {
 
       // SECURITY: Verify the exam exists and is valid
       try {
-        const { Exam } = await import('../models/Exam.js');
+        const { Exam, ExamAttempt } = await import('../models/Exam.js');
         const exam = await Exam.findById(examId);
         if (!exam) {
           socket.emit('exam_error', {
@@ -158,6 +161,43 @@ export const initSocket = (server) => {
             message: 'Active exam not found. Verify start status.'
           });
           return;
+        }
+
+        const entitlements = await getEntitlementsForUser({
+          _id: userId,
+          role: socket.userRole,
+          instituteId: socket.userInstituteId
+        });
+
+        const accessDecision = evaluateAccess({
+          resource: exam,
+          entitlements,
+          requireEnrollment: !exam.isFree,
+          requirePayment: !exam.isFree,
+          isFree: exam.isFree,
+          courseId: exam.courseId,
+        });
+
+        if (!accessDecision.allowed) {
+          socket.emit('exam_error', {
+            message: 'You are not authorized to join this exam session'
+          });
+          return;
+        }
+
+        if (attemptId) {
+          const attempt = await ExamAttempt.findOne({
+            _id: attemptId,
+            examId: exam._id,
+            studentId: userId
+          }).select('_id');
+
+          if (!attempt) {
+            socket.emit('exam_error', {
+              message: 'Invalid exam attempt for this student'
+            });
+            return;
+          }
         }
 
         // Check if there is already another active socket for this student on ANY exam
@@ -177,15 +217,15 @@ export const initSocket = (server) => {
           // Register this socket as the active exam session
           const sessionData = {
             socketId: socket.id,
-            examId,
+            examId: exam._id.toString(),
             attemptId: attemptId || null,
             startTime: Date.now()
           };
           activeExamSessions.set(userId, sessionData);
-          socket.join(`exam_${examId}`);
+          socket.join(`exam_${exam._id}`);
           
           // Notify tutor of joined student in real time
-          notifyTutorStudentJoined(examId, userId, sessionData);
+          notifyTutorStudentJoined(exam._id, userId, sessionData);
         }
       } catch (err) {
         console.error('join_exam_attempt error during verification:', err);

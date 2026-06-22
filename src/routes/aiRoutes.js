@@ -35,7 +35,7 @@ import {
 
     getStudyPlanStudents, generateStudyPlan, getStudyPlans, getStudyPlanById, deleteStudyPlan,
 
-    getRiskPrediction,
+    getRiskPrediction, performRiskPredictorAction,
 
     getDropoutRiskAnalysis, getStudentDropoutRisk,
 
@@ -323,6 +323,7 @@ router.get('/study-plans/:id', protect, getStudyPlanById);
 router.delete('/study-plans/:id', protect, deleteStudyPlan);
 
 router.get('/risk-predictor', protect, getRiskPrediction); // Assuming DB/Math aggregation
+router.post('/risk-predictor/action', protect, performRiskPredictorAction);
 
 router.get('/dropout-risk', protect, getDropoutRiskAnalysis);
 router.get('/dropout-risk/student/:studentId', protect, getStudentDropoutRisk);

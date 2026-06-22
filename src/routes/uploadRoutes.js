@@ -10,6 +10,10 @@ import { protect, authorize } from '../middleware/auth.js';
 import { processVideoForHLS } from '../services/hlsService.js';
 import { requireFeature } from '../middleware/subscriptionMiddleware.js';
 import axios from 'axios';
+import Lesson from '../models/Lesson.js';
+import { getForUser as getEntitlementsForUser } from '../services/entitlementService.js';
+import { evaluateAccess } from '../services/accessPolicy.js';
+import { toStringId } from '../utils/audience.js';
 
 const router = express.Router();
 
@@ -41,6 +45,118 @@ const localVideoUpload = multer({
     return cb(null, true);
   },
 });
+
+const escapeRegex = (value = '') => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const normalizeCloudinaryAssetPath = (pathSuffix = '') => {
+  const decoded = decodeURIComponent(String(pathSuffix).split('?')[0] || '');
+  const match = decoded.match(/^[^/]+\/video\/upload\/(.+)$/);
+  if (!match) return null;
+
+  const parts = match[1].split('/').filter(Boolean);
+  while (
+    parts.length > 1
+    && (
+      /^v\d+$/.test(parts[0])
+      || /^sp_/.test(parts[0])
+      || parts[0].includes(',')
+      || /^[a-z]_[^/]+/.test(parts[0])
+    )
+  ) {
+    parts.shift();
+  }
+
+  return parts.join('/').replace(/\.(m3u8|ts|m4s|mp4)$/i, '');
+};
+
+const normalizeCloudinaryUrlAssetPath = (url = '') => {
+  const match = String(url).match(/res\.cloudinary\.com\/([^/]+\/video\/upload\/[^?#]+)/i);
+  return match ? normalizeCloudinaryAssetPath(match[1]) : null;
+};
+
+const lessonMatchesHlsPath = (lesson, normalizedPath) => {
+  if (!lesson || !normalizedPath) return false;
+  const videoUrl = lesson.content?.videoUrl || '';
+  const lessonPath = normalizeCloudinaryUrlAssetPath(videoUrl);
+  if (!lessonPath) return false;
+
+  return normalizedPath === lessonPath
+    || normalizedPath.startsWith(`${lessonPath}/`)
+    || lessonPath.startsWith(`${normalizedPath}/`);
+};
+
+const canManageCourse = async (req, course) => {
+  if (!course) return false;
+  if (req.user.role === 'superadmin') return true;
+
+  const entitlements = await getEntitlementsForUser(req.user);
+  const userId = toStringId(req.user._id || req.user.id);
+  const courseId = toStringId(course._id);
+  const courseTutorId = toStringId(course.tutorId?._id || course.tutorId);
+  const courseInstituteId = toStringId(course.instituteId);
+
+  if (toStringId(course.createdBy) === userId) return true;
+  if (entitlements?.tutorId && courseTutorId === entitlements.tutorId) return true;
+  if ((entitlements?.tutorCourseIds || []).includes(courseId)) return true;
+
+  if (req.user.role === 'admin' && courseInstituteId) {
+    return (entitlements?.membershipInstituteIds || []).includes(courseInstituteId)
+      || entitlements?.activeInstituteId === courseInstituteId;
+  }
+
+  return false;
+};
+
+const authorizeLessonHlsAccess = async (req, pathSuffix) => {
+  const normalizedPath = normalizeCloudinaryAssetPath(pathSuffix);
+  if (!normalizedPath) {
+    return { allowed: false, status: 400, message: 'Invalid Cloudinary HLS path' };
+  }
+
+  let lesson = null;
+  if (req.query.lessonId) {
+    lesson = await Lesson.findById(req.query.lessonId).populate('courseId');
+    if (!lesson || !lessonMatchesHlsPath(lesson, normalizedPath)) {
+      return { allowed: false, status: 403, message: 'HLS asset does not belong to the requested lesson' };
+    }
+  } else {
+    const assetStem = normalizedPath.split('/').pop();
+    lesson = await Lesson.findOne({
+      'content.videoUrl': { $regex: escapeRegex(assetStem), $options: 'i' }
+    }).populate('courseId');
+
+    if (!lesson || !lessonMatchesHlsPath(lesson, normalizedPath)) {
+      return { allowed: false, status: 403, message: 'Unable to verify access to this video asset' };
+    }
+  }
+
+  const course = lesson.courseId;
+  if (!course) {
+    return { allowed: false, status: 404, message: 'Course for this lesson was not found' };
+  }
+
+  if (await canManageCourse(req, course)) {
+    return { allowed: true, lesson };
+  }
+
+  const entitlements = await getEntitlementsForUser(req.user);
+  const requireEnrollment = !lesson.isFree;
+  const decision = evaluateAccess({
+    resource: course,
+    entitlements,
+    ownerId: course.createdBy,
+    requireEnrollment,
+    requirePayment: requireEnrollment && !course.isFree,
+    isFree: course.isFree || lesson.isFree,
+    courseId: course._id,
+  });
+
+  if (!decision.allowed) {
+    return { allowed: false, status: 403, message: 'You are not authorized to stream this lesson video' };
+  }
+
+  return { allowed: true, lesson };
+};
 
 // @route   POST /api/upload/image
 // @desc    Upload an image
@@ -196,6 +312,21 @@ router.get(/^\/secure-hls\/(.*)/, protect, async (req, res) => {
     return res.status(400).json({ success: false, message: 'Invalid HLS path' });
   }
 
+  let accessDecision;
+  try {
+    accessDecision = await authorizeLessonHlsAccess(req, pathSuffix);
+  } catch (error) {
+    console.error('Secure HLS access check error:', error.message);
+    return res.status(500).json({ success: false, message: 'Failed to verify HLS access' });
+  }
+
+  if (!accessDecision.allowed) {
+    return res.status(accessDecision.status || 403).json({
+      success: false,
+      message: accessDecision.message || 'Not authorized to stream this video'
+    });
+  }
+
   const cloudinaryUrl = `https://res.cloudinary.com/${pathSuffix}`;
   const isManifest = pathSuffix.endsWith('.m3u8');
 
@@ -242,6 +373,11 @@ router.get(/^\/secure-hls\/(.*)/, protect, async (req, res) => {
           if (!rewrittenUri.includes('token=')) {
             rewrittenUri = `${rewrittenUri}${separator}token=${token}`;
           }
+        }
+
+        if (accessDecision.lesson?._id && !rewrittenUri.includes('lessonId=')) {
+          const separator = rewrittenUri.includes('?') ? '&' : '?';
+          rewrittenUri = `${rewrittenUri}${separator}lessonId=${accessDecision.lesson._id}`;
         }
 
         return rewrittenUri;

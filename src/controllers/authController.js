@@ -1658,6 +1658,14 @@ export const upgradePersonalSubscription = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Plan not found' });
     }
 
+    if (plan.planType !== 'personal') {
+      return res.status(400).json({ success: false, message: 'Only personal plans can be activated on a user account' });
+    }
+
+    if (plan.planRole && plan.planRole !== 'all' && plan.planRole !== 'both' && plan.planRole !== req.user.role) {
+      return res.status(403).json({ success: false, message: `This plan is only available for ${plan.planRole} accounts` });
+    }
+
     // SECURITY: If the plan is paid, require a verified payment record
     if (plan.price > 0) {
       if (!paymentId) {
@@ -1692,11 +1700,14 @@ export const upgradePersonalSubscription = async (req, res) => {
     const durationMs = plan.billingCycle === 'yearly'
       ? 365 * 24 * 60 * 60 * 1000
       : 30 * 24 * 60 * 60 * 1000; // default 30 days
+    const subscriptionExpiresAt = plan.billingCycle === 'lifetime'
+      ? null
+      : new Date(Date.now() + durationMs);
 
     user.personalSubscription = {
       planName: plan.name,
       isActive: true,
-      subscriptionExpiresAt: new Date(Date.now() + durationMs),
+      subscriptionExpiresAt,
       features: {
         aiFeatures: plan.features.aiAssistant || plan.features.aiAssessment || plan.features.aiIntelligence || false,
         aiCreditsPerMonth: plan.features.aiCreditsPerMonth || 0,

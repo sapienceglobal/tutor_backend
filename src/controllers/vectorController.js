@@ -1,8 +1,47 @@
-import VectorService from '../services/vectorService-mock.js';
+import VectorService from '../services/vectorService.js';
 import Lesson from '../models/Lesson.js';
 import Course from '../models/Course.js';
 import AIUsageLog from '../models/AIUsageLog.js';
-import Institute from '../models/Institute.js';
+import { getForUser as getEntitlementsForUser } from '../services/entitlementService.js';
+import { evaluateAccess } from '../services/accessPolicy.js';
+import { toStringId } from '../utils/audience.js';
+
+const canManageCourse = async (req, course) => {
+  if (!course) return false;
+  if (req.user.role === 'superadmin') return true;
+
+  const entitlements = await getEntitlementsForUser(req.user);
+  const userId = toStringId(req.user._id || req.user.id);
+  const courseId = toStringId(course._id);
+  const courseTutorId = toStringId(course.tutorId?._id || course.tutorId);
+  const courseInstituteId = toStringId(course.instituteId);
+
+  if (toStringId(course.createdBy) === userId) return true;
+  if (entitlements?.tutorId && courseTutorId === entitlements.tutorId) return true;
+  if ((entitlements?.tutorCourseIds || []).includes(courseId)) return true;
+
+  if (req.user.role === 'admin' && courseInstituteId) {
+    return (entitlements?.membershipInstituteIds || []).includes(courseInstituteId)
+      || entitlements?.activeInstituteId === courseInstituteId;
+  }
+
+  return false;
+};
+
+const canReadCourse = async (req, course, { requireEnrollment = true } = {}) => {
+  if (await canManageCourse(req, course)) return { allowed: true };
+
+  const entitlements = await getEntitlementsForUser(req.user);
+  return evaluateAccess({
+    resource: course,
+    entitlements,
+    ownerId: course.createdBy,
+    requireEnrollment,
+    requirePayment: requireEnrollment && !course.isFree,
+    isFree: course.isFree,
+    courseId: course._id,
+  });
+};
 
 // @desc    Generate embeddings for a lesson
 // @route   POST /api/vector/generate/:lessonId
@@ -26,8 +65,8 @@ export const generateLessonEmbeddings = async (req, res) => {
       });
     }
 
-    // Check authorization (tutor who created the course or admin)
-    if (lesson.courseId.tutorId.toString() !== userId && req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+    // Check authorization (course owner/tutor, institute admin, or superadmin)
+    if (!(await canManageCourse(req, lesson.courseId))) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to generate embeddings for this lesson'
@@ -78,7 +117,7 @@ export const generateCourseEmbeddings = async (req, res) => {
     }
 
     // Check authorization
-    if (course.tutorId.toString() !== userId && req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+    if (!(await canManageCourse(req, course))) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to generate embeddings for this course'
@@ -172,6 +211,14 @@ export const similaritySearch = async (req, res) => {
       });
     }
 
+    const accessDecision = await canReadCourse(req, course, { requireEnrollment: !course.isFree });
+    if (!accessDecision.allowed) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to search this course content'
+      });
+    }
+
     // Get user's instituteId
     const user = await (await import('../models/User.js')).default.findById(userId);
     const instituteId = user?.instituteId || course.instituteId;
@@ -259,7 +306,7 @@ export const deleteLessonEmbeddings = async (req, res) => {
     }
 
     // Check authorization
-    if (lesson.courseId.tutorId.toString() !== userId && req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+    if (!(await canManageCourse(req, lesson.courseId))) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to delete embeddings for this lesson'
@@ -291,11 +338,6 @@ async function logAIUsage(userId, action, details = {}) {
     const instituteId = user?.instituteId || null;
 
     await AIUsageLog.create({ userId, instituteId, action, details });
-
-    // Increment institute AI usage count
-    if (instituteId) {
-      await Institute.findByIdAndUpdate(instituteId, { $inc: { aiUsageCount: 1 } });
-    }
   } catch (err) {
     console.error('AI usage log error:', err.message);
   }

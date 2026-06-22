@@ -3,7 +3,6 @@ import Lesson from '../models/Lesson.js';
 import Enrollment from '../models/Enrollment.js';
 import QuizAttempt from '../models/QuizAttempt.js';
 import AIUsageLog from '../models/AIUsageLog.js';
-import Institute from '../models/Institute.js';
 import VectorService from '../services/vectorService.js';
 import AIChatSession from '../models/AIChatSession.js';
 import DoubtLog from '../models/DoubtLog.js';
@@ -27,11 +26,6 @@ async function logAIUsage(userId, action, details = {}) {
         const instituteId = user?.instituteId || null;
 
         await AIUsageLog.create({ userId, instituteId, action, details });
-
-        // Increment institute AI usage count
-        if (instituteId) {
-            await Institute.findByIdAndUpdate(instituteId, { $inc: { aiUsageCount: 1 } });
-        }
     } catch (err) {
         console.error('AI usage log error:', err.message);
     }
@@ -2985,8 +2979,8 @@ export const shareLectureSummary = async (req, res) => {
             const Enrollment = (await import('../models/Enrollment.js')).default;
             const { createNotification } = await import('./notificationController.js');
 
-            const enrollments = await Enrollment.find({ courseId, status: 'active' }).select('userId').lean();
-            const studentIds = enrollments.map(e => e.userId);
+            const enrollments = await Enrollment.find({ courseId, status: 'active' }).select('studentId').lean();
+            const studentIds = enrollments.map(e => e.studentId);
 
             if (studentIds.length > 0) {
                 const message = `Your tutor shared a new lecture summary: "${record.title}". View it in your AI Buddy tab.`;
@@ -3533,14 +3527,75 @@ export const getStudyPlanStudents = async (req, res) => {
     }
 };
 
+const buildFallbackStudyPlan = ({
+    studentName,
+    weakTopics = [],
+    durationWeeks = 2,
+    hoursPerDay = 2,
+    difficulty = 'moderate',
+}) => {
+    const totalDays = Math.min(Number(durationWeeks || 2) * 7, 14);
+    const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    const safeTopics = weakTopics.length ? weakTopics : ['Core concepts revision', 'Practice questions', 'Weekly assessment'];
+    const minutes = Number(hoursPerDay || 2) * 60;
+
+    const weeklyPlan = Array.from({ length: totalDays }).map((_, index) => {
+        const topic = safeTopics[index % safeTopics.length];
+        const isQuizDay = index % 5 === 4;
+        const isRevisionDay = index % 3 === 2;
+        return {
+            day: dayNames[index % 7],
+            date: `Day ${index + 1}`,
+            focus: isQuizDay ? 'Assessment Checkpoint' : isRevisionDay ? 'Revision and Recall' : 'Concept Building',
+            totalMinutes: minutes,
+            topics: [
+                {
+                    title: isQuizDay ? `${topic} checkpoint quiz` : `${topic} concept session`,
+                    duration: `${Math.max(30, Math.round(minutes * 0.45))} mins`,
+                    type: isQuizDay ? 'quiz' : 'study',
+                    description: isQuizDay
+                        ? `Attempt a short quiz and mark mistakes for tutor review.`
+                        : `Review the core ideas of ${topic} and write a one-page summary.`,
+                    resources: ['Course lesson notes', 'Tutor-provided examples'],
+                },
+                {
+                    title: `${topic} practice block`,
+                    duration: `${Math.max(25, Math.round(minutes * 0.35))} mins`,
+                    type: isRevisionDay ? 'revision' : 'practice',
+                    description: `Solve targeted questions and list unresolved doubts.`,
+                    resources: ['Practice MCQs', 'Previous class examples'],
+                },
+                {
+                    title: 'Reflection and doubt log',
+                    duration: `${Math.max(10, Math.round(minutes * 0.20))} mins`,
+                    type: 'revision',
+                    description: 'Record confidence score, doubts, and next-day priority.',
+                    resources: ['Study journal'],
+                },
+            ],
+        };
+    });
+
+    return {
+        title: `${studentName || 'Student'} Recovery Plan`,
+        goal: `Build consistency and improve weak areas through a structured ${durationWeeks}-week routine.`,
+        summary: `This plan balances concept review, practice, revision, and checkpoints for ${difficulty} intensity.`,
+        estimatedScore: difficulty === 'intensive' ? 18 : difficulty === 'easy' ? 8 : 12,
+        keyMilestones: [
+            'Complete the first revision cycle',
+            'Attempt checkpoint quizzes without skipping',
+            'Share unresolved doubts with the tutor weekly',
+        ],
+        weeklyPlan,
+    };
+};
+
 // @desc    Generate AI study plan for a student
 // @route   POST /api/ai/study-plan/generate
 // @access  Private (tutor)
 // Body: { studentId, weakTopics[], durationWeeks, hoursPerDay, difficulty, courseId? }
 export const generateStudyPlan = async (req, res) => {
     try {
-        if (!GROQ_API_KEY) return res.status(500).json({ success: false, message: 'Groq API key not configured' });
-
         const {
             studentId,
             weakTopics = [],
@@ -3551,11 +3606,11 @@ export const generateStudyPlan = async (req, res) => {
         } = req.body;
 
         if (!studentId) return res.status(400).json({ success: false, message: 'studentId is required' });
-        if (!weakTopics.length) return res.status(400).json({ success: false, message: 'At least one weak topic is required' });
 
         const Tutor = (await import('../models/Tutor.js')).default;
         const User = (await import('../models/User.js')).default;
         const StudyPlan = (await import('../models/StudyPlan.js')).default;
+        const Course = (await import('../models/Course.js')).default;
 
         const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id').lean();
         if (!tutor) return res.status(403).json({ success: false, message: 'Tutor profile not found' });
@@ -3563,11 +3618,22 @@ export const generateStudyPlan = async (req, res) => {
         const student = await User.findById(studentId).select('name email instituteId').lean();
         if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
 
+        let resolvedWeakTopics = Array.isArray(weakTopics)
+            ? weakTopics.map(t => String(t || '').trim()).filter(Boolean)
+            : [];
+
+        if (resolvedWeakTopics.length === 0 && courseId) {
+            const lessons = await Lesson.find({ courseId }).select('title').sort({ order: 1 }).limit(5).lean();
+            resolvedWeakTopics = lessons.map(lesson => lesson.title).filter(Boolean);
+        }
+        if (resolvedWeakTopics.length === 0) {
+            resolvedWeakTopics = ['Core concepts revision', 'Practice questions', 'Weekly assessment'];
+        }
+
         // Optional course context
         let courseContext = '';
         if (courseId) {
             try {
-                const Course = (await import('../models/Course.js')).default;
                 const course = await Course.findById(courseId).select('title level').lean();
                 if (course) courseContext = `Course: "${course.title}" (${course.level} level)`;
             } catch { /* optional */ }
@@ -3581,7 +3647,7 @@ export const generateStudyPlan = async (req, res) => {
 You are an expert educational planner. Create a detailed personalized study plan.
 
 Student: ${student.name}
-Weak Topics: ${weakTopics.join(', ')}
+Weak Topics: ${resolvedWeakTopics.join(', ')}
 ${courseContext}
 Duration: ${durationWeeks} week(s) (${totalDays} days)
 Daily Study Time: ${hoursPerDay} hours/day
@@ -3589,7 +3655,7 @@ Difficulty Level: ${difficulty}
 
 Create a structured ${durationWeeks}-week study plan. Each day should have specific topic sessions.
 
-Return ONLY valid JSON (no markdown, no backticks):
+Return ONLY valid JSON (no markdown, no backticks, no comments, no trailing commas):
 {
   "title": "<short plan title, max 8 words>",
   "goal": "<1-2 sentence goal statement for this student>",
@@ -3624,14 +3690,31 @@ Rules:
 - Resources should be specific (e.g. "Khan Academy: Newton's Laws video", "Practice MCQs on topic")
 `.trim();
 
-        const raw = await callGroqAI(prompt);
-
         let parsed;
-        try {
-            const s = raw.indexOf('{'), e = raw.lastIndexOf('}') + 1;
-            parsed = JSON.parse(raw.slice(s, e));
-        } catch {
-            return res.status(500).json({ success: false, message: 'AI returned invalid format. Try again later.' });
+        if (GROQ_API_KEY) {
+            const raw = await callGroqAI(prompt);
+            try {
+                let jsonStr = raw;
+                const s = jsonStr.indexOf('{');
+                const e = jsonStr.lastIndexOf('}') + 1;
+                if (s !== -1 && e !== 0) {
+                    jsonStr = jsonStr.slice(s, e);
+                }
+                // Cleanup common markdown codeblock wrappers in case LLM ignores the rule
+                jsonStr = jsonStr.replace(/```json/gi, '').replace(/```/g, '').trim();
+                parsed = JSON.parse(jsonStr);
+            } catch (err) {
+                console.error('Failed to parse AI study plan JSON. Raw output:', raw);
+                return res.status(500).json({ success: false, message: 'AI returned invalid format. Try again later.' });
+            }
+        } else {
+            parsed = buildFallbackStudyPlan({
+                studentName: student.name,
+                weakTopics: resolvedWeakTopics,
+                durationWeeks,
+                hoursPerDay,
+                difficulty,
+            });
         }
 
         // ── Compute stats ─────────────────────────────────────────────
@@ -3648,7 +3731,7 @@ Rules:
             instituteId: student.instituteId || null,
             title: parsed.title || `${student.name}'s Study Plan`,
             studentName: student.name,
-            weakTopics,
+            weakTopics: resolvedWeakTopics,
             durationWeeks: Number(durationWeeks),
             hoursPerDay: Number(hoursPerDay),
             difficulty,
@@ -3668,7 +3751,16 @@ Rules:
             type: 'study_plan',
             planId: plan._id,
             studentId,
-            weakTopics,
+            weakTopics: resolvedWeakTopics,
+        });
+
+        const { createNotification } = await import('./notificationController.js');
+        await createNotification({
+            userId: studentId,
+            type: 'study_plan_generated',
+            title: 'New study plan assigned',
+            message: `${req.user.name || 'Your tutor'} assigned a personalized study plan: ${plan.title}`,
+            data: { courseId: courseId || undefined, extras: { planId: plan._id } },
         });
 
         res.status(200).json({
@@ -4139,6 +4231,342 @@ Return ONLY valid JSON array (no markdown):
     }
 };
 
+const getTutorRiskActionContext = async (req, courseId = null) => {
+    const Tutor = (await import('../models/Tutor.js')).default;
+    const Course = (await import('../models/Course.js')).default;
+    const Enrollment = (await import('../models/Enrollment.js')).default;
+
+    const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id instituteId').lean();
+    if (!tutor) {
+        const error = new Error('Tutor profile not found');
+        error.statusCode = 403;
+        throw error;
+    }
+
+    const courseFilter = { tutorId: tutor._id };
+    if (courseId) courseFilter._id = courseId;
+    const courses = await Course.find(courseFilter).select('_id title instituteId').lean();
+    const courseIds = courses.map(course => course._id);
+
+    const enrollments = await Enrollment.find({ courseId: { $in: courseIds }, status: 'active' })
+        .populate('studentId', 'name email profileImage parentDetails notificationSettings')
+        .lean();
+
+    const seen = new Set();
+    const students = [];
+    for (const enrollment of enrollments) {
+        const student = enrollment.studentId;
+        if (!student?._id) continue;
+        const studentKey = student._id.toString();
+        if (seen.has(studentKey)) continue;
+        seen.add(studentKey);
+
+        const risk = await computeStudentRisk(student._id, courseIds);
+        const level = risk.riskLevel.toLowerCase();
+        const primaryCourse = courses.find(course => course._id.toString() === enrollment.courseId?.toString());
+        students.push({
+            _id: student._id,
+            name: student.name || 'Student',
+            email: student.email || '',
+            avatar: student.profileImage || null,
+            parentDetails: student.parentDetails || [],
+            courseId: enrollment.courseId,
+            courseName: primaryCourse?.title || 'Course',
+            riskLevel: level,
+            riskLabel: risk.riskLevel,
+            riskScore: risk.score,
+            avgProgress: Math.round(risk.avgProgress),
+            avgQuizScore: Math.round(risk.avgQuizScore),
+            avgGrade: Math.round(risk.avgGrade),
+            failedQuizzes: risk.failedQuizzes,
+            missedSubs: risk.missedSubs,
+            causes: risk.causes,
+        });
+    }
+
+    students.sort((a, b) => b.riskScore - a.riskScore);
+
+    return { tutor, courses, courseIds, students };
+};
+
+const getActionTargets = (students, action) => {
+    if (action === 'notify') return students.filter(student => student.riskLevel !== 'low');
+    if (action === 'assign_study_plans') return students.filter(student => student.riskLevel !== 'low');
+    if (action === 'schedule_remedial') return students.filter(student => student.riskLevel !== 'low');
+    if (action === 'progress_report') return students;
+    if (action === 'analyze') return students;
+    return students.filter(student => student.riskLevel === 'high');
+};
+
+const getStudentWeakTopicsForAction = (student) => {
+    const fromCauses = (student.causes || []).map(cause => {
+        if (cause === 'Weak Grades') return 'Score improvement practice';
+        if (cause === 'Poor Attendance') return 'Consistency and backlog recovery';
+        if (cause === 'Weak Topics') return 'Weak topic revision';
+        if (cause === 'Demotivation') return 'Daily accountability routine';
+        return cause;
+    });
+    return [...new Set(fromCauses.length ? fromCauses : ['Core concepts revision', 'Practice questions'])].slice(0, 5);
+};
+
+// @desc    Execute real risk-predictor quick actions
+// @route   POST /api/ai/risk-predictor/action
+// @access  Private (tutor)
+export const performRiskPredictorAction = async (req, res) => {
+    try {
+        const { action, courseId } = req.body || {};
+        if (!action) {
+            return res.status(400).json({ success: false, message: 'action is required' });
+        }
+
+        const allowedActions = new Set([
+            'alert_parents',
+            'schedule_remedial',
+            'progress_report',
+            'assign_study_plans',
+            'high_risk_action_plans',
+            'identified_action_plans',
+            'share',
+            'notify',
+            'analyze',
+        ]);
+        if (!allowedActions.has(action)) {
+            return res.status(400).json({ success: false, message: 'Unsupported action' });
+        }
+
+        const { tutor, students } = await getTutorRiskActionContext(req, courseId);
+        const targets = getActionTargets(students, action);
+        const { createNotification } = await import('./notificationController.js');
+
+        if (targets.length === 0 && action !== 'share' && action !== 'analyze') {
+            return res.status(200).json({
+                success: true,
+                message: 'No eligible at-risk students found for this action.',
+                result: { affected: 0, action },
+            });
+        }
+
+        if (action === 'alert_parents') {
+            const { sendEmail } = await import('../utils/emailService.js');
+            let parentEmails = 0;
+            let studentNotifications = 0;
+
+            for (const student of targets) {
+                const subject = `Academic risk alert for ${student.name}`;
+                const html = `
+                    <div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a">
+                        <h2>Academic Support Alert</h2>
+                        <p>${student.name} is currently marked as <strong>${student.riskLabel} Risk</strong> in ${student.courseName}.</p>
+                        <p><strong>Risk score:</strong> ${student.riskScore}/100</p>
+                        <p><strong>Main indicators:</strong> ${(student.causes || []).join(', ') || 'Academic engagement needs review'}</p>
+                        <p>Please connect with the tutor/admin team for a remedial support plan.</p>
+                    </div>
+                `;
+                for (const parent of student.parentDetails || []) {
+                    if (parent.email) {
+                        const sent = await sendEmail({ email: parent.email, subject, html });
+                        if (sent) parentEmails += 1;
+                    }
+                }
+                const notification = await createNotification({
+                    userId: student._id,
+                    type: 'reminder',
+                    title: 'Academic support alert',
+                    message: `Your tutor has flagged ${student.courseName} for extra support. Please review your remedial plan.`,
+                    data: { courseId: student.courseId, extras: { action, riskScore: student.riskScore, tutorId: String(tutor._id) } },
+                });
+                if (notification) studentNotifications += 1;
+            }
+
+            return res.status(200).json({
+                success: true,
+                message: `Parent alerts processed for ${targets.length} high-risk student(s).`,
+                result: { affected: targets.length, parentEmails, studentNotifications },
+            });
+        }
+
+        if (action === 'schedule_remedial') {
+            const Appointment = (await import('../models/Appointment.js')).default;
+            const start = new Date();
+            start.setDate(start.getDate() + 1);
+            start.setHours(16, 0, 0, 0);
+
+            let created = 0;
+            for (const [index, student] of targets.entries()) {
+                const dateTime = new Date(start.getTime() + index * 60 * 60 * 1000);
+                await Appointment.create({
+                    studentId: student._id,
+                    tutorId: tutor._id,
+                    dateTime,
+                    duration: 45,
+                    status: 'confirmed',
+                    amount: 0,
+                    notes: `AI risk predictor remedial session. Focus: ${getStudentWeakTopicsForAction(student).join(', ')}`,
+                    sessionType: 'online_live',
+                });
+                created += 1;
+                await createNotification({
+                    userId: student._id,
+                    type: 'reminder',
+                    title: 'Remedial session scheduled',
+                    message: `A remedial session has been scheduled for ${student.courseName}.`,
+                    data: { courseId: student.courseId, extras: { action, dateTime, tutorId: String(tutor._id) } },
+                });
+            }
+
+            return res.status(200).json({
+                success: true,
+                message: `${created} remedial session(s) scheduled and students notified.`,
+                result: { affected: targets.length, appointmentsCreated: created },
+            });
+        }
+
+        if (action === 'assign_study_plans' || action === 'high_risk_action_plans' || action === 'identified_action_plans') {
+            const StudyPlan = (await import('../models/StudyPlan.js')).default;
+            let created = 0;
+
+            for (const student of targets) {
+                const weakTopics = getStudentWeakTopicsForAction(student);
+                const fallback = buildFallbackStudyPlan({
+                    studentName: student.name,
+                    weakTopics,
+                    durationWeeks: student.riskLevel === 'high' ? 3 : 2,
+                    hoursPerDay: student.riskLevel === 'high' ? 2 : 1,
+                    difficulty: student.riskLevel === 'high' ? 'intensive' : 'moderate',
+                });
+                const totalStudyMins = fallback.weeklyPlan.reduce((sum, day) => sum + (day.totalMinutes || 0), 0);
+                const plan = await StudyPlan.create({
+                    tutorId: tutor._id,
+                    studentId: student._id,
+                    courseId: student.courseId || null,
+                    instituteId: req.user.instituteId || null,
+                    title: action === 'assign_study_plans' ? fallback.title : `${student.riskLabel} Risk Action Plan`,
+                    studentName: student.name,
+                    weakTopics,
+                    durationWeeks: student.riskLevel === 'high' ? 3 : 2,
+                    hoursPerDay: student.riskLevel === 'high' ? 2 : 1,
+                    difficulty: student.riskLevel === 'high' ? 'intensive' : 'moderate',
+                    goal: fallback.goal,
+                    summary: fallback.summary,
+                    keyMilestones: fallback.keyMilestones,
+                    estimatedScore: fallback.estimatedScore,
+                    weeklyPlan: fallback.weeklyPlan,
+                    totalDays: fallback.weeklyPlan.length,
+                    totalStudyHours: Math.round(totalStudyMins / 60 * 10) / 10,
+                    topicsCount: fallback.weeklyPlan.reduce((sum, day) => sum + (day.topics?.length || 0), 0),
+                    status: 'active',
+                });
+                created += 1;
+                await createNotification({
+                    userId: student._id,
+                    type: 'study_plan_generated',
+                    title: 'New corrective study plan',
+                    message: `Your tutor assigned a ${student.riskLabel.toLowerCase()} risk recovery plan.`,
+                    data: { courseId: student.courseId, extras: { planId: plan._id, action, tutorId: String(tutor._id) } },
+                });
+            }
+
+            return res.status(200).json({
+                success: true,
+                message: `${created} corrective study/action plan(s) assigned to students.`,
+                result: { affected: targets.length, plansCreated: created },
+            });
+        }
+
+        if (action === 'progress_report') {
+            const GeneratedReport = (await import('../models/GeneratedReport.js')).default;
+            const report = await GeneratedReport.create({
+                tutorId: tutor._id,
+                instituteId: req.user.instituteId || null,
+                reportType: 'student',
+                title: `Risk Predictor Progress Report - ${new Date().toLocaleDateString('en-IN')}`,
+                description: 'Generated from live risk, progress, quiz, and submission metrics.',
+                studentIds: targets.map(student => student._id),
+                studentNames: targets.map(student => student.name),
+                quickSelection: 'risk_predictor',
+                summary: `${targets.length} student(s) included. ${targets.filter(s => s.riskLevel === 'high').length} high-risk student(s) require immediate intervention.`,
+                students: targets.map(student => ({
+                    studentId: student._id,
+                    name: student.name,
+                    avatar: student.avatar,
+                    avgScore: student.avgQuizScore,
+                    progress: student.avgProgress,
+                    grade: `${student.riskScore}/100 risk`,
+                    strengths: student.riskLevel === 'low' ? ['On track'] : [],
+                    weaknesses: student.causes,
+                    skillBreakdown: getStudentWeakTopicsForAction(student).map((topic, index) => ({
+                        topic,
+                        score: Math.max(20, 80 - index * 10),
+                        color: index === 0 ? '#EF4444' : '#F59E0B',
+                    })),
+                    recommendation: student.riskLevel === 'high'
+                        ? 'Schedule a remedial session and assign a corrective study plan.'
+                        : 'Monitor progress weekly and reinforce weak areas.',
+                })),
+                status: 'ready',
+            });
+
+            return res.status(200).json({
+                success: true,
+                message: `Academic progress report generated for ${targets.length} student(s).`,
+                result: { affected: targets.length, reportId: report._id },
+            });
+        }
+
+        if (action === 'notify') {
+            let sent = 0;
+            for (const student of targets) {
+                const notification = await createNotification({
+                    userId: student._id,
+                    type: 'reminder',
+                    title: 'Tutor check-in requested',
+                    message: `Please review your progress in ${student.courseName}. Your tutor may assign corrective tasks.`,
+                    data: { courseId: student.courseId, extras: { action, riskScore: student.riskScore, tutorId: String(tutor._id) } },
+                });
+                if (notification) sent += 1;
+            }
+            return res.status(200).json({
+                success: true,
+                message: `${sent} student notification(s) sent.`,
+                result: { affected: targets.length, notificationsSent: sent },
+            });
+        }
+
+        if (action === 'share') {
+            const shareUrl = `${process.env.FRONTEND_URL || ''}/tutor/ai-buddy/risk-predictor${courseId ? `?courseId=${courseId}` : ''}`;
+            return res.status(200).json({
+                success: true,
+                message: 'Risk dashboard share link generated.',
+                result: { affected: 0, shareUrl },
+            });
+        }
+
+        const high = students.filter(student => student.riskLevel === 'high').length;
+        const medium = students.filter(student => student.riskLevel === 'medium').length;
+        const avgRisk = students.length
+            ? Math.round(students.reduce((sum, student) => sum + student.riskScore, 0) / students.length)
+            : 0;
+
+        return res.status(200).json({
+            success: true,
+            message: 'Detailed risk analysis completed.',
+            result: {
+                affected: students.length,
+                highRisk: high,
+                mediumRisk: medium,
+                averageRiskScore: avgRisk,
+                topCauses: [...new Set(students.flatMap(student => student.causes || []))].slice(0, 5),
+            },
+        });
+    } catch (error) {
+        console.error('performRiskPredictorAction error:', error);
+        res.status(error.statusCode || 500).json({
+            success: false,
+            message: error.message || 'Failed to execute risk action',
+        });
+    }
+};
+
 // ── Helper: compute risk score for one student ────────────────────────────────
 async function computeStudentRisk(studentId, courseIds) {
     const [enrollment, quizAttempts, submissions] = await Promise.all([
@@ -4406,7 +4834,7 @@ export const getStudentSharedNotes = async (req, res) => {
         const Enrollment = (await import('../models/Enrollment.js')).default;
 
         // Get student's enrolled course IDs
-        const enrollments = await Enrollment.find({ userId: req.user._id, status: 'active' }).select('courseId').lean();
+        const enrollments = await Enrollment.find({ studentId: req.user._id, status: 'active' }).select('courseId').lean();
         const enrolledCourseIds = enrollments.map(e => e.courseId);
 
         if (enrolledCourseIds.length === 0) {
@@ -4471,7 +4899,7 @@ export const getStudentLectureSummaries = async (req, res) => {
         const { page = 1, limit = 10, courseId } = req.query;
         const Enrollment = (await import('../models/Enrollment.js')).default;
 
-        const enrollments = await Enrollment.find({ userId: req.user._id, status: 'active' }).select('courseId').lean();
+        const enrollments = await Enrollment.find({ studentId: req.user._id, status: 'active' }).select('courseId').lean();
         const enrolledCourseIds = enrollments.map(e => e.courseId);
 
         if (enrolledCourseIds.length === 0) {
@@ -4536,7 +4964,7 @@ export const getStudentLectureSummaryById = async (req, res) => {
         if (!record) return res.status(404).json({ success: false, message: 'Summary not found' });
 
         // Verify student is enrolled in the course
-        const isEnrolled = await Enrollment.findOne({ userId: req.user._id, courseId: record.courseId?._id, status: 'active' });
+        const isEnrolled = await Enrollment.findOne({ studentId: req.user._id, courseId: record.courseId?._id, status: 'active' });
         if (!isEnrolled) return res.status(403).json({ success: false, message: 'Access denied' });
 
         res.status(200).json({ success: true, record });
@@ -4614,7 +5042,7 @@ export const getStudentWeakTopics = async (req, res) => {
         const Enrollment = (await import('../models/Enrollment.js')).default;
 
         // Get student's enrolled courses
-        const enrollments = await Enrollment.find({ userId: req.user._id, status: 'active' }).select('courseId').lean();
+        const enrollments = await Enrollment.find({ studentId: req.user._id, status: 'active' }).select('courseId').lean();
         const courseIds = enrollments.map(e => e.courseId);
 
         if (courseIds.length === 0) {
@@ -4906,7 +5334,7 @@ Ensure that:
 2. The type field MUST be one of: "grammar", "spelling", "key_term", "poor_phrasing", "factual_error".
 3. The output is strictly valid JSON without markdown wrapping.`;
 
-        const aiResponseText = await groqService.generateCompletion(prompt, true, "llama-3.3-70b-versatile");
+        const aiResponseText = await callGroqAI(prompt);
         const evaluation = JSON.parse(aiResponseText);
 
         return {
@@ -5101,6 +5529,8 @@ Rules:
 // @access  Private (tutor/admin)
 export const draftNotification = async (req, res) => {
     try {
+        const fs = await import('fs');
+        fs.appendFileSync('debug.txt', `[Debug] draftNotification called. GROQ_API_KEY: ${GROQ_API_KEY ? 'exists' : 'missing'}\n`);
         const { targetType, targetId, contextTopic, tone } = req.body;
 
         if (!contextTopic) {
@@ -5114,13 +5544,15 @@ Requested Tone: "${tone || 'Encouraging'}"
 Draft a short, highly professional but empathetic message (max 3-4 sentences). Do not include placeholders like [Student Name], just write the core message body assuming it will be styled in a chat/email bubble.
 Do not wrap in markdown or quotes. Return only the plain string text.`;
 
-        const draftedText = await groqService.generateCompletion(prompt, false, "llama-3.3-70b-versatile");
+        const draftedText = await callGroqAI(prompt);
 
         res.status(200).json({
             success: true,
             message: draftedText.trim().replace(/^["']|["']$/g, '')
         });
     } catch (error) {
+        const fs = await import('fs');
+        fs.appendFileSync('debug.txt', `[Debug] draftNotification error: ${error.message}\n${error.stack}\n`);
         console.error('Draft Notification error:', error);
         res.status(500).json({ success: false, message: 'AI failed to draft notification.' });
     }
@@ -6632,12 +7064,20 @@ export const sendNotification = async (req, res) => {
             return res.status(404).json({ success: false, message: `Student '${targetStudentName}' not found.` });
         }
 
+        const Tutor = (await import('../models/Tutor.js')).default;
+        const tutor = await Tutor.findOne({ userId: req.user.id || req.user._id }).select('_id').lean();
+
         const { createNotification } = await import('./notificationController.js');
         await createNotification({
             userId: student._id,
             type: 'direct_message',
             title: `AI check-in (${tone || 'Encouraging'})`,
-            message: message.trim()
+            message: message.trim(),
+            data: {
+                extras: {
+                    tutorId: tutor ? String(tutor._id) : undefined
+                }
+            }
         });
 
         res.status(200).json({

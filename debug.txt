@@ -1,0 +1,2 @@
+[Debug] draftNotification called. GROQ_API_KEY: exists
+[Debug] draftNotification called. GROQ_API_KEY: exists
