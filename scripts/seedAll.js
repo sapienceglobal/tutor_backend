@@ -91,9 +91,10 @@ const future = (days, hours = 0) =>
     new Date(Date.now() + days * 86400000 + hours * 3600000);
 const oid = () => new mongoose.Types.ObjectId();
 
-function generateAttemptsAnswers(exam, targetPercentage, studentAnswersSeed = {}) {
+function generateAttemptsAnswers(exam, targetPercentage, studentAnswersSeed = {}, timeSpent = 1200) {
     let totalScore = 0;
     const answers = [];
+    const avgTime = Math.round(timeSpent / exam.questions.length);
     
     for (let idx = 0; idx < exam.questions.length; idx++) {
         const q = exam.questions[idx];
@@ -104,10 +105,15 @@ function generateAttemptsAnswers(exam, targetPercentage, studentAnswersSeed = {}
             isCorrect = studentAnswersSeed[idx];
         }
         
+        const timeTaken = idx === exam.questions.length - 1
+            ? Math.max(5, timeSpent - answers.reduce((sum, a) => sum + a.timeTaken, 0))
+            : Math.max(5, Math.round(avgTime * (0.7 + Math.random() * 0.6)));
+
         const ansObj = {
             questionId: q._id,
             isCorrect: isCorrect,
             pointsEarned: isCorrect ? points : (exam.negativeMarking ? -Math.round(points / 4) : 0),
+            timeTaken: timeTaken,
         };
         
         let correctOptIdx = 0;
@@ -1133,7 +1139,7 @@ async function seed() {
         // ══════════════════════════════════════════════════════════════════════
         console.log('🌱 [19/40] Exam Attempts (AI proctoring edge cases)...');
         // Aarav — Suspicious Detected (exam1)
-        const aaravAttemptAnswers = generateAttemptsAnswers(exam1, 85);
+        const aaravAttemptAnswers = generateAttemptsAnswers(exam1, 85, {}, 2400);
         await ExamAttempt.create({
             examId: exam1._id, studentId: uStudents.aarav._id, courseId: c3._id, attemptNumber: 1,
             score: aaravAttemptAnswers.totalScore, percentage: Math.round((aaravAttemptAnswers.totalScore / exam1.totalMarks) * 100),
@@ -1152,7 +1158,7 @@ async function seed() {
         });
 
         // Diya — Low Confidence (exam1)
-        const diyaAttemptAnswers = generateAttemptsAnswers(exam1, 65);
+        const diyaAttemptAnswers = generateAttemptsAnswers(exam1, 65, {}, 3200);
         await ExamAttempt.create({
             examId: exam1._id, studentId: uStudents.diya._id, courseId: c3._id, attemptNumber: 1,
             score: diyaAttemptAnswers.totalScore, percentage: Math.round((diyaAttemptAnswers.totalScore / exam1.totalMarks) * 100),
@@ -1166,7 +1172,7 @@ async function seed() {
         });
 
         // Ishaan — Safe (exam1)
-        const ishaanAttemptAnswers = generateAttemptsAnswers(exam1, 35);
+        const ishaanAttemptAnswers = generateAttemptsAnswers(exam1, 35, {}, 3500);
         await ExamAttempt.create({
             examId: exam1._id, studentId: uStudents.ishaan._id, courseId: c3._id, attemptNumber: 1,
             score: ishaanAttemptAnswers.totalScore, percentage: Math.round((ishaanAttemptAnswers.totalScore / exam1.totalMarks) * 100),
@@ -1178,7 +1184,7 @@ async function seed() {
         });
 
         // Kabir — MERN exam, Safe (exam2)
-        const kabirAttemptAnswers = generateAttemptsAnswers(exam2, 100);
+        const kabirAttemptAnswers = generateAttemptsAnswers(exam2, 100, {}, 1800);
         await ExamAttempt.create({
             examId: exam2._id, studentId: uStudents.kabir._id, courseId: c1._id, attemptNumber: 1,
             score: kabirAttemptAnswers.totalScore, percentage: Math.round((kabirAttemptAnswers.totalScore / exam2.totalMarks) * 100),
@@ -1197,7 +1203,7 @@ async function seed() {
 
         // Additional attempts for Aarav
         // Aarav attempt on exam3 (Maths Limits)
-        const aaravExam3Answers = generateAttemptsAnswers(exam3, 90);
+        const aaravExam3Answers = generateAttemptsAnswers(exam3, 90, {}, 1200);
         await ExamAttempt.create({
             examId: exam3._id, studentId: uStudents.aarav._id, courseId: c8._id, attemptNumber: 1,
             score: aaravExam3Answers.totalScore, percentage: Math.round((aaravExam3Answers.totalScore / exam3.totalMarks) * 100),
@@ -1210,7 +1216,7 @@ async function seed() {
         await Exam.findByIdAndUpdate(exam3._id, { attemptCount: 1, averageScore: aaravExam3Answers.totalScore });
 
         // Aarav attempt on exam6 (React Performance)
-        const aaravExam6Answers = generateAttemptsAnswers(exam6, 80);
+        const aaravExam6Answers = generateAttemptsAnswers(exam6, 80, {}, 900);
         await ExamAttempt.create({
             examId: exam6._id, studentId: uStudents.aarav._id, courseId: c2._id, attemptNumber: 1,
             score: aaravExam6Answers.totalScore, percentage: Math.round((aaravExam6Answers.totalScore / exam6.totalMarks) * 100),
@@ -1224,7 +1230,7 @@ async function seed() {
         await Exam.findByIdAndUpdate(exam6._id, { attemptCount: 1, averageScore: aaravExam6Answers.totalScore });
 
         // Aarav attempt on exam8 (Physics Thermodynamics)
-        const aaravExam8Answers = generateAttemptsAnswers(exam8, 88);
+        const aaravExam8Answers = generateAttemptsAnswers(exam8, 88, {}, 1500);
         await ExamAttempt.create({
             examId: exam8._id, studentId: uStudents.aarav._id, courseId: c3._id, attemptNumber: 1,
             score: aaravExam8Answers.totalScore, percentage: Math.round((aaravExam8Answers.totalScore / exam8.totalMarks) * 100),
@@ -1237,7 +1243,7 @@ async function seed() {
         await Exam.findByIdAndUpdate(exam8._id, { attemptCount: 1, averageScore: aaravExam8Answers.totalScore });
 
         // Aarav attempt on exam10 (Maths Quadratic Equations)
-        const aaravExam10Answers = generateAttemptsAnswers(exam10, 94);
+        const aaravExam10Answers = generateAttemptsAnswers(exam10, 94, {}, 1100);
         await ExamAttempt.create({
             examId: exam10._id, studentId: uStudents.aarav._id, courseId: c8._id, attemptNumber: 1,
             score: aaravExam10Answers.totalScore, percentage: Math.round((aaravExam10Answers.totalScore / exam10.totalMarks) * 100),

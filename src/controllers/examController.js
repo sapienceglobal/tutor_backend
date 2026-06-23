@@ -495,11 +495,32 @@ export const updateExam = async (req, res) => {
         // Clean questions array if present
         if (field === 'questions' && Array.isArray(req.body[field])) {
           exam[field] = req.body[field].map(q => {
-            const { _id, ...questionWithoutId } = q;
-            if (questionWithoutId.type && !questionWithoutId.questionType) {
-              questionWithoutId.questionType = questionWithoutId.type;
+            const cleanQ = { ...q };
+            if (cleanQ._id) {
+              if (mongoose.Types.ObjectId.isValid(cleanQ._id)) {
+                cleanQ._id = new mongoose.Types.ObjectId(cleanQ._id);
+              } else {
+                delete cleanQ._id;
+              }
             }
-            return questionWithoutId;
+            if (cleanQ.type && !cleanQ.questionType) {
+              cleanQ.questionType = cleanQ.type;
+            }
+            // Preserve option IDs if present and valid
+            if (Array.isArray(cleanQ.options)) {
+              cleanQ.options = cleanQ.options.map(opt => {
+                const cleanOpt = { ...opt };
+                if (cleanOpt._id) {
+                  if (mongoose.Types.ObjectId.isValid(cleanOpt._id)) {
+                    cleanOpt._id = new mongoose.Types.ObjectId(cleanOpt._id);
+                  } else {
+                    delete cleanOpt._id;
+                  }
+                }
+                return cleanOpt;
+              });
+            }
+            return cleanQ;
           });
         } else {
           exam[field] = req.body[field];
@@ -1343,9 +1364,17 @@ export const getTutorAttemptDetails = async (req, res) => {
 
     // Build detailed results
     const detailedResults = exam.questions.map((q, index) => {
-      const studentAnswer = attempt.answers.find(
+      let studentAnswer = attempt.answers.find(
         a => a.questionId.toString() === q._id.toString()
       );
+      if (!studentAnswer) {
+        // Fallback: match by question text (handles past attempts where IDs were regenerated)
+        studentAnswer = attempt.answers.find(
+          a => a.questionData &&
+               typeof a.questionData.question === 'string' &&
+               a.questionData.question.trim() === q.question.trim()
+        );
+      }
       const correctIndex = q.options.findIndex(opt => opt.isCorrect);
 
       // Get student's selected answer text
@@ -1604,6 +1633,9 @@ export const getStudentExams = async (req, res) => {
           lastAttempt: 1,
           lastAttemptId: 1,
           isCompleted: 1,
+          showResultImmediately: 1,
+          allowRetake: 1,
+          maxAttempts: 1,
           createdAt: 1
         }
       },

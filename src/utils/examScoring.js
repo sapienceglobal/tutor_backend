@@ -122,7 +122,15 @@ export const buildAttemptQuestionResults = ({ exam, attempt }) => {
   const canViewSolution = exam?.hideSolutions !== true;
 
   return (exam?.questions || []).map((question, index) => {
-    const studentAnswer = answerMap.get(String(question._id));
+    let studentAnswer = answerMap.get(String(question._id));
+    if (!studentAnswer) {
+      // Fallback: match by question text (handles past attempts where IDs were regenerated)
+      studentAnswer = (attempt?.answers || []).find(
+        (ans) => ans.questionData &&
+                 typeof ans.questionData.question === 'string' &&
+                 ans.questionData.question.trim() === question.question.trim()
+      );
+    }
     const correctIndex = (question.options || []).findIndex(
       (option) => option.isCorrect === true || option.isCorrect === 'true'
     );

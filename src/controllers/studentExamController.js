@@ -234,6 +234,15 @@ export const getExamById = async (req, res) => {
             }
         }
 
+        // Enforce maximum attempts limit
+        const attemptCount = await ExamAttempt.countDocuments({ examId: id, studentId: req.user.id });
+        const maxAttempts = exam.maxAttempts || 1;
+        const canAttempt = exam.allowRetake ? attemptCount < maxAttempts : attemptCount === 0;
+
+        if (!canAttempt) {
+            return res.status(403).json({ success: false, message: 'You have reached the maximum attempt limit for this exam' });
+        }
+
         // Helper function for shuffling arrays
         const shuffleArray = (array) => {
             const newArr = [...array];
@@ -358,6 +367,14 @@ export const submitExam = async (req, res) => {
         // ── Grade answers ─────────────────────────────────────────
         let score = 0;
         const attemptCount = await ExamAttempt.countDocuments({ examId: id, studentId });
+
+        if (!exam.allowRetake && attemptCount > 0) {
+            return res.status(403).json({ success: false, message: 'You have already taken this exam' });
+        }
+        const maxAttempts = exam.maxAttempts || 1;
+        if (attemptCount >= maxAttempts) {
+            return res.status(403).json({ success: false, message: 'Maximum attempt limit reached for this exam' });
+        }
 
         const processedAnswers = (await Promise.all(answers.map(async ans => {
             const question = exam.questions.id(ans.questionId);

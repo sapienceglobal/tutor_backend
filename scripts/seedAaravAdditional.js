@@ -659,6 +659,7 @@ async function run() {
                         selectedOptionText: '6',
                         isCorrect: true,
                         pointsEarned: 10,
+                        timeTaken: 300,
                         questionData: {
                             question: chemExam1.questions[0].question,
                             options: chemExam1.questions[0].options,
@@ -674,6 +675,7 @@ async function run() {
                         numericAnswer: 2,
                         isCorrect: true,
                         pointsEarned: 10,
+                        timeTaken: 250,
                         questionData: {
                             question: chemExam1.questions[1].question,
                             options: [],
@@ -691,6 +693,7 @@ async function run() {
                         selectedOptionText: 'Ammonia (NH3)',
                         isCorrect: false,
                         pointsEarned: 0,
+                        timeTaken: 350,
                         questionData: {
                             question: chemExam1.questions[2].question,
                             options: chemExam1.questions[2].options,
@@ -730,6 +733,7 @@ async function run() {
                         selectedOptionText: 'tert-Butyl chloride',
                         isCorrect: true,
                         pointsEarned: 10,
+                        timeTaken: 550,
                         questionData: {
                             question: chemExam2.questions[0].question,
                             options: chemExam2.questions[0].options,
@@ -746,6 +750,7 @@ async function run() {
                         selectedOptionText: 'Complete racemization',
                         isCorrect: false,
                         pointsEarned: 0,
+                        timeTaken: 650,
                         questionData: {
                             question: chemExam2.questions[1].question,
                             options: chemExam2.questions[1].options,
@@ -805,6 +810,7 @@ async function run() {
                                 selectedOptionText: 'useMemo',
                                 isCorrect: true,
                                 pointsEarned: 10,
+                                timeTaken: 600,
                                 questionData: {
                                     question: exam6.questions[0].question,
                                     options: exam6.questions[0].options,
