@@ -343,6 +343,10 @@ const examAttemptSchema = new mongoose.Schema({
     aiHighlights: mongoose.Schema.Types.Mixed,
     isCorrect: Boolean,
     pointsEarned: Number,
+    timeTaken: {
+      type: Number,
+      default: 0,
+    },
 
     // ✅ NEW: Embed question data for review
     questionData: {

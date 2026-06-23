@@ -241,6 +241,7 @@ export const getTutorReevaluationRequests = async (req, res) => {
       populate: [
         { path: 'studentId', select: 'name email profileImage' },
         { path: 'examId', select: 'title totalMarks passingMarks passingPercentage' },
+        { path: 'attemptId', select: 'attemptNumber score percentage isPassed' },
         { path: 'reviewedBy', select: 'name email' },
       ],
     });
@@ -377,6 +378,7 @@ export const reviewReevaluationRequest = async (req, res) => {
     const requestDoc = await ExamReevaluationRequest.findById(request._id)
       .populate('studentId', 'name email profileImage')
       .populate('examId', 'title totalMarks passingMarks passingPercentage')
+      .populate('attemptId', 'attemptNumber score percentage isPassed')
       .populate('reviewedBy', 'name email');
 
     res.status(200).json({

@@ -1,5 +1,5 @@
 import express from 'express';
-import { getAllExams, getExamById, submitExam, getAttemptDetails, logTabSwitch, checkCanAttempt, getExamHistory } from '../controllers/studentExamController.js';
+import { getAllExams, getExamById, submitExam, getAttemptDetails, logTabSwitch, checkCanAttempt, getExamHistory, getExamLeaderboard } from '../controllers/studentExamController.js';
 import { getNextAdaptiveQuestion } from '../controllers/examController.js';
 import { createReevaluationRequest, getMyReevaluationRequests } from '../controllers/examReevaluationController.js';
 import { protect, authorize } from '../middleware/auth.js';
@@ -17,6 +17,7 @@ router.post('/attempt/:attemptId/re-evaluation-request', createReevaluationReque
 router.get('/attempt/:id', getAttemptDetails);      
 
 // ✅ Generic last mein
+router.get('/:id/leaderboard', getExamLeaderboard);
 router.get('/:id', getExamById);                    
 router.get('/:id/can-attempt', checkCanAttempt);
 router.post('/:id/submit', submitExam);

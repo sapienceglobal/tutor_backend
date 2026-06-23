@@ -173,6 +173,7 @@ export const buildAttemptQuestionResults = ({ exam, attempt }) => {
       explanation: solutionText,
       pointsEarned: studentAnswer?.pointsEarned ?? 0,
       pointsPossible: question.points || 1,
+      timeTaken: studentAnswer?.timeTaken || 0,
     };
   });
 };

@@ -1348,17 +1348,54 @@ export const getTutorAttemptDetails = async (req, res) => {
       );
       const correctIndex = q.options.findIndex(opt => opt.isCorrect);
 
+      // Get student's selected answer text
+      let selectedText = null;
+      if (studentAnswer) {
+        if (studentAnswer.selectedOptionText !== undefined && studentAnswer.selectedOptionText !== null && studentAnswer.selectedOptionText !== '') {
+          selectedText = studentAnswer.selectedOptionText;
+        } else if (studentAnswer.textAnswer !== undefined && studentAnswer.textAnswer !== null && studentAnswer.textAnswer !== '') {
+          selectedText = studentAnswer.textAnswer;
+        } else if (studentAnswer.numericAnswer !== undefined && studentAnswer.numericAnswer !== null && studentAnswer.numericAnswer !== '') {
+          selectedText = String(studentAnswer.numericAnswer);
+        } else if (studentAnswer.matchAnswers && typeof studentAnswer.matchAnswers === 'object' && Object.keys(studentAnswer.matchAnswers).length > 0) {
+          selectedText = Object.entries(studentAnswer.matchAnswers)
+            .map(([left, right]) => `${left} -> ${right}`)
+            .join(', ');
+        } else if (studentAnswer.selectedOption !== undefined && studentAnswer.selectedOption !== null && studentAnswer.selectedOption >= 0) {
+          selectedText = q.options[studentAnswer.selectedOption]?.text || null;
+        }
+      }
+
+      // Get correct answer text
+      let correctAnswerText = null;
+      const qType = q.questionType || 'mcq';
+      if (qType === 'numeric') {
+        correctAnswerText = q.numericAnswer !== undefined && q.numericAnswer !== null ? String(q.numericAnswer) : null;
+      } else if (qType === 'subjective') {
+        correctAnswerText = q.idealAnswer || null;
+      } else if (qType === 'match_the_following') {
+        correctAnswerText = Array.isArray(q.pairs)
+          ? q.pairs.map(p => `${p.left} -> ${p.right}`).join(', ')
+          : null;
+      } else if (correctIndex >= 0) {
+        correctAnswerText = q.options[correctIndex]?.text || null;
+      }
+
       return {
         questionNumber: index + 1,
         question: q.question,
+        questionType: qType,
         options: q.options.map(opt => opt.text),
         correctIndex,
         selectedIndex: studentAnswer?.selectedOption ?? -1,
-        selectedText: studentAnswer?.selectedOptionText || null, // Direct text from shuffled selection
+        selectedText,
+        correctAnswerText,
         isCorrect: studentAnswer?.isCorrect ?? false,
         explanation: q.explanation,
         pointsEarned: studentAnswer?.pointsEarned ?? 0,
         pointsPossible: q.points || 1,
+        aiFeedback: studentAnswer?.aiFeedback || null,
+        aiHighlights: studentAnswer?.aiHighlights || null,
       };
     });
 

@@ -392,6 +392,7 @@ export const submitExam = async (req, res) => {
                     aiHighlights: evaluation.highlights || [],
                     isCorrect,
                     pointsEarned,
+                    timeTaken: Number(ans.timeTaken) || 0,
                     _scoreDelta: scoreDelta,
                     questionData: {
                         question: question.question,
@@ -483,6 +484,7 @@ export const submitExam = async (req, res) => {
                 textAnswer: ans.textAnswer || null,
                 isCorrect,
                 pointsEarned,
+                timeTaken: Number(ans.timeTaken) || 0,
                 _scoreDelta: scoreDelta,
                 questionData: {
                     question: question.question,
@@ -656,6 +658,7 @@ export const getAttemptDetails = async (req, res) => {
             pointsPossible: item.pointsPossible,
             aiFeedback: item.aiFeedback,
             aiHighlights: item.aiHighlights,
+            timeTaken: item.timeTaken,
         }));
 
         const correctCount = detailedAnalysis.filter(item => item.status === 'correct').length;
@@ -671,6 +674,7 @@ export const getAttemptDetails = async (req, res) => {
                 totalMarks: attempt.examId.totalMarks,
                 passingPercentage: attempt.examId.passingPercentage,
                 passingMarks: attempt.examId.passingMarks,
+                duration: attempt.examId.duration,
                 score: attempt.score,
                 percentage: attempt.percentage,
                 isPassed: attempt.isPassed,
@@ -807,6 +811,115 @@ export const checkCanAttempt = async (req, res) => {
         });
     } catch (error) {
         console.error('Check can attempt error:', error);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
+
+// @desc    Get Exam Leaderboard
+// @route   GET /api/student/exams/:id/leaderboard
+export const getExamLeaderboard = async (req, res) => {
+    try {
+        const examId = req.params.id;
+        const currentStudentId = req.user.id;
+
+        // 1. Check if the current student has attempted this exam.
+        const currentStudentAttemptExists = await ExamAttempt.exists({
+            examId,
+            studentId: currentStudentId
+        });
+
+        if (!currentStudentAttemptExists) {
+            return res.status(403).json({
+                success: false,
+                message: 'You must attempt the exam before viewing the leaderboard.'
+            });
+        }
+
+        // 2. Fetch all attempts for this exam
+        const attempts = await ExamAttempt.find({ examId })
+            .populate('studentId', 'name email profileImage')
+            .select('studentId score percentage timeSpent submittedAt')
+            .lean();
+
+        // 3. For each unique student, keep only their best attempt (highest score).
+        // If there's a tie in score, the tie-breaker is timeSpent (lower is better).
+        const studentBestAttempts = {};
+
+        attempts.forEach(attempt => {
+            if (!attempt.studentId) return; // skip if student deleted
+            const studentIdStr = attempt.studentId._id.toString();
+            const existing = studentBestAttempts[studentIdStr];
+
+            if (!existing) {
+                studentBestAttempts[studentIdStr] = attempt;
+            } else {
+                // Compare attempts
+                const isBetter = 
+                    attempt.score > existing.score || 
+                    (attempt.score === existing.score && (attempt.timeSpent || 0) < (existing.timeSpent || 0));
+                if (isBetter) {
+                    studentBestAttempts[studentIdStr] = attempt;
+                }
+            }
+        });
+
+        // 4. Sort the best attempts: highest score desc, lowest timeSpent asc
+        const sortedBestAttempts = Object.values(studentBestAttempts).sort((a, b) => {
+            if (b.score !== a.score) {
+                return b.score - a.score;
+            }
+            return (a.timeSpent || 0) - (b.timeSpent || 0);
+        });
+
+        // 5. Assign competition ranks: identical score and timeSpent get the same rank
+        let displayedRank = 1;
+        const rankedLeaderboard = sortedBestAttempts.map((attempt, index) => {
+            if (index > 0) {
+                const prev = sortedBestAttempts[index - 1];
+                if (attempt.score !== prev.score || attempt.timeSpent !== prev.timeSpent) {
+                    displayedRank = index + 1;
+                }
+            }
+            
+            const isCurrentUser = attempt.studentId._id.toString() === currentStudentId;
+            return {
+                student: {
+                    _id: attempt.studentId._id,
+                    name: attempt.studentId.name,
+                    email: attempt.studentId.email,
+                    profileImage: attempt.studentId.profileImage
+                },
+                score: attempt.score,
+                percentage: attempt.percentage,
+                timeSpent: attempt.timeSpent,
+                submittedAt: attempt.submittedAt,
+                rank: displayedRank,
+                isCurrentUser
+            };
+        });
+
+        // 6. Find current student's entry and rank
+        const currentStudentRankEntry = rankedLeaderboard.find(entry => entry.isCurrentUser);
+        const currentStudentRank = currentStudentRankEntry ? currentStudentRankEntry.rank : null;
+        const totalParticipants = rankedLeaderboard.length;
+
+        // 7. Limit to top 50
+        let displayList = rankedLeaderboard.slice(0, 50);
+
+        // 8. If the current student is not in the top 50, append them to the display list
+        if (currentStudentRankEntry && !displayList.some(entry => entry.isCurrentUser)) {
+            displayList.push(currentStudentRankEntry);
+        }
+
+        res.status(200).json({
+            success: true,
+            leaderboard: displayList,
+            currentStudentRank,
+            totalParticipants
+        });
+
+    } catch (error) {
+        console.error('Get exam leaderboard error:', error);
         res.status(500).json({ success: false, message: 'Server Error' });
     }
 };
