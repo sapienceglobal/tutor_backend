@@ -14,6 +14,25 @@ const activeConnections = new Map();
 // Map: studentId -> { socketId, examId, startTime }
 const activeExamSessions = new Map();
 
+// Track active live class sessions
+// Map: liveClassId -> Set of socketIds
+const liveClassSessions = new Map();
+
+// Map: socketId -> liveClassId
+const socketToLiveClass = new Map();
+
+const updateLiveClassCCU = (liveClassId) => {
+  if (!io) return;
+  const count = liveClassSessions.has(liveClassId) ? liveClassSessions.get(liveClassId).size : 0;
+  console.log(`📡 Live Class ${liveClassId} participant count updated to ${count}`);
+  
+  // Emit to all connected superadmins
+  io.to('role_superadmin').emit('live_class_participants_update', {
+    liveClassId,
+    participantCount: count
+  });
+};
+
 const notifyTutorStudentLeft = async (examId, studentId) => {
   try {
     const { Exam } = await import('../models/Exam.js');
@@ -76,7 +95,7 @@ const notifyTutorStudentJoined = async (examId, studentId, sessionData) => {
 export const initSocket = (server) => {
   io = new Server(server, {
     cors: {
-      origin: (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://195.35.20.207:5000').split(','),
+      origin: (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,https://yaadkaro.cloud,http://195.35.20.207:5000').split(','),
       methods: ['GET', 'POST'],
       credentials: true
     }
@@ -291,6 +310,46 @@ export const initSocket = (server) => {
       }
     });
 
+    // Handle joining a live class (for participant counting & admin God Radar control)
+    socket.on('join_live_class', ({ liveClassId }) => {
+      if (!liveClassId) return;
+      console.log(`📡 Socket ${socket.id} (user ${userId}) joining live class ${liveClassId}`);
+      
+      socket.join(`live_class_${liveClassId}`);
+      
+      // Do NOT count superadmin or admin in participant count (silent observers)
+      if (socket.userRole === 'superadmin' || socket.userRole === 'admin') {
+        console.log(`🕵️ Socket ${socket.id} (user ${userId}) is an Admin/Superadmin. Joining silently (bypassing CCU count).`);
+        return;
+      }
+      
+      if (!liveClassSessions.has(liveClassId)) {
+        liveClassSessions.set(liveClassId, new Set());
+      }
+      liveClassSessions.get(liveClassId).add(socket.id);
+      socketToLiveClass.set(socket.id, liveClassId);
+      
+      updateLiveClassCCU(liveClassId);
+    });
+
+    // Handle leaving a live class explicitly
+    socket.on('leave_live_class', ({ liveClassId }) => {
+      if (!liveClassId) return;
+      console.log(`🚪 Socket ${socket.id} leaving live class ${liveClassId}`);
+      
+      socket.leave(`live_class_${liveClassId}`);
+      
+      if (liveClassSessions.has(liveClassId)) {
+        liveClassSessions.get(liveClassId).delete(socket.id);
+        if (liveClassSessions.get(liveClassId).size === 0) {
+          liveClassSessions.delete(liveClassId);
+        }
+      }
+      socketToLiveClass.delete(socket.id);
+      
+      updateLiveClassCCU(liveClassId);
+    });
+
     // Disconnect handler
     socket.on('disconnect', () => {
       console.log(`🔌 Socket disconnected: User ${userId} on socket ${socket.id}`);
@@ -309,6 +368,20 @@ export const initSocket = (server) => {
         const session = activeExamSessions.get(userId);
         activeExamSessions.delete(userId);
         notifyTutorStudentLeft(session.examId, userId);
+      }
+
+      // If this was an active live class socket, clean up
+      if (socketToLiveClass.has(socket.id)) {
+        const liveClassId = socketToLiveClass.get(socket.id);
+        console.log(`🚪 Socket ${socket.id} disconnected from live class ${liveClassId}`);
+        if (liveClassSessions.has(liveClassId)) {
+          liveClassSessions.get(liveClassId).delete(socket.id);
+          if (liveClassSessions.get(liveClassId).size === 0) {
+            liveClassSessions.delete(liveClassId);
+          }
+        }
+        socketToLiveClass.delete(socket.id);
+        updateLiveClassCCU(liveClassId);
       }
     });
   });
@@ -363,6 +436,18 @@ export const emitLiveClassStatusChange = (eventData) => {
   if (!io) return;
   console.log(`📡 Emitting live class status change via WebSockets to role_superadmin`);
   io.to('role_superadmin').emit('live_class_status_change', eventData);
+};
+
+// Get live class participant count
+export const getLiveClassParticipantCount = (liveClassId) => {
+  return liveClassSessions.has(liveClassId) ? liveClassSessions.get(liveClassId).size : 0;
+};
+
+// Force disconnector for live class
+export const emitLiveClassForceKill = (liveClassId) => {
+  if (!io) return;
+  console.log(`🚨 Force killing live class room: live_class_${liveClassId}`);
+  io.to(`live_class_${liveClassId}`).emit('live_class_force_killed', { liveClassId });
 };
 
 export const getIO = () => io;

@@ -2,6 +2,8 @@ import Appointment from '../models/Appointment.js';
 import Tutor from '../models/Tutor.js';
 import ScheduleAppointment from '../models/Appointment_Schedule.js';
 import User from '../models/User.js';
+import ZoomConfig from '../models/ZoomConfig.js';
+import { generateZoomSignature } from '../services/zoomService.js';
 
 const buildLiveClassLink = (appointmentId) => `https://meet.jit.si/tutorapp-live-${appointmentId}`;
 
@@ -972,3 +974,149 @@ function checkOverlap(slots) {
   }
   return null;
 }
+
+// @desc    Get join config for an appointment
+// @route   POST /api/appointments/:id/join-config
+export const getAppointmentJoinConfig = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const appointment = await Appointment.findById(id);
+
+    if (!appointment) {
+      return res.status(404).json({
+        success: false,
+        message: 'Appointment not found'
+      });
+    }
+
+    // Check authorization
+    const tutor = await Tutor.findById(appointment.tutorId);
+    const isStudent = appointment.studentId.toString() === req.user.id;
+    const isTutor = tutor && tutor.userId.toString() === req.user.id;
+
+    if (!isStudent && !isTutor) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to join this appointment'
+      });
+    }
+
+    const meetingLink = appointment.meetingLink;
+    if (!meetingLink) {
+      return res.status(400).json({
+        success: false,
+        message: 'Meeting link is not available yet'
+      });
+    }
+
+    // Detect platform
+    let platform = 'jitsi';
+    let meetingNumber = `tutorapp-live-${appointment._id}`;
+    let passcode = '';
+
+    if (meetingLink.includes('zoom.us')) {
+      platform = 'zoom';
+      try {
+        const urlObj = new URL(meetingLink);
+        const pathParts = urlObj.pathname.split('/');
+        const jIndex = pathParts.indexOf('j');
+        if (jIndex !== -1 && pathParts[jIndex + 1]) {
+          meetingNumber = pathParts[jIndex + 1];
+        }
+        passcode = urlObj.searchParams.get('pwd') || '';
+      } catch (err) {
+        console.error('Failed to parse Zoom URL:', err);
+      }
+    } else if (meetingLink.includes('meet.jit.si')) {
+      platform = 'jitsi';
+      try {
+        const urlObj = new URL(meetingLink);
+        meetingNumber = urlObj.pathname.substring(1);
+      } catch (err) {
+        console.error('Failed to parse Jitsi URL:', err);
+      }
+    } else {
+      return res.status(200).json({
+        success: true,
+        config: {
+          platform: 'external',
+          meetingLink: meetingLink
+        }
+      });
+    }
+
+    if (platform === 'zoom') {
+      const instId = tutor.instituteId || null;
+      const config = await ZoomConfig.findOne({ instituteId: instId });
+
+      // ⚠️  Signature MUST use Meeting SDK App creds, NOT Server-to-Server OAuth creds.
+      let sdkClientId = '';
+      let sdkClientSecret = '';
+
+      if (config && config.isEnabled && config.sdkClientId) {
+        sdkClientId = config.sdkClientId;
+        sdkClientSecret = config.sdkClientSecret || '';
+      } else {
+        sdkClientId = process.env.ZOOM_SDK_CLIENT_ID;
+        sdkClientSecret = process.env.ZOOM_SDK_CLIENT_SECRET;
+      }
+
+      if (!sdkClientId || !sdkClientSecret) {
+        // Fall back to external link if SDK creds not configured
+        return res.status(200).json({
+          success: true,
+          config: {
+            platform: 'external',
+            meetingLink: meetingLink
+          }
+        });
+      }
+
+      try {
+        const zoomRole = isTutor ? 1 : 0;
+        // generateZoomSignature uses Meeting SDK App creds — never S2S credentials
+        const signature = generateZoomSignature(sdkClientId, sdkClientSecret, meetingNumber, zoomRole);
+
+        return res.status(200).json({
+          success: true,
+          config: {
+            meetingNumber,
+            passcode,
+            userName: req.user.name,
+            userEmail: req.user.email,
+            role: zoomRole,
+            sdkKey: sdkClientId,       // Meeting SDK App Client ID — safe to send to frontend
+            signature,
+            platform: 'zoom',
+            classTitle: appointment.title || appointment.purpose || 'Appointment',
+            duration: appointment.duration || 30
+          }
+        });
+      } catch (sigErr) {
+        console.error('Zoom signature generation error for appointment:', sigErr);
+        return res.status(200).json({
+          success: true,
+          config: {
+            platform: 'external',
+            meetingLink: meetingLink
+          }
+        });
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      config: {
+        meetingNumber,
+        userName: req.user.name,
+        userEmail: req.user.email,
+        role: isTutor ? 'moderator' : 'participant',
+        platform: 'jitsi'
+      }
+    });
+
+  } catch (error) {
+    console.error('Get Appointment Join Config Error:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+};

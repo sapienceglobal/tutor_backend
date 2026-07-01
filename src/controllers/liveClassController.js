@@ -2,7 +2,8 @@ import LiveClass from "../models/LiveClass.js";
 import Tutor from "../models/Tutor.js";
 import Enrollment from "../models/Enrollment.js";
 import Attendance from "../models/Attendance.js";
-// import { createZoomMeeting } from '../services/zoomService.js'; // Zoom removed
+import ZoomConfig from "../models/ZoomConfig.js";
+import { createZoomMeeting, generateZoomSignature } from '../services/zoomService.js';
 import { featureFlags } from "../config/featureFlags.js";
 import { getForUser as getEntitlementsForUser } from "../services/entitlementService.js";
 import { evaluateAccess } from "../services/accessPolicy.js";
@@ -58,22 +59,6 @@ export const createLiveClass = async (req, res) => {
     } = req.body;
     let { meetingLink, meetingId, passcode, materialLink } = req.body;
 
-    // Auto-Generate Jitsi Meeting Logic
-    if (autoCreate || platform === "jitsi") {
-      // Generate a unique, professional room name
-      // Format: TutorApp_CourseTitle_RandomSuffix (sanitized)
-      const cleanTitle = title.replace(/[^a-zA-Z0-9]/g, "");
-      const randomSuffix = Math.random().toString(36).substring(2, 8);
-      meetingId = `TutorApp_${cleanTitle}_${randomSuffix}`;
-
-      // Constructs the full URL for external access if needed
-      meetingLink = `https://meet.jit.si/${meetingId}`;
-
-      // Jitsi doesn't strictly need a passcode for free tier, but we can set one if we want to lock rooms later.
-      // For now, we'll keep passcode empty or optional as Jitsi handles access via the room name primarily for free usage.
-      passcode = "";
-    }
-
     // Verify tutor exists
     const tutor = await Tutor.findOne({ userId: req.user._id });
     if (!tutor) {
@@ -82,6 +67,56 @@ export const createLiveClass = async (req, res) => {
         success: false,
         message: "Tutor profile not found",
       });
+    }
+
+    // Auto-Generate Meeting Logic
+    if (autoCreate) {
+      if (platform === "zoom") {
+        const instId = req.tenant?._id || tutor.instituteId || null;
+        const config = await ZoomConfig.findOne({ instituteId: instId });
+        
+        let clientId = "";
+        let clientSecret = "";
+        let accountId = "";
+
+        if (config && config.isEnabled) {
+          clientId = config.clientId;
+          clientSecret = config.getDecryptedSecret();
+          accountId = config.accountId;
+        } else {
+          clientId = process.env.ZOOM_CLIENT_ID;
+          clientSecret = process.env.ZOOM_CLIENT_SECRET;
+          accountId = process.env.ZOOM_ACCOUNT_ID;
+        }
+
+        if (!clientId || !clientSecret || !accountId) {
+          return res.status(400).json({
+            success: false,
+            message: "Zoom integration is not configured or enabled. Please configure Zoom integration in settings or .env file."
+          });
+        }
+        
+        try {
+          const customZoomConfig = { clientId, clientSecret, accountId };
+          const meeting = await createZoomMeeting(customZoomConfig, title, dateTime, duration);
+          meetingId = meeting.id;
+          meetingLink = meeting.join_url;
+          passcode = meeting.password;
+        } catch (zoomErr) {
+          console.error("Zoom scheduling failed:", zoomErr);
+          return res.status(400).json({
+            success: false,
+            message: zoomErr.message || "Failed to schedule meeting on Zoom API."
+          });
+        }
+      } else if (platform === "jitsi") {
+        // Generate a unique, professional room name
+        const cleanTitle = title.replace(/[^a-zA-Z0-9]/g, "");
+        const randomSuffix = Math.random().toString(36).substring(2, 8);
+        meetingId = `TutorApp_${cleanTitle}_${randomSuffix}`;
+        meetingLink = `https://meet.jit.si/${meetingId}`;
+        passcode = "";
+      }
     }
 
     // Industry Standard Check 1: Cannot schedule in the past
@@ -670,6 +705,18 @@ export const getJoinConfig = async (req, res) => {
       }
     }
 
+    if (isTutorOwner && liveClass.status !== 'live') {
+      liveClass.status = 'live';
+      await liveClass.save();
+      
+      try {
+        const { emitLiveClassStatusChange } = await import('../services/socketService.js');
+        emitLiveClassStatusChange({ type: 'status_change', sessionId: liveClass._id.toString(), status: 'live' });
+      } catch (err) {
+        console.error("Failed to emit live class status change socket event:", err);
+      }
+    }
+
     if (req.user.role === "student") {
       const enrollment = await Enrollment.findOne({
         studentId: req.user._id,
@@ -739,6 +786,75 @@ export const getJoinConfig = async (req, res) => {
       meta: { via: "join_config" },
     });
 
+    if (liveClass.platform === 'zoom') {
+      const instId = liveClass.instituteId || req.tenant?._id || null;
+      const config = await ZoomConfig.findOne({ instituteId: instId });
+
+      // ⚠️  Signature MUST use Meeting SDK App creds, NOT Server-to-Server OAuth creds.
+      // ZoomConfig may store institute-level SDK overrides; fall back to global .env
+      let sdkClientId = '';
+      let sdkClientSecret = '';
+
+      if (config && config.isEnabled && config.sdkClientId) {
+        // Institute has their own Meeting SDK App configured
+        sdkClientId = config.sdkClientId;
+        sdkClientSecret = config.sdkClientSecret || '';
+      } else {
+        // Fall back to platform-level Meeting SDK App credentials
+        sdkClientId = process.env.ZOOM_SDK_CLIENT_ID;
+        sdkClientSecret = process.env.ZOOM_SDK_CLIENT_SECRET;
+      }
+
+      if (!sdkClientId || !sdkClientSecret) {
+        return res.status(400).json({
+          success: false,
+          message: 'Zoom Meeting SDK credentials (ZOOM_SDK_CLIENT_ID / ZOOM_SDK_CLIENT_SECRET) are not configured. Please add them to your .env file.'
+        });
+      }
+
+      try {
+        // ⚠️  FIX: role must ONLY ever be granted to the actual owning
+        // tutor. Previously this also granted role=1 (HOST) to ANY user
+        // with req.user.role === 'admin', which directly contradicted the
+        // "silent observer, no meeting control" design already documented
+        // in socketService.js (join_live_class handler explicitly skips
+        // CCU counting for admin/superadmin because they're meant to be
+        // silent). Zoom's Meeting SDK treats a second role=1 (host)
+        // connection joining the SAME meeting as a host-privilege
+        // conflict — the cloud has to renegotiate who holds host control,
+        // and that renegotiation is what was causing EVERY participant
+        // (tutor + all students) to briefly flicker into a
+        // "reconnecting"/"joining" state whenever an admin/superadmin
+        // opened the "Join silently" link. Restricting role=1 to only
+        // isTutorOwner removes that conflict entirely — admin/superadmin
+        // now always join as role=0 (participant), matching their
+        // intended silent-observer status, regardless of whether their
+        // account's role string happens to be 'admin' or 'superadmin'.
+        const zoomRole = isTutorOwner ? 1 : 0;
+        // generateZoomSignature now uses Meeting SDK App creds — never S2S credentials
+        const signature = generateZoomSignature(sdkClientId, sdkClientSecret, liveClass.meetingId, zoomRole);
+
+        return res.status(200).json({
+          success: true,
+          config: {
+            meetingNumber: liveClass.meetingId,
+            passcode: liveClass.passcode || '',
+            userName: req.user.name,
+            userEmail: req.user.email,
+            role: zoomRole,
+            sdkKey: sdkClientId,       // Meeting SDK App Client ID — safe to send to frontend
+            signature: signature,
+            platform: 'zoom',
+            classTitle: liveClass.title || 'Live Class',
+            duration: liveClass.duration || 60
+          }
+        });
+      } catch (sigErr) {
+        console.error('Zoom signature generation error:', sigErr);
+        return res.status(500).json({ success: false, message: sigErr.message || 'Failed to generate Zoom signature' });
+      }
+    }
+
     res.status(200).json({
       success: true,
       config: {
@@ -749,7 +865,7 @@ export const getJoinConfig = async (req, res) => {
           isTutorOwner || req.user.role === "admin"
             ? "moderator"
             : "participant",
-        platform: "jitsi",
+        platform: liveClass.platform || "jitsi",
       },
     });
   } catch (error) {

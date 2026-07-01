@@ -22,6 +22,8 @@ export const getLiveRadar = async (req, res) => {
             })
             .sort({ dateTime: -1 });
 
+        const { getLiveClassParticipantCount } = await import('../services/socketService.js');
+
         // Map fields to match what the Frontend Radar expects
         const activeSessions = activeClasses.map(cls => {
             const sessionObj = cls.toObject();
@@ -34,7 +36,7 @@ export const getLiveRadar = async (req, res) => {
             }
 
             // Map mapping keys for UI
-            sessionObj.participantCount = 0; // Hardcoded until real webhooks are connected
+            sessionObj.participantCount = getLiveClassParticipantCount(cls._id.toString());
             sessionObj.startedAt = sessionObj.dateTime; // Fallback for UI timer
             
             return sessionObj;
@@ -42,7 +44,7 @@ export const getLiveRadar = async (req, res) => {
 
         // Calculate KPIs
         const totalActiveStreams = activeSessions.length;
-        const totalCCU = 0; // Will be 0 until real metrics logic is implemented
+        const totalCCU = activeSessions.reduce((acc, curr) => acc + curr.participantCount, 0);
 
         // Calculate total streams today
         const today = new Date();
@@ -89,8 +91,9 @@ export const forceKillSession = async (req, res) => {
         // NOTE: Asli app me yahan ek Socket.io ya Pusher event emit kar dena 
         // jo tutor/students ke frontend ko force disconnect kar de.
         try {
-            const { emitLiveClassStatusChange } = await import('../services/socketService.js');
+            const { emitLiveClassStatusChange, emitLiveClassForceKill } = await import('../services/socketService.js');
             emitLiveClassStatusChange({ type: 'deleted', sessionId: id });
+            emitLiveClassForceKill(id); // Disconnect actual users in real time
         } catch (socketErr) {
             console.error("Failed to emit live class force-kill socket event:", socketErr);
         }

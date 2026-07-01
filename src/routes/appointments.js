@@ -5,6 +5,7 @@ import {
   createAppointment,
   updateAppointment,
   deleteAppointment,
+  getAppointmentJoinConfig,
 
   getSchedule,
   saveSchedule,
@@ -45,6 +46,7 @@ router.get('/', getMyAppointments);
 router.post('/', createAppointment);
 
 router.get('/:id', getAppointmentById);
+router.post('/:id/join-config', getAppointmentJoinConfig);
 router.patch('/:id', updateAppointment);
 router.delete('/:id', deleteAppointment);
 

@@ -123,7 +123,7 @@ app.use(helmet({
     hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
 }));
 
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://195.35.20.207:5000').split(',');
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,https://yaadkaro.cloud,http://195.35.20.207:5000').split(',');
 app.use(cors({
     origin: function (origin, callback) {
         if (!origin) return callback(null, true);
