@@ -4,14 +4,19 @@ import {
   acceptInvite,
   requestJoin,
   approveMembership,
+  rejectMembership,
   getMyInstitutes,
+  getMyPendingRequests,
+  getInstitutePendingRequests,
+  addInstituteMember,
   switchInstitute,
   getInstituteMembers,
   leaveInstitute,
+  withdrawJoinRequest,
   getInvites,
   getCurrentInstitute
 } from '../controllers/membershipController.js';
-import { protect } from '../middleware/auth.js';
+import { protect, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -24,9 +29,15 @@ router.post('/accept-invite', acceptInvite);
 router.get('/invites', getInvites);
 router.get('/current-institute', getCurrentInstitute);
 
-// Join requests
+// Join requests & admin admissions
 router.post('/request-join', requestJoin);
+router.delete('/requests/:membershipId/withdraw', withdrawJoinRequest);
+router.get('/my-requests', getMyPendingRequests);
+router.get('/requests', authorize('admin', 'tutor'), getInstitutePendingRequests);
+router.get('/institute/:instituteId/requests', authorize('admin', 'tutor'), getInstitutePendingRequests);
+router.post('/add-member', authorize('admin'), addInstituteMember);
 router.put('/:membershipId/approve', approveMembership);
+router.put('/:membershipId/reject', rejectMembership);
 
 // User institute management
 router.get('/my-institutes', getMyInstitutes);

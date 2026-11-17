@@ -7,8 +7,11 @@ import Tutor from '../models/Tutor.js';
 import Institute from '../models/Institute.js';
 import InstituteMembership from '../models/InstituteMembership.js';
 import mongoose from 'mongoose';
+import { getInstituteFreePlanFeatures, getTutorFreeSubscriptionConfig } from '../config/planDefaults.js';
+import { checkInstituteQuota } from '../middleware/subscriptionMiddleware.js';
+import { getDefaultPermissions } from '../services/admissionService.js';
 
-const getAdminInstituteId = (req) => req.user?.instituteId || null;
+const getAdminInstituteId = (req) => req.workspace?.instituteId || req.user?.instituteId || null;
 const userScope = (req, extra = {}) => ({ instituteId: getAdminInstituteId(req), ...extra });
 const courseScope = (req, extra = {}) => ({ instituteId: getAdminInstituteId(req), ...extra });
 
@@ -160,12 +163,28 @@ export const getAdminStats = async (req, res) => {
         // ============================================
         // 7. RECENT ACTIVITY
         // ============================================
-        const recentNewUsers = await User.find(scopedUsers).sort({ createdAt: -1 }).limit(2);
-        const recentPayments = await Payment.find({ instituteId, status: 'paid' }).sort({ createdAt: -1 }).limit(2).populate('studentId', 'name');
+        const recentNewUsers = await User.find(scopedUsers).select('name role profileImage createdAt').sort({ createdAt: -1 }).limit(3);
+        const recentPayments = await Payment.find({ instituteId, status: 'paid' }).sort({ createdAt: -1 }).limit(3).populate('studentId', 'name profileImage');
         
         let recentActivityRaw = [];
-        recentNewUsers.forEach(u => recentActivityRaw.push({ text: `New ${u.role} registered: ${u.name}`, time: u.createdAt, icon: "user", color: "#6854F3" }));
-        recentPayments.forEach(p => recentActivityRaw.push({ text: `Payment received: ₹${p.amount} from ${p.studentId?.name || 'Student'}`, time: p.createdAt, icon: "payment", color: "#4F7BF0" }));
+        recentNewUsers.forEach(u => recentActivityRaw.push({
+            text: `New ${u.role} registered: ${u.name}`,
+            userName: u.name,
+            userAvatar: u.profileImage || null,
+            actionLabel: `New ${u.role} registered`,
+            time: u.createdAt,
+            icon: "user",
+            color: "#6854F3"
+        }));
+        recentPayments.forEach(p => recentActivityRaw.push({
+            text: `Payment received: ₹${p.amount} from ${p.studentId?.name || 'Student'}`,
+            userName: p.studentId?.name || 'Student',
+            userAvatar: p.studentId?.profileImage || null,
+            actionLabel: `Paid ₹${p.amount}`,
+            time: p.createdAt,
+            icon: "payment",
+            color: "#4F7BF0"
+        }));
 
         recentActivityRaw.sort((a, b) => b.time - a.time);
         const recentActivity = recentActivityRaw.slice(0, 4).map(act => {
@@ -180,8 +199,9 @@ export const getAdminStats = async (req, res) => {
         });
 
         // ============================================
-        // 8. MONTHLY DATA (For Graph)
+        // 8. MONTHLY & WEEKLY DATA (For Graph)
         // ============================================
+        const Progress = (await import('../models/Progress.js')).default;
         const monthlyData = Array.from({ length: 4 }, (_, i) => { 
             const weekStart = new Date();
             weekStart.setDate(weekStart.getDate() - (28 - i * 7));
@@ -191,28 +211,56 @@ export const getAdminStats = async (req, res) => {
         });
 
         for (const week of monthlyData) {
-            const weekEnrs = await Enrollment.countDocuments({ courseId: { $in: instituteCourseIds }, createdAt: { $gte: week.start, $lt: week.end } });
-            const weekRev = await Payment.find({ instituteId, status: 'paid', paidAt: { $gte: week.start, $lt: week.end } }).then(pays => pays.reduce((s,p) => s+p.amount, 0));
+            const [weekEnrs, weekComps, weekRev] = await Promise.all([
+                Enrollment.countDocuments({ courseId: { $in: instituteCourseIds }, enrolledAt: { $gte: week.start, $lt: week.end } }),
+                Progress.countDocuments({ courseId: { $in: instituteCourseIds }, completed: true, completedAt: { $gte: week.start, $lt: week.end } }),
+                Payment.find({ instituteId, status: 'paid', paidAt: { $gte: week.start, $lt: week.end } }).then(pays => pays.reduce((s,p) => s+p.amount, 0)),
+            ]);
             week.enrollments = weekEnrs;
             week.revenue = weekRev;
-            week.completions = Math.floor(weekEnrs * 0.7); 
+            week.completions = weekComps;
         }
 
         const finalMonthlyData = monthlyData.map(({name, enrollments, completions, revenue}) => ({name, enrollments, completions, revenue}));
 
-        // ============================================
-        // 9. UPCOMING EXAMS (NEW ADDITION)
-        // ============================================
-        const { Exam } = await import('../models/Exam.js'); // Import Exam model dynamically
+        // 6-Month series for the Monthly toggle in AnalyticsChart
+        const yearlySeriesRaw = Array.from({ length: 6 }, (_, i) => {
+            const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
+            const end = new Date(now.getFullYear(), now.getMonth() - (5 - i) + 1, 0, 23, 59, 59, 999);
+            return {
+                name: d.toLocaleString('default', { month: 'short' }),
+                start: d,
+                end,
+                enrollments: 0,
+                completions: 0,
+                revenue: 0,
+            };
+        });
+
+        for (const m of yearlySeriesRaw) {
+            const [mEnrs, mComps, mRev] = await Promise.all([
+                Enrollment.countDocuments({ courseId: { $in: instituteCourseIds }, enrolledAt: { $gte: m.start, $lte: m.end } }),
+                Progress.countDocuments({ courseId: { $in: instituteCourseIds }, completed: true, completedAt: { $gte: m.start, $lte: m.end } }),
+                Payment.find({ instituteId, status: 'paid', paidAt: { $gte: m.start, $lte: m.end } }).then(pays => pays.reduce((s, p) => s + p.amount, 0)),
+            ]);
+            m.enrollments = mEnrs;
+            m.completions = mComps;
+            m.revenue = mRev;
+        }
+        const yearlyData = yearlySeriesRaw.map(({ name, enrollments, completions, revenue }) => ({ name, enrollments, completions, revenue }));
         
-        // Find exams scheduled in the future or active exams that haven't ended
+        // ============================================
+        // 9. UPCOMING EXAMS & AT-RISK STUDENTS
+        // ============================================
+        const { Exam } = await import('../models/Exam.js');
+        
         const upcomingExamsData = await Exam.find({ 
             instituteId, 
-            status: 'published',
+            status: { $in: ['published', 'draft'] },
             $or: [
                 { startDate: { $gte: now } },
                 { startDate: { $lte: now }, endDate: { $gte: now } },
-                { isScheduled: false } // Include anytime exams
+                { isScheduled: false }
             ]
         })
         .sort({ startDate: 1 })
@@ -221,12 +269,32 @@ export const getAdminStats = async (req, res) => {
 
         const upcomingExams = upcomingExamsData.map(exam => {
             const dateObj = exam.startDate ? new Date(exam.startDate) : new Date();
+            let realStatus = 'Upcoming';
+            if (exam.status === 'draft') {
+                realStatus = 'Draft';
+            } else if (!exam.isScheduled || (exam.startDate && new Date(exam.startDate) <= now && (!exam.endDate || new Date(exam.endDate) >= now))) {
+                realStatus = 'Live';
+            }
             return {
                 title: exam.title,
                 date: exam.startDate ? dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : 'Flexible',
-                time: exam.startDate ? dateObj.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : 'Anytime'
+                time: exam.startDate ? dateObj.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : 'Anytime',
+                status: realStatus
             };
         });
+
+        // Compute real at-risk students (active enrollments with <25% progress enrolled >7 days ago)
+        const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        const atRiskEnrollments = await Enrollment.distinct('studentId', {
+            courseId: { $in: instituteCourseIds },
+            status: 'active',
+            enrolledAt: { $lte: sevenDaysAgo },
+            $or: [
+                { 'progress.percentage': { $lt: 25 } },
+                { 'progress.percentage': { $exists: false } }
+            ]
+        });
+        const atRiskStudentsCount = atRiskEnrollments.length;
 
         const adminUser = await User.findById(req.user.id);
 
@@ -242,12 +310,14 @@ export const getAdminStats = async (req, res) => {
                 totalRevenue,
                 trends,
                 monthlyData: finalMonthlyData,
+                yearlyData,
                 pendingApprovals,
+                atRiskStudentsCount,
                 feeCollection,
                 upcomingClasses,
                 recentActivity,
                 batchOverview,
-                upcomingExams // <-- Now sending Real Upcoming Exams to Frontend!
+                upcomingExams
             }
         });
 
@@ -524,9 +594,27 @@ export const createUser = async (req, res) => {
             return res.status(400).json({ success: false, message: 'User already exists' });
         }
 
+        const instituteId = getAdminInstituteId(req);
+
+        if (instituteId && ['student', 'tutor'].includes(role)) {
+            const institute = await Institute.findById(instituteId).lean();
+            if (institute) {
+                const quota = await checkInstituteQuota(institute, role === 'tutor' ? 'tutors' : 'students');
+                if (!quota.allowed) {
+                    return res.status(quota.status || 403).json({
+                        success: false,
+                        message: quota.message,
+                        currentCount: quota.currentCount,
+                        maxAllowed: quota.maxAllowed,
+                        upgradeRequired: Boolean(quota.upgradeRequired),
+                    });
+                }
+            }
+        }
+
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        const user = await User.create({
+        const userPayload = {
             name,
             email,
             password: hashedPassword,
@@ -542,16 +630,40 @@ export const createUser = async (req, res) => {
             parentDetails: parentDetails || [],
             address: address || {},
             ...(profileImage && { profileImage }),
-            instituteId: getAdminInstituteId(req)
-        });
+            instituteId,
+        };
+
+        if (role === 'tutor') {
+            userPayload.personalSubscription = getTutorFreeSubscriptionConfig();
+        }
+
+        const user = await User.create(userPayload);
 
         if (role === 'tutor') {
             const settings = (await Settings.findOne()) || {};
             await Tutor.create({
                 userId: user._id,
-                isVerified: settings.autoApproveTutors || false,
+                instituteId,
+                isVerified: settings.autoApproveTutors || true,
                 website: website || '',
-                subjects: subjects || []
+                subjects: subjects || [],
+                privateTeaching: {
+                    isEnabled: true,
+                    acceptSelfJoinRequests: true,
+                },
+            });
+        }
+
+        if (instituteId && ['student', 'tutor', 'admin'].includes(role)) {
+            await InstituteMembership.create({
+                userId: user._id,
+                instituteId,
+                roleInInstitute: role,
+                status: 'active',
+                joinedVia: 'admin_add',
+                approvedBy: req.user?._id || req.user?.id || user._id,
+                approvedAt: new Date(),
+                permissions: getDefaultPermissions(role),
             });
         }
 
@@ -1157,18 +1269,19 @@ export const createInstitute = async (req, res) => {
             });
         }
 
-        // Create institute
+        // Create institute (always starts on Free tier with capped limits)
         const institute = await Institute.create({
             name,
             subdomain,
             description,
             isActive: true,
-            subscriptionPlan: 'premium', // Default for new institutes
+            subscriptionPlan: 'free',
+            features: getInstituteFreePlanFeatures(),
             settings: {
                 allowStudentRegistration: true,
                 requireInviteForStudents: false,
-                requireInviteForTutors: true,
-                autoApproveStudents: true,
+                requireInviteForTutors: false,
+                autoApproveStudents: false,
                 autoApproveTutors: false
             }
         });

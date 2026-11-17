@@ -6373,9 +6373,53 @@ export const generateAICourse = async (req, res) => {
         const Tutor = (await import('../models/Tutor.js')).default;
         const Course = (await import('../models/Course.js')).default;
         const Lesson = (await import('../models/Lesson.js')).default;
+        const { checkPrivateCourseQuota } = await import('../middleware/subscriptionMiddleware.js');
+        const { resolveCoursePricingPolicy } = await import('./courseController.js');
 
-        const tutor = await Tutor.findOne({ userId: req.user._id }).select('_id instituteId').lean();
+        const tutor = await Tutor.findOne({ userId: req.user._id })
+            .select('_id instituteId privateTeaching payoutAccount.verificationStatus')
+            .lean();
         if (!tutor) return res.status(403).json({ success: false, message: 'Tutor profile not found' });
+
+        const isPrivateWorkspace = req.workspace?.type === 'private_tutor'
+            || (!req.tenant && !req.workspace?.instituteId && req.body?.scope !== 'institute');
+
+        if (isPrivateWorkspace) {
+            if (tutor.privateTeaching?.isEnabled === false) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'PRIVATE_STUDIO_DISABLED',
+                    message: 'Private Studio is disabled on your tutor profile.',
+                });
+            }
+            const courseQuota = await checkPrivateCourseQuota(tutor._id, req.user._id);
+            if (!courseQuota.allowed) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'PRIVATE_COURSE_LIMIT_REACHED',
+                    limitReached: true,
+                    upgradeRequired: true,
+                    currentCount: courseQuota.currentCount,
+                    maxAllowed: courseQuota.maxAllowed,
+                    message: `Private course limit reached (${courseQuota.currentCount}/${courseQuota.maxAllowed}). Upgrade your Tutor plan to create more private courses.`,
+                });
+            }
+        }
+
+        const aiPricingResult = resolveCoursePricingPolicy({
+            price,
+            requestedPricingMode: req.body.pricingMode,
+            offlinePaymentInstructions: req.body.offlinePaymentInstructions,
+            tutor,
+            isPrivateWorkspace,
+        });
+        if (!aiPricingResult.ok) {
+            return res.status(aiPricingResult.status).json({
+                success: false,
+                code: aiPricingResult.code,
+                message: aiPricingResult.message,
+            });
+        }
 
         const selectedSections = {
             visualLessons: sections.visualLessons !== false,
@@ -6465,39 +6509,39 @@ Rules:
             return res.status(500).json({ success: false, message: 'AI returned invalid format. Try again later.' });
         }
 
-        // ── Get user info ─────────────────────────────────────────────
-        const User = (await import('../models/User.js')).default;
-        const user = await User.findById(req.user._id).select('instituteId').lean();
-        const instituteId = user?.instituteId || tutor.instituteId || null;
+        const instituteId = isPrivateWorkspace
+            ? null
+            : (req.workspace?.instituteId || req.tenant?._id || tutor.instituteId || null);
 
         let resolvedAudience;
         if (audience) {
+            const defaultScope = isPrivateWorkspace ? AUDIENCE_SCOPES.TUTOR_NETWORK : AUDIENCE_SCOPES.INSTITUTE;
             const normalized = normalizeAudienceInput({
                 audience,
-                scope: audience.scope,
-                instituteId: audience.instituteId || instituteId,
+                scope: audience.scope === AUDIENCE_SCOPES.GLOBAL ? defaultScope : audience.scope,
+                instituteId: isPrivateWorkspace ? null : (audience.instituteId || instituteId),
             }, {
-                defaultScope: instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.GLOBAL,
+                defaultScope,
                 defaultInstituteId: instituteId,
             });
-            resolvedAudience = validateAudience(normalized, { requireInstituteId: false });
-            if (!instituteId) {
-                resolvedAudience.scope = AUDIENCE_SCOPES.GLOBAL;
-                resolvedAudience.instituteId = null;
+            if (normalized.scope === AUDIENCE_SCOPES.GLOBAL) {
+                normalized.scope = defaultScope;
             }
+            if (isPrivateWorkspace) {
+                normalized.instituteId = null;
+            }
+            resolvedAudience = validateAudience(normalized, { requireInstituteId: false });
         } else {
             resolvedAudience = {
-                scope: instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.GLOBAL,
+                scope: isPrivateWorkspace ? AUDIENCE_SCOPES.TUTOR_NETWORK : AUDIENCE_SCOPES.INSTITUTE,
                 instituteId: instituteId || null,
                 batchIds: [],
                 studentIds: [],
             };
         }
 
-        const isGlobal = resolvedAudience.scope === AUDIENCE_SCOPES.GLOBAL;
-        const resolvedInstituteId = isGlobal ? null : (resolvedAudience.instituteId || instituteId || null);
+        const resolvedInstituteId = isPrivateWorkspace ? null : (resolvedAudience.instituteId || instituteId || null);
 
-        // ── Build modules array for Course ────────────────────────────
         const mongoose = (await import('mongoose')).default;
 
         const modulesWithIds = (parsed.modules || []).map((mod, mIdx) => ({
@@ -6507,7 +6551,6 @@ Rules:
             order: mIdx,
         }));
 
-        // ── Create Course (same as manual createCourse) ───────────────
         const levelMap = {
             easy: 'beginner',
             balanced: 'intermediate',
@@ -6522,8 +6565,10 @@ Rules:
             tutorId: tutor._id,
             instituteId: resolvedInstituteId,
             createdBy: req.user._id,
-            price: Number(price) || 0,
-            isFree: Number(price) === 0,
+            price: aiPricingResult.price,
+            isFree: aiPricingResult.isFree,
+            pricingMode: aiPricingResult.pricingMode,
+            offlinePaymentInstructions: aiPricingResult.offlinePaymentInstructions,
             level: levelMap[difficulty] || 'beginner',
             language: language || 'English',
             duration: 0,
@@ -6532,7 +6577,10 @@ Rules:
             modules: modulesWithIds,
             status: 'published',
             isAIGenerated: true,
-            visibility: isGlobal ? 'public' : 'institute',
+            visibility: isPrivateWorkspace ? 'public' : 'institute',
+            visibilityScope: isPrivateWorkspace
+                ? (resolvedAudience.scope === AUDIENCE_SCOPES.PRIVATE ? 'private' : 'tutor_network')
+                : (resolvedAudience.scope === AUDIENCE_SCOPES.PRIVATE ? 'private' : 'institute'),
             audience: resolvedAudience,
         });
 

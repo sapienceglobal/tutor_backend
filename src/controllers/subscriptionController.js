@@ -6,13 +6,24 @@ import SubscriptionPlan from '../models/SubscriptionPlan.js';
 export const getPlans = async (req, res) => {
     try {
         const { planType, planRole } = req.query;
+        const isSuperAdmin = req.user?.role === 'superadmin';
         const query = {};
+
+        if (!isSuperAdmin) {
+            query.isActive = true;
+        }
         if (planType) {
             query.planType = planType;
         }
         if (planRole) {
+            if (!isSuperAdmin && planRole === 'student') {
+                return res.status(200).json({ success: true, plans: [] });
+            }
             query.planRole = { $in: [planRole, 'all', 'both'] };
+        } else if (!isSuperAdmin) {
+            query.planRole = { $ne: 'student' };
         }
+
         const plans = await SubscriptionPlan.find(query).sort({ price: 1 });
         res.status(200).json({ success: true, plans });
     } catch (error) {

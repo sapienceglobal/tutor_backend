@@ -81,6 +81,38 @@ const tutorSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   }],
+  privateTeaching: {
+    isEnabled: { type: Boolean, default: true },
+    acceptSelfJoinRequests: { type: Boolean, default: true },
+    headline: { type: String, trim: true, maxlength: 140, default: '' },
+    city: { type: String, trim: true, default: '' },
+  },
+  payoutAccount: {
+    method: {
+      type: String,
+      enum: ['none', 'bank_account', 'upi'],
+      default: 'none',
+    },
+    accountHolderName: { type: String, trim: true, default: '' },
+    bankName: { type: String, trim: true, default: '' },
+    ifscCode: { type: String, trim: true, uppercase: true, default: '' },
+    accountNumberMasked: { type: String, trim: true, default: '' },
+    accountNumberEncrypted: { type: String, select: false, default: null },
+    upiId: { type: String, trim: true, lowercase: true, default: '' },
+    razorpayContactId: { type: String, trim: true, default: null },
+    razorpayFundAccountId: { type: String, trim: true, default: null },
+    razorpayLinkedAccountId: { type: String, trim: true, default: null },
+    verificationStatus: {
+      type: String,
+      enum: ['not_configured', 'pending', 'verified', 'rejected'],
+      default: 'not_configured',
+      index: true,
+    },
+    submittedAt: { type: Date, default: null },
+    verifiedAt: { type: Date, default: null },
+    verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    rejectionReason: { type: String, trim: true, default: '' },
+  },
   isVerified: {
     type: Boolean,
     default: false

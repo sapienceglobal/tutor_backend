@@ -1,4 +1,6 @@
 import PayoutRequest from '../models/PayoutRequest.js';
+import Tutor from '../models/Tutor.js';
+import Notification from '../models/Notification.js';
 
 // @desc    Get all payout requests & financial KPIs (God View)
 // @route   GET /api/superadmin/payouts
@@ -107,5 +109,98 @@ export const processPayout = async (req, res) => {
     } catch (error) {
         console.error('Process Payout Error:', error);
         res.status(500).json({ success: false, message: 'Failed to process payout request' });
+    }
+};
+
+// @desc    List tutor payout KYC accounts for SuperAdmin review
+// @route   GET /api/superadmin/payouts/accounts
+// @access  Private/Superadmin
+export const getTutorPayoutAccounts = async (req, res) => {
+    try {
+        const status = String(req.query.status || 'pending').trim().toLowerCase();
+        const filter = {};
+        if (status !== 'all' && ['not_configured', 'pending', 'verified', 'rejected'].includes(status)) {
+            filter['payoutAccount.verificationStatus'] = status;
+        } else if (status === 'all') {
+            filter['payoutAccount.method'] = { $in: ['bank_account', 'upi'] };
+        }
+
+        const tutors = await Tutor.find(filter)
+            .populate('userId', 'name email phone profileImage')
+            .select('-payoutAccount.accountNumberEncrypted')
+            .sort({ 'payoutAccount.submittedAt': -1, updatedAt: -1 })
+            .lean();
+
+        res.status(200).json({
+            success: true,
+            accounts: tutors.map((t) => ({
+                tutorId: t._id,
+                userId: t.userId,
+                subjects: t.subjects || [],
+                payoutAccount: t.payoutAccount || { verificationStatus: 'not_configured', method: 'none' },
+            })),
+        });
+    } catch (error) {
+        console.error('Get tutor payout accounts error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch tutor payout accounts' });
+    }
+};
+
+// @desc    SuperAdmin verifies or rejects a Tutor's payout account (& optionally attaches Razorpay Route linked account ID)
+// @route   PATCH /api/superadmin/payouts/accounts/:tutorId/verify
+// @access  Private/Superadmin
+export const verifyTutorPayoutAccount = async (req, res) => {
+    try {
+        const { tutorId } = req.params;
+        const { status, rejectionReason, razorpayLinkedAccountId, razorpayContactId, razorpayFundAccountId } = req.body;
+
+        if (!['verified', 'rejected'].includes(status)) {
+            return res.status(400).json({ success: false, message: 'Status must be verified or rejected' });
+        }
+
+        const tutor = await Tutor.findById(tutorId).select('-payoutAccount.accountNumberEncrypted');
+        if (!tutor) {
+            return res.status(404).json({ success: false, message: 'Tutor not found' });
+        }
+
+        if (!tutor.payoutAccount || tutor.payoutAccount.method === 'none') {
+            return res.status(400).json({ success: false, message: 'Tutor has not submitted payout account details yet' });
+        }
+
+        tutor.payoutAccount.verificationStatus = status;
+        tutor.payoutAccount.verifiedBy = req.user.id;
+        tutor.payoutAccount.verifiedAt = status === 'verified' ? new Date() : null;
+        tutor.payoutAccount.rejectionReason = status === 'rejected' ? String(rejectionReason || 'Verification rejected').trim() : '';
+
+        if (razorpayLinkedAccountId !== undefined) {
+            tutor.payoutAccount.razorpayLinkedAccountId = String(razorpayLinkedAccountId || '').trim() || null;
+        }
+        if (razorpayContactId !== undefined) {
+            tutor.payoutAccount.razorpayContactId = String(razorpayContactId || '').trim() || null;
+        }
+        if (razorpayFundAccountId !== undefined) {
+            tutor.payoutAccount.razorpayFundAccountId = String(razorpayFundAccountId || '').trim() || null;
+        }
+
+        await tutor.save();
+
+        await Notification.create({
+            userId: tutor.userId,
+            type: status === 'verified' ? 'payout_account_verified' : 'payout_account_rejected',
+            title: status === 'verified' ? 'Payout Account Verified!' : 'Payout Account Needs Attention',
+            message: status === 'verified'
+                ? 'Your bank/UPI payout account is verified. Online Razorpay fee collection is now unlocked for your paid courses!'
+                : `Your payout account verification was rejected: ${tutor.payoutAccount.rejectionReason}`,
+            data: { tutorId: tutor._id },
+        }).catch(() => {});
+
+        res.status(200).json({
+            success: true,
+            message: `Tutor payout account ${status}`,
+            payoutAccount: tutor.payoutAccount,
+        });
+    } catch (error) {
+        console.error('Verify tutor payout account error:', error);
+        res.status(500).json({ success: false, message: 'Failed to update payout verification status' });
     }
 };

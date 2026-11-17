@@ -2,6 +2,9 @@ import Enrollment from '../models/Enrollment.js';
 import Course from '../models/Course.js';
 import Lesson from '../models/Lesson.js';
 import Progress from '../models/Progress.js';
+import TutorStudentLink from '../models/TutorStudentLink.js';
+import InstituteMembership from '../models/InstituteMembership.js';
+import Payment from '../models/Payment.js';
 import { createNotification } from './notificationController.js';
 
 // @desc    Enroll in a course
@@ -30,8 +33,11 @@ export const enrollInCourse = async (req, res) => {
       });
     }
 
-    const isTutorVerified = course.tutorId && course.tutorId.isVerified;
-    const isTutorBlocked = course.tutorId && course.tutorId.userId && course.tutorId.userId.isBlocked;
+    const isPrivateCourse = !course.instituteId;
+    const isTutorVerified = isPrivateCourse
+      ? (course.tutorId?.privateTeaching?.isEnabled !== false)
+      : Boolean(course.tutorId?.isVerified);
+    const isTutorBlocked = Boolean(course.tutorId?.userId?.isBlocked);
     const isCourseAvailable = course.status === 'published' && isTutorVerified && !isTutorBlocked;
 
     if (!isCourseAvailable) {
@@ -41,60 +47,138 @@ export const enrollInCourse = async (req, res) => {
       });
     }
 
-    // Institute scope check — prevent cross-institute enrollment
-    if (course.visibilityScope === 'institute' && course.instituteId) {
-      if (String(req.user.instituteId) !== String(course.instituteId)) {
+    // Closed-workspace membership / tutor link verification
+    if (course.instituteId) {
+      const hasInstAccess = String(req.user.instituteId) === String(course.instituteId)
+        || await InstituteMembership.exists({
+          userId: req.user.id,
+          instituteId: course.instituteId,
+          status: 'active',
+        });
+      if (!hasInstAccess) {
         return res.status(403).json({
           success: false,
-          message: 'This course is restricted to its institute members.',
+          code: 'INSTITUTE_MEMBERSHIP_REQUIRED',
+          message: 'This course is restricted to approved institute members.',
+        });
+      }
+    } else {
+      const hasTutorLink = await TutorStudentLink.exists({
+        studentId: req.user.id,
+        tutorId: course.tutorId?._id,
+        status: 'active',
+      });
+      if (!hasTutorLink) {
+        return res.status(403).json({
+          success: false,
+          code: 'TUTOR_NOT_LINKED',
+          message: 'You must be connected with this Private Tutor before enrolling in their course.',
         });
       }
     }
 
-    // Check if already enrolled
+    // Check existing enrollment
     const existingEnrollment = await Enrollment.findOne({
       studentId: req.user.id,
       courseId,
     });
 
     if (existingEnrollment) {
+      if (existingEnrollment.status === 'pending_payment') {
+        return res.status(400).json({
+          success: false,
+          pendingPayment: true,
+          message: 'Your offline fee confirmation is already pending with the tutor.',
+        });
+      }
+      if (existingEnrollment.status === 'pending') {
+        return res.status(400).json({
+          success: false,
+          pending: true,
+          message: 'Your enrollment request is already pending approval.',
+        });
+      }
       return res.status(400).json({
         success: false,
         message: 'Already enrolled in this course',
       });
     }
 
-    // For paid courses, check payment
-    if (!course.isFree) {
-      const { paymentId } = req.body;
-      if (!paymentId) {
-        return res.status(402).json({
-          success: false,
-          message: 'Payment required for this course',
-          requiresPayment: true,
-          price: course.price,
+    let resolvedPaymentId = null;
+    let resolvedPaymentMode = 'free';
+
+    // Handle paid courses (online payment verified vs offline manual fee submission)
+    if (!course.isFree && Number(course.price || 0) > 0) {
+      const { paymentId, note, transactionRef, declaredAmount } = req.body;
+
+      if (paymentId) {
+        const payment = await Payment.findById(paymentId);
+        if (!payment || payment.status !== 'paid' || payment.courseId?.toString() !== String(courseId)) {
+          return res.status(402).json({
+            success: false,
+            message: 'Valid paid transaction required for this course.',
+          });
+        }
+        resolvedPaymentId = payment._id;
+        resolvedPaymentMode = 'online';
+      } else if (course.pricingMode === 'offline') {
+        const pendingEnrollment = await Enrollment.create({
+          studentId: req.user.id,
+          courseId,
+          batchId,
+          status: 'pending_payment',
+          paymentMode: 'offline',
+          offlinePayment: {
+            declaredAmount: Math.max(0, Number(declaredAmount ?? course.price) || course.price),
+            note: String(note || '').trim().slice(0, 500),
+            transactionRef: String(transactionRef || '').trim().slice(0, 120),
+            markedPaidAt: new Date(),
+          },
         });
-      }
-      // Payment verification happens in paymentController.verifyPayment
-      // which auto-enrolls. If we reach here directly, verify the payment exists.
-      const Payment = (await import('../models/Payment.js')).default;
-      const payment = await Payment.findById(paymentId);
-      if (!payment || payment.status !== 'paid' || payment.courseId.toString() !== courseId) {
+
+        await Promise.allSettled([
+          course.tutorId?.userId?._id && createNotification({
+            userId: course.tutorId.userId._id,
+            type: 'offline_enrollment_pending',
+            title: 'Offline Fee Confirmation Pending',
+            message: `${req.user.name || 'A student'} requested offline enrollment for "${course.title}". Confirm payment once received.`,
+            data: { courseId: course._id, enrollmentId: pendingEnrollment._id },
+          }),
+          createNotification({
+            userId: req.user.id,
+            type: 'offline_enrollment_pending',
+            title: 'Offline Enrollment Submitted',
+            message: `Your offline enrollment request for "${course.title}" has been sent. Access unlocks once your tutor confirms payment.`,
+            data: { courseId: course._id, enrollmentId: pendingEnrollment._id },
+          }),
+        ]);
+
+        return res.status(201).json({
+          success: true,
+          pendingPayment: true,
+          message: 'Offline enrollment request submitted. Course access unlocks once the tutor confirms your fee payment.',
+          offlinePaymentInstructions: course.offlinePaymentInstructions || '',
+          enrollment: pendingEnrollment,
+        });
+      } else {
         return res.status(402).json({
           success: false,
-          message: 'Valid payment required for this course',
+          message: 'Online payment required for this course.',
+          requiresPayment: true,
+          pricingMode: course.pricingMode,
+          price: course.price,
         });
       }
     }
 
-    // Handle requireApproval flow
     const needsApproval = course.enrollmentSettings?.requireApproval;
 
-    // Create enrollment
     const enrollment = await Enrollment.create({
       studentId: req.user.id,
       courseId,
       batchId,
+      paymentId: resolvedPaymentId,
+      paymentMode: resolvedPaymentMode,
       status: needsApproval ? 'pending' : 'active',
     });
 
@@ -152,9 +236,9 @@ export const enrollInCourse = async (req, res) => {
 // @route   GET /api/enrollments/my-enrollments
 export const getMyEnrollments = async (req, res) => {
   try {
-    const { status, scope } = req.query;
+    const { status } = req.query;
 
-    let filter = { studentId: req.user.id };
+    const filter = { studentId: req.user.id };
     if (status) filter.status = status;
 
     let enrollments = await Enrollment.find(filter)
@@ -170,11 +254,21 @@ export const getMyEnrollments = async (req, res) => {
       })
       .sort({ enrolledAt: -1 });
 
-    if (scope === 'global') {
-      enrollments = enrollments.filter(e => e.courseId && e.courseId.visibility === 'public');
-    } else if (scope === 'institute') {
-      enrollments = enrollments.filter(e => e.courseId && e.courseId.visibility === 'institute');
-    }
+    enrollments = enrollments.filter((e) => {
+      if (!e.courseId) return false;
+      if (req.workspace?.type === 'private_tutor') {
+        if (e.courseId.instituteId) return false;
+        if (req.workspace.filterTutorId) {
+          const tId = e.courseId.tutorId?._id || e.courseId.tutorId;
+          return String(tId) === String(req.workspace.filterTutorId);
+        }
+        return true;
+      }
+      if (req.workspace?.type === 'institute' && req.workspace.instituteId) {
+        return e.courseId.instituteId && String(e.courseId.instituteId) === String(req.workspace.instituteId);
+      }
+      return true;
+    });
 
     res.status(200).json({
       success: true,
@@ -359,9 +453,12 @@ export const checkEnrollment = async (req, res) => {
       courseId,
     });
 
+    const isEnrolled = Boolean(enrollment && ['active', 'completed'].includes(enrollment.status));
+
     res.status(200).json({
       success: true,
-      isEnrolled: !!enrollment,
+      isEnrolled,
+      enrollmentStatus: enrollment?.status || null,
       enrollment: enrollment || null,
     });
   } catch (error) {
@@ -550,26 +647,149 @@ export const approveEnrollment = async (req, res) => {
 
 // @desc    Reject a pending enrollment request (Tutor only)
 // @route   DELETE /api/enrollments/:id/reject
+// @desc    Get offline payment pending enrollments for tutor's active workspace
+// @route   GET /api/enrollments/offline-pending
+export const getOfflinePendingEnrollments = async (req, res) => {
+  try {
+    const Tutor = (await import('../models/Tutor.js')).default;
+    const tutor = await Tutor.findOne({ userId: req.user._id || req.user.id }).select('_id').lean();
+    if (!tutor) {
+      return res.status(403).json({ success: false, message: 'Only tutors can view offline payment queues.' });
+    }
+
+    const courseFilter = { tutorId: tutor._id };
+    if (req.workspace?.type === 'private_tutor') {
+      courseFilter.instituteId = null;
+    } else if (req.workspace?.type === 'institute' && req.workspace.instituteId) {
+      courseFilter.instituteId = req.workspace.instituteId;
+    }
+
+    const tutorCourses = await Course.find(courseFilter).select('_id').lean();
+    const courseIds = tutorCourses.map((c) => c._id);
+
+    const enrollments = courseIds.length > 0
+      ? await Enrollment.find({ courseId: { $in: courseIds }, status: 'pending_payment' })
+          .populate('studentId', 'name email phone profileImage')
+          .populate('courseId', 'title price thumbnail pricingMode instituteId')
+          .sort({ createdAt: -1 })
+      : [];
+
+    res.status(200).json({
+      success: true,
+      count: enrollments.length,
+      enrollments,
+    });
+  } catch (error) {
+    console.error('Get offline pending enrollments error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+// @desc    Confirm offline fee payment and activate student enrollment (Tutor only)
+// @route   PATCH /api/enrollments/:id/approve-offline
+export const approveOfflinePaymentEnrollment = async (req, res) => {
+  try {
+    const enrollment = await Enrollment.findById(req.params.id)
+      .populate({ path: 'courseId', populate: { path: 'tutorId', select: '_id userId' } });
+
+    if (!enrollment) {
+      return res.status(404).json({ success: false, message: 'Enrollment not found' });
+    }
+    if (enrollment.status !== 'pending_payment') {
+      return res.status(400).json({ success: false, message: 'Enrollment is not awaiting offline payment confirmation' });
+    }
+
+    const ownerUserId = enrollment.courseId?.tutorId?.userId?.toString();
+    if (ownerUserId !== String(req.user._id || req.user.id) && req.user.role !== 'superadmin') {
+      return res.status(403).json({ success: false, message: 'Not authorized to approve this enrollment' });
+    }
+
+    const finalAmount = Math.max(
+      0,
+      Number(req.body?.paidAmount ?? enrollment.offlinePayment?.declaredAmount ?? enrollment.courseId?.price ?? 0) || 0
+    );
+    const offlineNote = String(req.body?.offlineNote || enrollment.offlinePayment?.note || 'Offline fee confirmed by tutor').slice(0, 500);
+    const transactionRef = String(req.body?.transactionRef || enrollment.offlinePayment?.transactionRef || '').slice(0, 120);
+    const isPrivateCourse = !enrollment.courseId?.instituteId;
+
+    // Record manual audit payment excluded from withdrawable platform payouts (paymentMode: 'offline')
+    const offlinePaymentRecord = await Payment.create({
+      studentId: enrollment.studentId,
+      courseId: enrollment.courseId._id,
+      tutorId: enrollment.courseId?.tutorId?._id || enrollment.courseId?.tutorId || null,
+      instituteId: enrollment.courseId?.instituteId || null,
+      amount: finalAmount,
+      title: `Offline Fee — ${enrollment.courseId?.title || 'Course'}`,
+      currency: 'INR',
+      status: 'paid',
+      paidAt: new Date(),
+      type: 'course_purchase',
+      paymentMode: 'offline',
+      settlementTarget: isPrivateCourse ? 'tutor' : 'institute',
+      platformFee: 0,
+      tutorEarnings: isPrivateCourse ? finalAmount : 0,
+      instituteEarnings: isPrivateCourse ? 0 : finalAmount,
+      transferStatus: 'not_applicable',
+      isSettled: true,
+      verifiedByTutorAt: new Date(),
+      offlineNote,
+    });
+
+    enrollment.status = 'active';
+    enrollment.paymentMode = 'offline';
+    enrollment.paymentId = offlinePaymentRecord._id;
+    enrollment.offlinePayment = {
+      declaredAmount: finalAmount,
+      note: offlineNote,
+      transactionRef,
+      markedPaidAt: enrollment.offlinePayment?.markedPaidAt || new Date(),
+      confirmedBy: req.user._id || req.user.id,
+      confirmedAt: new Date(),
+    };
+    await enrollment.save();
+
+    await Course.findByIdAndUpdate(enrollment.courseId._id, { $inc: { enrolledCount: 1 } });
+
+    await createNotification({
+      userId: enrollment.studentId.toString(),
+      type: 'offline_enrollment_approved',
+      title: 'Offline Fee Confirmed!',
+      message: `Your offline payment for "${enrollment.courseId?.title}" was confirmed. Course access is now unlocked!`,
+      data: { courseId: enrollment.courseId._id, enrollmentId: enrollment._id },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Offline payment confirmed and student enrolled.',
+      enrollment,
+      payment: offlinePaymentRecord,
+    });
+  } catch (error) {
+    console.error('Approve offline payment enrollment error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
 export const rejectEnrollment = async (req, res) => {
   try {
     const enrollment = await Enrollment.findById(req.params.id)
       .populate({ path: 'courseId', populate: { path: 'tutorId', select: 'userId' } });
 
     if (!enrollment) return res.status(404).json({ success: false, message: 'Enrollment not found' });
-    if (enrollment.status !== 'pending') return res.status(400).json({ success: false, message: 'Enrollment is not pending' });
+    if (!['pending', 'pending_payment'].includes(enrollment.status)) {
+      return res.status(400).json({ success: false, message: 'Enrollment is not pending approval' });
+    }
 
-    // Ownership check
     if (enrollment.courseId?.tutorId?.userId?.toString() !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Not authorized' });
     }
 
-    // Notify student before deleting
     await createNotification({
       userId: enrollment.studentId.toString(),
-      type: 'general',
+      type: 'course_updated',
       title: '❌ Enrollment Request Declined',
       message: `Your request to join "${enrollment.courseId.title}" was not approved. Contact the tutor for more information.`,
-      data: { courseId: enrollment.courseId._id }
+      data: { courseId: enrollment.courseId._id },
     });
 
     await enrollment.deleteOne();

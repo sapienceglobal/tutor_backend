@@ -28,6 +28,14 @@ const escapeCsvCell = (value) => {
 
 const buildCsvLine = (cells) => cells.map((cell) => escapeCsvCell(cell)).join(',');
 
+const getTutorWorkspaceCourseFilter = (req) => {
+  if (req?.workspace?.type === 'private_tutor') return { instituteId: null };
+  if (req?.workspace?.type === 'institute' && req.workspace.instituteId) {
+    return { instituteId: req.workspace.instituteId };
+  }
+  return {};
+};
+
 const roundToOne = (value) => Number((Number(value || 0)).toFixed(1));
 
 const calculateRate = (numerator, denominator) => {
@@ -117,13 +125,13 @@ const buildStudentRisk = ({
   return { riskLevel, riskScore: normalizedScore, reasons };
 };
 
-const buildTutorReportsPayload = async (userId) => {
+const buildTutorReportsPayload = async (userId, workspaceFilter = {}) => {
   const tutor = await Tutor.findOne({ userId }).select('_id').lean();
   if (!tutor) return null;
 
   const now = new Date();
 
-  const courses = await Course.find({ tutorId: tutor._id })
+  const courses = await Course.find({ tutorId: tutor._id, ...workspaceFilter })
     .select('_id title status enrolledCount')
     .lean();
   const courseIds = courses.map((course) => course._id);
@@ -550,22 +558,22 @@ const buildTutorReportsPayload = async (userId) => {
   };
 };
 
-const buildTutorAttendanceReportPayload = async (userId) => {
+const buildTutorAttendanceReportPayload = async (userId, workspaceFilter = {}) => {
   const tutor = await Tutor.findOne({ userId }).select('_id').lean();
   if (!tutor) return null;
 
   const now = new Date();
-  const courses = await Course.find({ tutorId: tutor._id })
+  const courses = await Course.find({ tutorId: tutor._id, ...workspaceFilter })
     .select('_id title status')
     .lean();
   const courseIds = courses.map((course) => course._id);
 
   const [batches, liveClasses, enrollments] = await Promise.all([
-    Batch.find({ tutorId: tutor._id })
+    Batch.find({ tutorId: tutor._id, ...workspaceFilter })
       .populate('courseId', 'title')
       .populate('students', 'name email profileImage')
       .lean(),
-    LiveClass.find({ tutorId: tutor._id })
+    LiveClass.find({ tutorId: tutor._id, ...workspaceFilter })
       .select('_id title courseId dateTime status')
       .lean(),
     courseIds.length > 0
@@ -915,8 +923,8 @@ export const getTutorStats = async (req, res) => {
       status: 'draft',
     });
 
-    // Get all courses for this tutor
-    const courses = await Course.find({ tutorId: tutor._id });
+    // Get all courses for this tutor in active workspace
+    const courses = await Course.find({ tutorId: tutor._id, ...getTutorWorkspaceCourseFilter(req) });
 
     // Calculate total enrolled students (Active Students)
     const totalStudents = courses.reduce(
@@ -1046,8 +1054,8 @@ export const getTutorStudents = async (req, res) => {
       });
     }
 
-    // Get all courses for this tutor
-    const courses = await Course.find({ tutorId: tutor._id });
+    // Get all courses for this tutor in active workspace
+    const courses = await Course.find({ tutorId: tutor._id, ...getTutorWorkspaceCourseFilter(req) });
     const courseIds = courses.map(c => c._id);
 
     // Get all enrollments with student details
@@ -1141,8 +1149,8 @@ export const getRecentActivities = async (req, res) => {
       });
     }
 
-    // Get courses
-    const courses = await Course.find({ tutorId: tutor._id });
+    // Get courses in active workspace
+    const courses = await Course.find({ tutorId: tutor._id, ...getTutorWorkspaceCourseFilter(req) });
     const courseIds = courses.map(c => c._id);
 
     // Get recent enrollments
@@ -1191,7 +1199,7 @@ export const getEarningsOverview = async (req, res) => {
       });
     }
 
-    const courses = await Course.find({ tutorId: tutor._id });
+    const courses = await Course.find({ tutorId: tutor._id, ...getTutorWorkspaceCourseFilter(req) });
 
     // Calculate earnings by course
     const earningsByCourse = courses.map(course => ({
@@ -1286,7 +1294,7 @@ export const getStudentPerformance = async (req, res) => {
       });
     }
 
-    const courses = await Course.find({ tutorId: tutor._id }).select('_id').lean();
+    const courses = await Course.find({ tutorId: tutor._id, ...getTutorWorkspaceCourseFilter(req) }).select('_id').lean();
     const courseIds = courses.map((course) => course._id);
     if (courseIds.length === 0) {
       return res.status(200).json({
@@ -1445,7 +1453,7 @@ export const exportAnalyticsReport = async (req, res) => {
     }
 
     const now = new Date();
-    const courses = await Course.find({ tutorId: tutor._id })
+    const courses = await Course.find({ tutorId: tutor._id, ...getTutorWorkspaceCourseFilter(req) })
       .select('title enrolledCount price rating reviewCount status level')
       .lean();
 
@@ -1669,7 +1677,7 @@ export const exportAnalyticsReport = async (req, res) => {
 // @route   GET /api/tutor/dashboard/reports/summary
 export const getTutorReportsSummary = async (req, res) => {
   try {
-    const payload = await buildTutorReportsPayload(req.user.id);
+    const payload = await buildTutorReportsPayload(req.user.id, getTutorWorkspaceCourseFilter(req));
     if (!payload) {
       return res.status(403).json({
         success: false,
@@ -1696,7 +1704,7 @@ export const getTutorReportsSummary = async (req, res) => {
 // @route   GET /api/tutor/dashboard/reports/students
 export const getTutorStudentPerformanceReport = async (req, res) => {
   try {
-    const payload = await buildTutorReportsPayload(req.user.id);
+    const payload = await buildTutorReportsPayload(req.user.id, getTutorWorkspaceCourseFilter(req));
     if (!payload) {
       return res.status(403).json({
         success: false,
@@ -1711,7 +1719,7 @@ export const getTutorStudentPerformanceReport = async (req, res) => {
     }
     
     // Find all active enrollments for courses owned by this tutor
-    const tutorCourses = await Course.find({ tutorId: tutor._id }).select('_id');
+    const tutorCourses = await Course.find({ tutorId: tutor._id, ...getTutorWorkspaceCourseFilter(req) }).select('_id');
     const courseIds = tutorCourses.map(c => c._id.toString());
     
     const validEnrollments = await Enrollment.find({ 
@@ -1790,7 +1798,7 @@ export const getTutorStudentPerformanceReport = async (req, res) => {
 // @route   GET /api/tutor/dashboard/reports/at-risk
 export const getTutorAtRiskStudents = async (req, res) => {
   try {
-    const payload = await buildTutorReportsPayload(req.user.id);
+    const payload = await buildTutorReportsPayload(req.user.id, getTutorWorkspaceCourseFilter(req));
     if (!payload) {
       return res.status(403).json({
         success: false,
@@ -1918,7 +1926,7 @@ export const getTutorAtRiskStudents = async (req, res) => {
 // @route   GET /api/tutor/dashboard/reports/attendance
 export const getTutorAttendanceReport = async (req, res) => {
   try {
-    const payload = await buildTutorAttendanceReportPayload(req.user.id);
+    const payload = await buildTutorAttendanceReportPayload(req.user.id, getTutorWorkspaceCourseFilter(req));
     if (!payload) {
       return res.status(403).json({
         success: false,
@@ -1994,7 +2002,7 @@ export const getTutorAttendanceReport = async (req, res) => {
 // @route   GET /api/tutor/dashboard/reports/attendance/export
 export const exportTutorAttendanceReport = async (req, res) => {
   try {
-    const payload = await buildTutorAttendanceReportPayload(req.user.id);
+    const payload = await buildTutorAttendanceReportPayload(req.user.id, getTutorWorkspaceCourseFilter(req));
     if (!payload) {
       return res.status(403).json({
         success: false,
@@ -2133,7 +2141,7 @@ export const exportTutorAttendanceReport = async (req, res) => {
 // @route   GET /api/tutor/dashboard/reports/export
 export const exportTutorReports = async (req, res) => {
   try {
-    const payload = await buildTutorReportsPayload(req.user.id);
+    const payload = await buildTutorReportsPayload(req.user.id, getTutorWorkspaceCourseFilter(req));
     if (!payload) {
       return res.status(403).json({
         success: false,

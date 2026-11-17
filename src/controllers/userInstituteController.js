@@ -3,7 +3,7 @@ import Institute from '../models/Institute.js';
 
 // ─── Fields to populate when returning institute to frontend ─────────────────
 const INSTITUTE_POPULATE_FIELDS = [
-    'name', 'subdomain', 'logo', 'contactEmail',
+    'name', 'subdomain', 'logo', 'contactEmail', 'discovery',
     'brandColors',          // legacy
     'studentTheme',         // NEW
     'tutorTheme',           // NEW
@@ -14,8 +14,8 @@ const INSTITUTE_POPULATE_FIELDS = [
 
 /**
  * GET /api/user-institute/me
- * Returns the institute of the currently logged-in user (any role)
- * ThemeContext uses this to get institute-level student/tutor themes
+ * Returns the active workspace institute of the currently logged-in user.
+ * Inside Private Tutor Studio returns institute: null so Private Studio styling applies.
  */
 export const getUserInstitute = async (req, res) => {
     try {
@@ -23,17 +23,25 @@ export const getUserInstitute = async (req, res) => {
             return res.status(401).json({ success: false, message: 'Authentication required' });
         }
 
-        const user = await User.findById(req.user.id)
-            .populate('instituteId', INSTITUTE_POPULATE_FIELDS);
-
-        if (!user) {
-            return res.status(404).json({ success: false, message: 'User not found' });
+        if (req.workspace?.type === 'private_tutor' || req.workspace?.type === 'none') {
+            return res.status(200).json({
+                success: true,
+                institute: null,
+                workspaceType: req.workspace.type,
+                role: req.user.role,
+            });
         }
+
+        const activeInstituteId = req.workspace?.instituteId || req.tenant?._id || req.user.instituteId;
+        const institute = activeInstituteId
+            ? await Institute.findById(activeInstituteId).select(INSTITUTE_POPULATE_FIELDS)
+            : null;
 
         return res.status(200).json({
             success: true,
-            institute: user.instituteId || null,
-            role: user.role,
+            institute: institute || null,
+            workspaceType: req.workspace?.type || (institute ? 'institute' : 'none'),
+            role: req.user.role,
         });
 
     } catch (error) {
@@ -59,8 +67,8 @@ export const updateUserInstitute = async (req, res) => {
             return res.status(403).json({ success: false, message: 'Admin access required' });
         }
 
-        const user = await User.findById(req.user.id);
-        if (!user || !user.instituteId) {
+        const targetInstituteId = req.workspace?.instituteId || req.tenant?._id || req.user.instituteId;
+        if (!targetInstituteId) {
             return res.status(404).json({ success: false, message: 'Institute not found' });
         }
 
@@ -68,6 +76,7 @@ export const updateUserInstitute = async (req, res) => {
             name,
             contactEmail,
             logo,
+            discovery,
             brandColors,            // legacy — still accepted
             studentTheme,           // NEW
             tutorTheme,             // NEW
@@ -129,13 +138,32 @@ export const updateUserInstitute = async (req, res) => {
             }
         }
 
+        // ── Discovery & Admission Preferences ─────────────────────────────────
+        if (discovery && typeof discovery === 'object') {
+            if (typeof discovery.isListedInSearch === 'boolean') {
+                updateData['discovery.isListedInSearch'] = discovery.isListedInSearch;
+            }
+            if (typeof discovery.acceptSelfJoinRequests === 'boolean') {
+                updateData['discovery.acceptSelfJoinRequests'] = discovery.acceptSelfJoinRequests;
+            }
+            if (typeof discovery.acceptTutorRequests === 'boolean') {
+                updateData['discovery.acceptTutorRequests'] = discovery.acceptTutorRequests;
+            }
+            if (typeof discovery.city === 'string') {
+                updateData['discovery.city'] = discovery.city.trim().slice(0, 80);
+            }
+            if (typeof discovery.tagline === 'string') {
+                updateData['discovery.tagline'] = discovery.tagline.trim().slice(0, 180);
+            }
+        }
+
         // ── Feature flag ──────────────────────────────────────────────────────
         if (typeof allowGlobalPublishingByInstituteTutors === 'boolean') {
             updateData['features.allowGlobalPublishingByInstituteTutors'] = allowGlobalPublishingByInstituteTutors;
         }
 
         const institute = await Institute.findByIdAndUpdate(
-            user.instituteId,
+            targetInstituteId,
             { $set: updateData },
             { returnDocument: 'after', runValidators: true }
         );

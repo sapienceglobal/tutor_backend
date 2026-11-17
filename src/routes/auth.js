@@ -1,4 +1,5 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import {
   registerUser,
   loginUser,
@@ -26,6 +27,7 @@ import {
   refreshAccessToken,
   registerUserWithInvite,
   listPublicInstitutes,
+  listPublicTutors,
   checkUserExists,
   upgradePersonalSubscription,
 } from '../controllers/authController.js';
@@ -37,17 +39,40 @@ import { protect, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
 
+// Strict rate limiter for email/OTP-sending routes (prevents Nodemailer spam abuse)
+const emailOtpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many OTP/email requests from this IP. Please try again after 15 minutes.',
+  },
+});
+
+const authLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many login attempts from this IP. Please try again after 15 minutes.',
+  },
+});
+
 // Public routes
-router.post('/register', registerUser);
-router.post('/register-with-invite', registerUserWithInvite);
+router.post('/register', emailOtpLimiter, registerUser);
+router.post('/register-with-invite', emailOtpLimiter, registerUserWithInvite);
 router.post('/check-user-exists', checkUserExists);
-router.post('/login', loginUser);
-router.post('/forgot-password', forgotPassword);
-router.post('/reset-password/:token', resetPassword);
+router.post('/login', authLoginLimiter, loginUser);
+router.post('/forgot-password', emailOtpLimiter, forgotPassword);
+router.post('/reset-password/:token', emailOtpLimiter, resetPassword);
 
 // OTP routes (public)
-router.post('/send-otp', sendOTP);
-router.post('/verify-otp-and-register', verifyOTPAndRegister);
+router.post('/send-otp', emailOtpLimiter, sendOTP);
+router.post('/verify-otp-and-register', emailOtpLimiter, verifyOTPAndRegister);
 
 // 2FA login verification (public — uses tempToken)
 router.post('/verify-2fa-login', verify2FALogin);
@@ -55,6 +80,7 @@ router.post('/verify-2fa-login', verify2FALogin);
 // Refresh token (public)
 router.post('/refresh-token', refreshAccessToken);
 router.get('/institutes', listPublicInstitutes);
+router.get('/tutors', listPublicTutors);
 
 // OAuth routes (public)
 router.get('/google', googleAuth);
@@ -65,7 +91,7 @@ router.get('/github/callback', githubCallback);
 // Protected routes
 router.get('/me', protect, getMe);
 router.patch('/profile', protect, updateProfile);
-router.post('/upgrade-personal', protect, authorize('student', 'tutor'), upgradePersonalSubscription);
+router.post('/upgrade-personal', protect, authorize('tutor'), upgradePersonalSubscription);
 router.patch('/profile-image', protect, updateProfileImage);
 router.post('/change-password', protect, changePassword);
 router.post('/set-password', protect, setInitialPassword);

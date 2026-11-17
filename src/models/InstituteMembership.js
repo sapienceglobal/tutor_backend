@@ -47,6 +47,31 @@ const instituteMembershipSchema = new mongoose.Schema({
   approvedAt: {
     type: Date
   },
+  rejectedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+  rejectedAt: {
+    type: Date,
+    default: null
+  },
+  rejectionReason: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  requestedBatchId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Batch',
+    default: null
+  },
+  requestMessage: {
+    type: String,
+    trim: true,
+    maxlength: 500,
+    default: ''
+  },
   joinedAt: {
     type: Date,
     default: Date.now
@@ -66,20 +91,18 @@ const instituteMembershipSchema = new mongoose.Schema({
     department: String,
     batch: String,
     rollNumber: String,
-    enrollmentId: String
+    enrollmentId: String,
+    suspensionReason: String
   }
 }, {
-  timestamps: true,
-  compoundIndexes: [
-    { userId: 1, instituteId: 1 }, // Unique membership per user per institute
-    { instituteId: 1, status: 1 }, // Institute member listings
-    { userId: 1, status: 1 }, // User's active memberships
-    { inviteToken: 1, status: 1 } // Invite tracking
-  ]
+  timestamps: true
 });
 
-// Ensure one membership per user per institute
+// Proper compound indexes for membership queries
 instituteMembershipSchema.index({ userId: 1, instituteId: 1 }, { unique: true });
+instituteMembershipSchema.index({ instituteId: 1, status: 1, roleInInstitute: 1 });
+instituteMembershipSchema.index({ userId: 1, status: 1 });
+instituteMembershipSchema.index({ inviteToken: 1, status: 1 });
 
 // Static methods
 instituteMembershipSchema.statics = {
@@ -130,6 +153,17 @@ instituteMembershipSchema.methods = {
     this.status = 'active';
     this.approvedBy = approvedBy;
     this.approvedAt = new Date();
+    this.rejectedBy = null;
+    this.rejectedAt = null;
+    this.rejectionReason = '';
+    return this.save();
+  },
+
+  async reject(rejectedBy, reason = '') {
+    this.status = 'rejected';
+    this.rejectedBy = rejectedBy;
+    this.rejectedAt = new Date();
+    this.rejectionReason = String(reason || '').trim();
     return this.save();
   },
 

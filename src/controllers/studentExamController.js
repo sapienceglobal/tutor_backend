@@ -42,7 +42,6 @@ export const getExamHistory = async (req, res) => {
             .sort({ submittedAt: -1 });
 
         // Filter attempts to only include exams from enrolled courses
-        // But allow attempts even if no enrollments exist (for students who took exams before enrollment)
         let filteredAttempts;
         if (enrolledCourseIds.length > 0) {
             filteredAttempts = attempts.filter(attempt =>
@@ -50,15 +49,41 @@ export const getExamHistory = async (req, res) => {
                 enrolledCourseIds.includes(attempt.examId.courseId._id.toString())
             );
         } else {
-            // If no enrollments, return all attempts (student might have taken exams before enrollment)
             filteredAttempts = attempts.filter(attempt =>
                 attempt.examId?.courseId
             );
         }
 
+        // Compute real benchmark average per exam across all students who attempted it
+        const uniqueExamIds = Array.from(new Set(
+            filteredAttempts.map(a => a.examId?._id?.toString()).filter(Boolean)
+        ));
+        const examAvgMap = new Map();
+        if (uniqueExamIds.length > 0) {
+            const allExamAttempts = await ExamAttempt.find({
+                examId: { $in: uniqueExamIds }
+            }).select('examId score totalMarks percentage').lean();
+
+            const buckets = new Map();
+            allExamAttempts.forEach(a => {
+                const eid = a.examId?.toString();
+                if (!eid) return;
+                const pct = Number.isFinite(a.percentage)
+                    ? a.percentage
+                    : (a.totalMarks > 0 ? (a.score / a.totalMarks) * 100 : 0);
+                if (!buckets.has(eid)) buckets.set(eid, []);
+                buckets.get(eid).push(Math.max(0, Math.min(100, pct)));
+            });
+            buckets.forEach((pcts, eid) => {
+                const avg = Math.round(pcts.reduce((s, v) => s + v, 0) / pcts.length);
+                examAvgMap.set(eid, avg);
+            });
+        }
+
         // Format attempts for frontend
         const formattedAttempts = filteredAttempts.map(attempt => {
             const showResult = attempt.examId?.showResultImmediately !== false;
+            const eid = attempt.examId?._id?.toString();
             return {
                 _id: attempt._id,
                 examId: attempt.examId._id,
@@ -66,6 +91,7 @@ export const getExamHistory = async (req, res) => {
                 courseTitle: attempt.examId.courseId?.title || 'Unknown Course',
                 score: showResult ? attempt.score : null,
                 totalMarks: attempt.totalMarks || attempt.examId?.totalQuestions || 0,
+                batchAveragePct: eid && examAvgMap.has(eid) ? examAvgMap.get(eid) : 0,
                 submittedAt: attempt.submittedAt,
                 date: attempt.submittedAt,
                 isPassed: showResult ? attempt.isPassed : null,

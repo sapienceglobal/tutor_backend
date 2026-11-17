@@ -29,7 +29,18 @@ const notificationSchema = new mongoose.Schema({
       'subscription_upgraded',
       'subscription_expired',
       'exam_reevaluation_approved',
-      'exam_reevaluation_rejected'
+      'exam_reevaluation_rejected',
+      'join_request_submitted',
+      'join_request_received',
+      'join_request_approved',
+      'join_request_rejected',
+      'tutor_link_requested',
+      'tutor_link_approved',
+      'tutor_link_rejected',
+      'offline_enrollment_pending',
+      'offline_enrollment_approved',
+      'payout_account_verified',
+      'payout_account_rejected'
     ],
     required: true
   },
@@ -49,6 +60,22 @@ const notificationSchema = new mongoose.Schema({
     lessonId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Lesson'
+    },
+    instituteId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Institute'
+    },
+    tutorId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Tutor'
+    },
+    membershipId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'InstituteMembership'
+    },
+    linkId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'TutorStudentLink'
     },
     // Extra data jo notification me use ho sakta hai
     extras: mongoose.Schema.Types.Mixed

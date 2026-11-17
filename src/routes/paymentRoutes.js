@@ -23,7 +23,7 @@ router.post('/verify', authorize('student', 'admin', 'tutor'), verifyPayment);
 router.get('/my-payments', authorize('student'), getMyPayments);
 router.get('/all', authorize('student'), getAllMyPayments);
 router.get('/:id/invoice', authorize('student'), generateInvoice);
-router.post('/renew-subscription', authorize('admin', 'tutor', 'student'), renewSubscription);
+router.post('/renew-subscription', authorize('admin', 'tutor'), renewSubscription);
 router.post('/:id/retry', authorize('student'), retryFailedPayment);
 
 export default router;

@@ -9,6 +9,10 @@ import Institute from '../models/Institute.js';
 import User from '../models/User.js';
 import InstituteMembership from '../models/InstituteMembership.js';
 import { createNotification } from './notificationController.js';
+import Tutor from '../models/Tutor.js';
+import TutorStudentLink from '../models/TutorStudentLink.js';
+import Settings from '../models/Settings.js';
+import { getTutorFreeSubscriptionConfig } from '../config/planDefaults.js';
 import { logBillingEvent } from '../utils/billingLogger.js';
 
 // Lazy Razorpay initialization (only when payment endpoints are called)
@@ -37,36 +41,101 @@ export const createOrder = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Course ID is required' });
         }
 
-        const course = await Course.findById(courseId);
+        const course = await Course.findById(courseId).populate('tutorId');
         if (!course) {
             return res.status(404).json({ success: false, message: 'Course not found' });
         }
 
-        // Institute scope check — prevent cross-institute course purchasing
-        if (course.visibilityScope === 'institute' && course.instituteId) {
-            if (String(req.user.instituteId) !== String(course.instituteId)) {
+        const explicitWorkspace = (req.headers['x-workspace-type'] || '').toString().trim().toLowerCase();
+        const isPrivateCourse = !course.instituteId;
+
+        if (course.instituteId) {
+            if (explicitWorkspace === 'private_tutor') {
                 return res.status(403).json({
                     success: false,
-                    message: 'This course is restricted to its institute members.'
+                    code: 'WORKSPACE_ISOLATION_VIOLATION',
+                    message: 'Switch to your Institute workspace to purchase institute courses.',
+                });
+            }
+            const hasInstMembership = String(req.user.instituteId) === String(course.instituteId)
+                || await InstituteMembership.exists({
+                    userId: req.user.id,
+                    instituteId: course.instituteId,
+                    status: 'active',
+                });
+            if (!hasInstMembership) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'INSTITUTE_MEMBERSHIP_REQUIRED',
+                    message: 'This course is restricted to approved institute members.',
+                });
+            }
+        } else {
+            if (explicitWorkspace === 'institute') {
+                return res.status(403).json({
+                    success: false,
+                    code: 'WORKSPACE_ISOLATION_VIOLATION',
+                    message: 'Switch to your Private Tutor workspace to purchase private courses.',
+                });
+            }
+            const tutorIdVal = course.tutorId?._id || course.tutorId;
+            const hasTutorLink = await TutorStudentLink.exists({
+                studentId: req.user.id,
+                tutorId: tutorIdVal,
+                status: 'active',
+            });
+            if (!hasTutorLink) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'TUTOR_NOT_LINKED',
+                    message: 'You must be connected with this Private Tutor to purchase their course.',
                 });
             }
         }
 
-        if (course.isFree || course.price === 0) {
+        if (course.isFree || Number(course.price || 0) <= 0) {
             return res.status(400).json({ success: false, message: 'This course is free. No payment needed.' });
         }
 
-        // Check if already enrolled
+        if (course.pricingMode === 'offline') {
+            return res.status(400).json({
+                success: false,
+                code: 'OFFLINE_PAYMENT_ONLY',
+                pricingMode: 'offline',
+                offlinePaymentInstructions: course.offlinePaymentInstructions || '',
+                message: 'This course uses offline fee payment. Please request offline enrollment and pay the tutor directly.',
+            });
+        }
+
+        const tutor = course.tutorId && course.tutorId._id
+            ? course.tutorId
+            : (course.tutorId ? await Tutor.findById(course.tutorId) : null);
+
+        if (isPrivateCourse && tutor?.payoutAccount?.verificationStatus !== 'verified') {
+            return res.status(400).json({
+                success: false,
+                code: 'ONLINE_PAYMENT_UNAVAILABLE',
+                message: 'Online payment is currently unavailable because this tutor has not verified their payout account.',
+            });
+        }
+
         const existingEnrollment = await Enrollment.findOne({
             studentId: req.user.id,
             courseId,
         });
-        if (existingEnrollment) {
+        if (existingEnrollment && ['active', 'completed'].includes(existingEnrollment.status)) {
             return res.status(400).json({ success: false, message: 'Already enrolled in this course' });
         }
 
-        // Amount in paise (smallest currency unit)
+        const settings = await Settings.findOne().select('platformCommission').lean();
+        const commissionPct = Math.max(0, Math.min(100, Number(settings?.platformCommission ?? 10)));
+        const platformFee = Math.round((course.price * commissionPct) / 100);
+        const netEarnings = Math.max(0, course.price - platformFee);
         const amountInPaise = Math.round(course.price * 100);
+
+        const linkedAccountId = isPrivateCourse && tutor?.payoutAccount?.verificationStatus === 'verified'
+            ? (tutor.payoutAccount.razorpayLinkedAccountId || null)
+            : null;
 
         const options = {
             amount: amountInPaise,
@@ -75,21 +144,54 @@ export const createOrder = async (req, res) => {
             notes: {
                 courseId: courseId.toString(),
                 studentId: req.user.id,
+                tutorId: tutor?._id ? String(tutor._id) : '',
+                instituteId: course.instituteId ? String(course.instituteId) : '',
                 courseTitle: course.title,
             },
         };
 
-        const order = await getRazorpay().orders.create(options);
+        let order;
+        let usedRouteTransfer = false;
+        const rzp = getRazorpay();
 
-        // Save payment record with status 'created'
+        if (linkedAccountId && netEarnings > 0) {
+            try {
+                order = await rzp.orders.create({
+                    ...options,
+                    transfers: [{
+                        account: linkedAccountId,
+                        amount: Math.round(netEarnings * 100),
+                        currency: 'INR',
+                        notes: { courseId: courseId.toString(), tutorId: String(tutor._id) },
+                        on_hold: 0,
+                    }],
+                });
+                usedRouteTransfer = true;
+            } catch (routeErr) {
+                console.warn('Razorpay Route transfer creation skipped, falling back to standard order:', routeErr?.message);
+                order = await rzp.orders.create(options);
+            }
+        } else {
+            order = await rzp.orders.create(options);
+        }
+
         await Payment.create({
             studentId: req.user.id,
             courseId,
+            tutorId: tutor?._id || null,
+            instituteId: course.instituteId || null,
             amount: course.price,
             currency: 'INR',
             razorpayOrderId: order.id,
             status: 'created',
             type: 'course_purchase',
+            paymentMode: 'online',
+            settlementTarget: isPrivateCourse ? 'tutor' : 'institute',
+            platformFee,
+            tutorEarnings: isPrivateCourse ? netEarnings : 0,
+            instituteEarnings: isPrivateCourse ? 0 : netEarnings,
+            razorpayLinkedAccountId: linkedAccountId,
+            transferStatus: usedRouteTransfer ? 'processed' : 'not_applicable',
         });
 
         res.status(200).json({
@@ -202,23 +304,33 @@ export const fulfillPayment = async (payment, razorpayPaymentId, razorpaySignatu
         razorpayPaymentId: payment.razorpayPaymentId
     });
 
-    // Auto-enroll the student if it's a course purchase
+    // Auto-enroll (or activate pending offline enrollment) on course purchase
     if (payment.type === 'course_purchase' && payment.courseId) {
         const existingEnrollment = await Enrollment.findOne({
             studentId: payment.studentId,
             courseId: payment.courseId,
         });
 
+        let enrolledNow = false;
         if (!existingEnrollment) {
             await Enrollment.create({
                 studentId: payment.studentId,
                 courseId: payment.courseId,
+                status: 'active',
+                paymentMode: 'online',
+                paymentId: payment._id,
             });
+            enrolledNow = true;
+        } else if (['pending', 'pending_payment'].includes(existingEnrollment.status)) {
+            existingEnrollment.status = 'active';
+            existingEnrollment.paymentMode = 'online';
+            existingEnrollment.paymentId = payment._id;
+            await existingEnrollment.save();
+            enrolledNow = true;
+        }
 
-            // Update enrolled count
+        if (enrolledNow) {
             await Course.findByIdAndUpdate(payment.courseId, { $inc: { enrolledCount: 1 } });
-
-            // Notification
             const course = await Course.findById(payment.courseId);
             await createNotification({
                 userId: payment.studentId,
@@ -229,49 +341,48 @@ export const fulfillPayment = async (payment, razorpayPaymentId, razorpaySignatu
             });
         }
     } else if (payment.type === 'subscription_renewal' && payment.planId) {
-        // Fetch the plan
         const plan = await SubscriptionPlan.findById(payment.planId);
         if (plan) {
-            // Calculate new expiry date based on billingCycle
             const currentDate = new Date();
             let expiryDate = new Date(currentDate);
-            
+
             if (plan.billingCycle === 'monthly') {
                 expiryDate.setMonth(expiryDate.getMonth() + 1);
             } else if (plan.billingCycle === 'yearly') {
                 expiryDate.setFullYear(expiryDate.getFullYear() + 1);
             } else {
-                expiryDate = null; // Lifetime
+                expiryDate = null;
             }
 
             if (payment.instituteId) {
-                // Update Institute
                 await Institute.findByIdAndUpdate(payment.instituteId, {
                     subscriptionPlan: plan.name,
                     subscriptionExpiresAt: expiryDate,
                     features: {
-                        ...plan.features, // Spread new plan features
-                        manageTutors: true, // Keep defaults active
-                        manageStudents: true
-                    }
+                        ...plan.features,
+                        manageTutors: true,
+                        manageStudents: true,
+                    },
                 });
 
                 await createNotification({
-                    userId: payment.studentId, // the admin who paid
+                    userId: payment.studentId,
                     type: 'fee_paid',
                     title: '🚀 Subscription Upgraded!',
                     message: `Your institute has successfully upgraded to the ${plan.name} plan.`,
                 });
             } else {
-                // 🌟 Update Tutor/Student's Personal Subscription!
+                const tutorDefaults = getTutorFreeSubscriptionConfig().features;
                 const personalFeatures = {
                     aiAssistant: plan.features?.aiAssistant === true,
                     aiAssessment: plan.features?.aiAssessment === true,
                     aiIntelligence: plan.features?.aiIntelligence === true,
-                    aiCreditsPerMonth: plan.features?.aiCreditsPerMonth || 0,
+                    aiCreditsPerMonth: plan.features?.aiCreditsPerMonth ?? tutorDefaults.aiCreditsPerMonth,
                     aiUsageCount: 0,
                     hlsStreaming: plan.features?.hlsStreaming === true,
-                    zoomIntegration: plan.features?.zoomIntegration === true
+                    zoomIntegration: plan.features?.zoomIntegration === true,
+                    maxPrivateStudents: plan.features?.maxPrivateStudents ?? tutorDefaults.maxPrivateStudents,
+                    maxPrivateCourses: plan.features?.maxPrivateCourses ?? tutorDefaults.maxPrivateCourses,
                 };
 
                 await User.findByIdAndUpdate(payment.studentId, {
@@ -480,15 +591,22 @@ export const generateInvoice = async (req, res) => {
 // @access  Private (Admin, Tutor, Student)
 export const renewSubscription = async (req, res) => {
     try {
-        const { planId } = req.body;
+        if (req.user.role === 'student') {
+            return res.status(403).json({
+                success: false,
+                code: 'STUDENTS_FREE_PLATFORM',
+                message: 'Students enjoy free access on this platform and do not need a subscription.',
+            });
+        }
 
+        const { planId } = req.body;
         if (!planId) {
             return res.status(400).json({ success: false, message: 'planId is required' });
         }
 
         const plan = await SubscriptionPlan.findById(planId);
-        if (!plan) {
-            return res.status(404).json({ success: false, message: 'Plan not found' });
+        if (!plan || plan.isActive === false) {
+            return res.status(404).json({ success: false, message: 'Active subscription plan not found' });
         }
 
         const planAmount = plan.price;
@@ -503,12 +621,17 @@ export const renewSubscription = async (req, res) => {
         let verifiedInstituteId = null;
 
         if (plan.planType === 'personal') {
-            // Validate that the user role matches the planRole if restricted
-            const userRole = req.user.role;
-            if (plan.planRole && plan.planRole !== 'all' && plan.planRole !== 'both') {
-                if (plan.planRole !== userRole && req.user.role !== 'superadmin') {
-                    return res.status(403).json({ success: false, message: `Only users with role ${plan.planRole} can subscribe to this plan` });
-                }
+            if (req.user.role !== 'tutor' && req.user.role !== 'superadmin') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Personal Studio subscription plans are available for Tutors only.',
+                });
+            }
+            if (plan.planRole && !['tutor', 'all', 'both'].includes(plan.planRole) && req.user.role !== 'superadmin') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Only Tutor plans can be purchased.',
+                });
             }
 
             const options = {
@@ -520,14 +643,13 @@ export const renewSubscription = async (req, res) => {
                     planName: planName || 'Standard',
                     userId: req.user.id,
                     instituteId: '',
-                    planId: plan._id.toString()
+                    planId: plan._id.toString(),
                 },
             };
 
             order = await getRazorpay().orders.create(options);
         } else {
-            // Institute plan flow
-            verifiedInstituteId = req.user.instituteId;
+            verifiedInstituteId = req.workspace?.instituteId || req.user.instituteId;
             if (!verifiedInstituteId) {
                 return res.status(403).json({ success: false, message: 'You must belong to an institute to renew an institute subscription' });
             }

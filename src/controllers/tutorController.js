@@ -1,70 +1,82 @@
 import Tutor from '../models/Tutor.js';
 import User from '../models/User.js';
 import Category from '../models/Category.js';
+import InstituteMembership from '../models/InstituteMembership.js';
+import TutorStudentLink from '../models/TutorStudentLink.js';
+
+const getWorkspaceCourseScopeFilter = (req) => {
+  if (req.workspace?.type === 'private_tutor') {
+    return { instituteId: null };
+  }
+  if (req.workspace?.type === 'institute' && req.workspace?.instituteId) {
+    return { instituteId: req.workspace.instituteId };
+  }
+  return {};
+};
 
 // @desc    Get all tutors with filters
 // @route   GET /api/tutors
 export const getAllTutors = async (req, res) => {
   try {
-    const { categoryId, minRating, maxRate, search, scope } = req.query;
+    if (!req.user) {
+      return res.status(401).json({ success: false, message: 'Authentication required' });
+    }
+    if (req.user.role !== 'superadmin' && (!req.hasActiveWorkspace || req.workspace?.type === 'none')) {
+      return res.status(403).json({
+        success: false,
+        code: 'PORTAL_APPROVAL_REQUIRED',
+        message: 'Your join request is awaiting approval from an Institute or Private Tutor.',
+      });
+    }
 
-    // Build filter object - Only show approved/verified tutors to students
-    let filter = { isVerified: true };
+    const { categoryId, minRating, maxRate, search } = req.query;
+    const filter = {};
 
-  // ✅ FIX: In MongoDB, missing fields and 'null' values need to be checked together
-    const globalInstituteFilter = { $in: [null, undefined] };
+    if (req.workspace?.type === 'institute' && req.workspace.instituteId) {
+      const memberships = await InstituteMembership.find({
+        instituteId: req.workspace.instituteId,
+        roleInInstitute: 'tutor',
+        status: 'active',
+      }).select('userId').lean();
+      const memberUserIds = memberships.map((m) => m.userId);
 
-    // Multi-tenancy Scope Logic (Global vs Institute)
-    if (scope === 'global') {
-      // Global tutors are those who are not affiliated with any institute (null or missing)
-      filter.instituteId = globalInstituteFilter;
-    } else if (scope === 'institute' && req.user) {
-      // Institute tutors are those affiliated with the user's institute
-      const user = await User.findById(req.user.id);
-      if (user && user.instituteId) {
-        filter.instituteId = user.instituteId;
-      } else {
-        return res.status(400).json({
-          success: false,
-          message: 'You are not enrolled in any institute.',
-          tutors: []
-        });
-      }
-    } else if (!req.user || req.user.role === 'student') {
-      // Default student/guest view: see global tutors OR their own institute tutors
-      if (req.user) {
-        const user = await User.findById(req.user.id);
-        if (user && user.instituteId) {
-          filter.$or = [
-            { instituteId: globalInstituteFilter },
-            { instituteId: user.instituteId }
-          ];
-        } else {
-          filter.instituteId = globalInstituteFilter;
+      filter.$or = [
+        { instituteId: req.workspace.instituteId, isVerified: true },
+        ...(memberUserIds.length > 0 ? [{ userId: { $in: memberUserIds } }] : []),
+      ];
+    } else if (req.workspace?.type === 'private_tutor') {
+      if (req.user.role === 'student') {
+        const linkedIds = req.workspace.activeTutorIds || [];
+        if (linkedIds.length === 0) {
+          return res.status(200).json({ success: true, count: 0, tutors: [] });
         }
-      } else {
-        filter.instituteId = globalInstituteFilter;
+        filter._id = { $in: linkedIds };
+        filter['privateTeaching.isEnabled'] = { $ne: false };
+      } else if (req.user.role === 'tutor') {
+        filter.userId = req.user.id;
+      }
+    } else if (req.user.role === 'superadmin') {
+      if (req.workspace?.instituteId) {
+        filter.instituteId = req.workspace.instituteId;
       }
     }
 
     if (categoryId) {
       filter.categoryId = categoryId;
     }
-
     if (minRating) {
       filter.rating = { $gte: parseFloat(minRating) };
     }
-
     if (maxRate) {
       filter.hourlyRate = { $lte: parseFloat(maxRate) };
     }
-
-    // If an authenticated student is making this request, exclude tutors who blocked them
-    if (req.user && req.user.role === 'student') {
+    if (req.user.role === 'student') {
       filter.blockedStudents = { $ne: req.user._id };
     }
+
     const tutors = await Tutor.find(filter)
-      .populate('userId', 'name email phone profileImage')
+      .select('-payoutAccount')
+      .populate('userId', 'name profileImage')
       .populate('categoryId', 'name icon')
       .populate('instituteId', 'name')
       .sort({ rating: -1, studentsCount: -1 });
@@ -95,28 +107,68 @@ export const getAllTutors = async (req, res) => {
 // @route   GET /api/tutors/:id
 export const getTutorById = async (req, res) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({ success: false, message: 'Authentication required' });
+    }
+    if (req.user.role !== 'superadmin' && (!req.hasActiveWorkspace || req.workspace?.type === 'none')) {
+      return res.status(403).json({
+        success: false,
+        code: 'PORTAL_APPROVAL_REQUIRED',
+        message: 'Your join request is awaiting approval from an Institute or Private Tutor.',
+      });
+    }
+
     const { id } = req.params;
     const tutor = await Tutor.findById(id)
-      .populate('userId', 'name email phone profileImage')
+      .select('-payoutAccount')
+      .populate('userId', 'name profileImage')
       .populate('categoryId', 'name icon description')
       .populate('instituteId', 'name');
 
     if (!tutor) {
       return res.status(404).json({
         success: false,
-        message: 'Tutor not found'
+        message: 'Tutor not found',
       });
     }
 
-    // DB-level check: If authenticated student is blocked by this tutor, deny access
-    if (req.user && req.user.role === 'student') {
+    const isSelf = String(tutor.userId?._id || tutor.userId) === String(req.user.id);
+    if (req.user.role !== 'superadmin' && !isSelf) {
+      if (req.workspace?.type === 'private_tutor') {
+        const isLinked = (req.workspace.activeTutorIds || []).map(String).includes(String(tutor._id))
+          || await TutorStudentLink.exists({ studentId: req.user.id, tutorId: tutor._id, status: 'active' });
+        if (!isLinked) {
+          return res.status(403).json({
+            success: false,
+            code: 'TUTOR_NOT_LINKED',
+            message: 'You do not have an approved connection with this Private Tutor.',
+          });
+        }
+      } else if (req.workspace?.type === 'institute' && req.workspace.instituteId) {
+        const instMatch = String(tutor.instituteId?._id || tutor.instituteId) === String(req.workspace.instituteId)
+          || await InstituteMembership.exists({
+            userId: tutor.userId?._id || tutor.userId,
+            instituteId: req.workspace.instituteId,
+            roleInInstitute: 'tutor',
+            status: 'active',
+          });
+        if (!instMatch) {
+          return res.status(403).json({
+            success: false,
+            message: 'Tutor does not belong to this institute workspace.',
+          });
+        }
+      }
+    }
+
+    if (req.user.role === 'student') {
       const isBlocked = tutor.blockedStudents?.some(
-        bId => bId.toString() === req.user._id.toString()
+        (bId) => bId.toString() === req.user._id.toString()
       );
       if (isBlocked) {
         return res.status(403).json({
           success: false,
-          message: 'You do not have access to view this tutor'
+          message: 'You do not have access to view this tutor',
         });
       }
     }
@@ -138,17 +190,53 @@ export const getTutorById = async (req, res) => {
 // @route   GET /api/tutors/category/:categoryId
 export const getTutorsByCategory = async (req, res) => {
   try {
-    const { categoryId } = req.params;
+    if (!req.user) {
+      return res.status(401).json({ success: false, message: 'Authentication required' });
+    }
+    if (req.user.role !== 'superadmin' && (!req.hasActiveWorkspace || req.workspace?.type === 'none')) {
+      return res.status(403).json({
+        success: false,
+        code: 'PORTAL_APPROVAL_REQUIRED',
+        message: 'Your join request is awaiting approval from an Institute or Private Tutor.',
+      });
+    }
 
+    const { categoryId } = req.params;
     const category = await Category.findById(categoryId);
     if (!category) {
       return res.status(404).json({
         success: false,
-        message: 'Category not found'
+        message: 'Category not found',
       });
     }
-    const tutors = await Tutor.find({ categoryId, isVerified: true })
-      .populate('userId', 'name email phone profileImage')
+
+    const filter = { categoryId };
+    if (req.workspace?.type === 'institute' && req.workspace.instituteId) {
+      const memberships = await InstituteMembership.find({
+        instituteId: req.workspace.instituteId,
+        roleInInstitute: 'tutor',
+        status: 'active',
+      }).select('userId').lean();
+      const memberUserIds = memberships.map((m) => m.userId);
+      filter.$or = [
+        { instituteId: req.workspace.instituteId, isVerified: true },
+        ...(memberUserIds.length > 0 ? [{ userId: { $in: memberUserIds } }] : []),
+      ];
+    } else if (req.workspace?.type === 'private_tutor') {
+      if (req.user.role === 'student') {
+        const linkedIds = req.workspace.activeTutorIds || [];
+        if (linkedIds.length === 0) {
+          return res.status(200).json({ success: true, category: category.name, count: 0, tutors: [] });
+        }
+        filter._id = { $in: linkedIds };
+      } else {
+        filter.userId = req.user.id;
+      }
+    }
+
+    const tutors = await Tutor.find(filter)
+      .select('-payoutAccount')
+      .populate('userId', 'name profileImage')
       .populate('categoryId', 'name icon')
       .populate('instituteId', 'name')
       .sort({ rating: -1 });
@@ -387,16 +475,20 @@ export const getCurrentTutor = async (req, res) => {
       }
     }
 
-    // Get course count
-    // Dynamic import to avoid circular dependency if Course imports Tutor
+    const scopeFilter = getWorkspaceCourseScopeFilter(req);
     const Course = (await import('../models/Course.js')).default;
-    const courseCount = await Course.countDocuments({ tutorId: tutor._id });
+    const courseCount = await Course.countDocuments({ tutorId: tutor._id, ...scopeFilter });
 
-    // Get real students count (unique learners)
     const Enrollment = (await import('../models/Enrollment.js')).default;
-    const courseIds = await Course.find({ tutorId: tutor._id }).distinct('_id');
+    const courseIds = await Course.find({ tutorId: tutor._id, ...scopeFilter }).distinct('_id');
     const uniqueStudents = await Enrollment.distinct('studentId', { courseId: { $in: courseIds }, status: 'active' });
-    const studentsCount = uniqueStudents.length;
+    let studentsCount = uniqueStudents.length;
+
+    if (req.workspace?.type === 'private_tutor') {
+      const linkedStudents = await TutorStudentLink.distinct('studentId', { tutorId: tutor._id, status: 'active' });
+      const combined = new Set([...uniqueStudents.map(String), ...linkedStudents.map(String)]);
+      studentsCount = combined.size;
+    }
 
     // Return tutor object converted to object + courseCount + studentsCount
     const tutorObj = tutor.toObject();
@@ -507,9 +599,10 @@ export const getTutorStats = async (req, res) => {
       }
     }
 
-    // 2. Get Courses
+    // 2. Get Courses scoped to active workspace
+    const scopeFilter = getWorkspaceCourseScopeFilter(req);
     const Course = (await import('../models/Course.js')).default;
-    const courses = await Course.find({ tutorId: tutor._id });
+    const courses = await Course.find({ tutorId: tutor._id, ...scopeFilter });
     const courseIds = courses.map(c => c._id);
 
     const activeCourses = courses.filter(c => c.status === 'published').length;
@@ -598,27 +691,42 @@ export const getTutorStats = async (req, res) => {
       }));
 
     // 7. Monthly Data
+    const Progress = (await import('../models/Progress.js')).default;
+    const allCompletedProgress = await Progress.find({ courseId: { $in: courseIds }, completed: true }).select('completedAt createdAt').lean();
+
     const monthlyData = Array.from({ length: 12 }, (_, i) => {
       const d = new Date();
       d.setMonth(d.getMonth() - i);
       return {
         name: d.toLocaleString('default', { month: 'short' }),
+        year: d.getFullYear(),
+        month: d.getMonth(),
         students: 0,
-        enrollments: 0
+        enrollments: 0,
+        completions: 0,
+        revenue: 0
       };
     }).reverse();
 
     enrollments.forEach(e => {
-      const monthName = new Date(e.enrolledAt).toLocaleString('default', { month: 'short' });
-      const monthParams = monthlyData.find(m => m.name === monthName);
+      const dt = new Date(e.enrolledAt);
+      const monthParams = monthlyData.find(m => m.month === dt.getMonth() && m.year === dt.getFullYear());
       if (monthParams) {
         monthParams.enrollments += 1;
         monthParams.students += 1;
+        monthParams.revenue += (e.courseId?.price || 0);
+      }
+    });
+
+    allCompletedProgress.forEach(p => {
+      const dt = new Date(p.completedAt || p.createdAt);
+      const monthParams = monthlyData.find(m => m.month === dt.getMonth() && m.year === dt.getFullYear());
+      if (monthParams) {
+        monthParams.completions += 1;
       }
     });
 
     // 8b. Weekly Performance (Perfectly matched for the Area Chart)
-    const Progress = (await import('../models/Progress.js')).default;
     const weeklyPerformance = await Promise.all(
       [0, 1, 2, 3].map(async (weekIndex) => {
         const weekStart = new Date();
@@ -748,20 +856,27 @@ export const getTutorStudentDetails = async (req, res) => {
     const student = await User.findById(id).select('name email phone profileImage bio address joinedAt createdAt');
     if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
 
-    // Find courses created by this tutor
-    // Dynamic import to avoid circular dependency if needed, but imported at top? No, dynamic used in other functions.
-    // Let's use dynamic for consistency if imports are issues throughout file.
+    const scopeFilter = getWorkspaceCourseScopeFilter(req);
     const Course = (await import('../models/Course.js')).default;
-    const courses = await Course.find({ tutorId: tutor._id });
+    const courses = await Course.find({ tutorId: tutor._id, ...scopeFilter });
     const courseIds = courses.map(c => c._id);
 
-    // Find enrollments of this student in these courses
     const Enrollment = (await import('../models/Enrollment.js')).default;
     const enrollments = await Enrollment.find({
       studentId: id,
-      courseId: { $in: courseIds }
+      courseId: { $in: courseIds },
     }).populate('courseId', 'title price thumbnail level category status')
       .sort({ enrolledAt: -1 });
+
+    if (enrollments.length === 0) {
+      const hasLink = await TutorStudentLink.exists({ tutorId: tutor._id, studentId: id, status: 'active' });
+      const sharesInst = req.workspace?.type === 'institute' && req.workspace?.instituteId
+        ? await InstituteMembership.exists({ userId: id, instituteId: req.workspace.instituteId, status: 'active' })
+        : false;
+      if (!hasLink && !sharesInst) {
+        return res.status(403).json({ success: false, message: 'This student is not in your active workspace.' });
+      }
+    }
 
     const totalSpent = enrollments.reduce((sum, enr) => sum + (enr.courseId?.price || 0), 0);
 
@@ -770,7 +885,7 @@ export const getTutorStudentDetails = async (req, res) => {
       student,
       enrollments,
       totalSpent,
-      tutorCoursesCount: enrollments.length
+      tutorCoursesCount: enrollments.length,
     });
 
   } catch (error) {
@@ -779,33 +894,39 @@ export const getTutorStudentDetails = async (req, res) => {
   }
 };
 
-// @desc    Get all students enrolled in a tutor's courses
+// @desc    Get all students in a tutor's active workspace
 // @route   GET /api/tutors/students
 export const getAllTutorStudents = async (req, res) => {
   try {
     const userId = req.user.id;
-
-    // 1. Get Tutor Profile
     const tutor = await Tutor.findOne({ userId });
     if (!tutor) return res.status(404).json({ success: false, message: 'Tutor profile not found' });
 
-    // 2. Get Courses taught by tutor
+    const scopeFilter = getWorkspaceCourseScopeFilter(req);
     const Course = (await import('../models/Course.js')).default;
-    const courses = await Course.find({ tutorId: tutor._id });
+    const courses = await Course.find({ tutorId: tutor._id, ...scopeFilter });
     const courseIds = courses.map(c => c._id);
 
-    // 3. Get unique students from Enrollments
     const Enrollment = (await import('../models/Enrollment.js')).default;
     const enrollments = await Enrollment.find({ courseId: { $in: courseIds } })
       .populate('studentId', 'name email profileImage');
 
-    // Deduplicate students
     const uniqueStudentsMap = new Map();
     enrollments.forEach(enr => {
       if (enr.studentId && !uniqueStudentsMap.has(enr.studentId._id.toString())) {
         uniqueStudentsMap.set(enr.studentId._id.toString(), enr.studentId);
       }
     });
+
+    if (req.workspace?.type === 'private_tutor') {
+      const links = await TutorStudentLink.find({ tutorId: tutor._id, status: 'active' })
+        .populate('studentId', 'name email profileImage');
+      links.forEach((l) => {
+        if (l.studentId && !uniqueStudentsMap.has(l.studentId._id.toString())) {
+          uniqueStudentsMap.set(l.studentId._id.toString(), l.studentId);
+        }
+      });
+    }
 
     const studentList = Array.from(uniqueStudentsMap.values());
 

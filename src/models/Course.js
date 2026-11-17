@@ -65,7 +65,7 @@ const courseSchema = new mongoose.Schema({
       type: String,
       enum: Object.values(AUDIENCE_SCOPES),
       default: function () {
-        return this?.instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.GLOBAL;
+        return this?.instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.TUTOR_NETWORK;
       },
       index: true,
     },
@@ -93,6 +93,19 @@ const courseSchema = new mongoose.Schema({
     default: function () {
       return this?.price === 0;
     },
+  },
+  pricingMode: {
+    type: String,
+    enum: ['free', 'offline', 'online'],
+    default: function () {
+      return Number(this?.price || 0) > 0 ? 'offline' : 'free';
+    },
+  },
+  offlinePaymentInstructions: {
+    type: String,
+    trim: true,
+    maxlength: 1000,
+    default: '',
   },
   level: {
     type: String,
@@ -185,6 +198,13 @@ const courseSchema = new mongoose.Schema({
 // Update timestamp on save
 courseSchema.pre('save', function () {
   this.updatedAt = Date.now();
+  const numericPrice = Number(this.price || 0);
+  this.isFree = numericPrice <= 0;
+  if (this.isFree) {
+    this.pricingMode = 'free';
+  } else if (!this.pricingMode || this.pricingMode === 'free') {
+    this.pricingMode = 'offline';
+  }
 
   const normalizedAudience = normalizeAudienceInput({
     audience: this.audience,
@@ -192,7 +212,7 @@ courseSchema.pre('save', function () {
     visibilityScope: this.visibilityScope,
     instituteId: this.instituteId,
   }, {
-    defaultScope: this.instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.GLOBAL,
+    defaultScope: this.instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.TUTOR_NETWORK,
     defaultInstituteId: this.instituteId,
   });
 

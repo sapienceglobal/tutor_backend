@@ -5,6 +5,7 @@ import Batch from '../models/Batch.js';
 import Enrollment from '../models/Enrollment.js';
 import Payment from '../models/Payment.js';
 import InstituteMembership from '../models/InstituteMembership.js';
+import TutorStudentLink from '../models/TutorStudentLink.js';
 import { normalizeIdArray, toStringId } from '../utils/audience.js';
 
 const uniq = (values = []) => [...new Set(values.filter(Boolean))];
@@ -74,12 +75,25 @@ export const getForUser = async (userOrId, activeInstituteId = null) => {
         ...paidPayments.map((payment) => toStringId(payment.courseId)),
     ]);
 
+    const tutorLinks = user.role === 'student'
+        ? await TutorStudentLink.find({ studentId: user._id, status: 'active' }).select('tutorId tutorUserId')
+        : [];
+    const linkedTutorIds = uniq(tutorLinks.map((link) => toStringId(link.tutorId)));
+    const linkedTutorUserIds = uniq(tutorLinks.map((link) => toStringId(link.tutorUserId)));
+
     const tutorProfile = await Tutor.findOne({ userId: user._id }).select('_id instituteId');
     let tutorCourseIds = [];
     if (tutorProfile) {
         const tutorCourses = await Course.find({ tutorId: tutorProfile._id }).select('_id');
         tutorCourseIds = tutorCourses.map((course) => toStringId(course._id));
     }
+
+    const activeTutorIds = tutorProfile?._id
+        ? uniq([toStringId(tutorProfile._id), ...linkedTutorIds])
+        : linkedTutorIds;
+    const activeTutorUserIds = user.role === 'tutor'
+        ? uniq([userId, ...linkedTutorUserIds])
+        : linkedTutorUserIds;
 
     const resolvedActiveInstituteId = toStringId(
         activeInstituteId
@@ -89,9 +103,12 @@ export const getForUser = async (userOrId, activeInstituteId = null) => {
         || null
     );
 
-    const allowedScopes = ['global', 'private'];
+    const allowedScopes = ['private'];
     if (membershipInstituteIds.length > 0 || resolvedActiveInstituteId) {
         allowedScopes.push('institute', 'batch');
+    }
+    if (activeTutorIds.length > 0 || tutorProfile) {
+        allowedScopes.push('tutor_network');
     }
 
     return {
@@ -105,6 +122,8 @@ export const getForUser = async (userOrId, activeInstituteId = null) => {
         paidCourseIds,
         tutorId: toStringId(tutorProfile?._id),
         tutorCourseIds: uniq(tutorCourseIds),
+        activeTutorIds,
+        activeTutorUserIds,
         allowedScopes: uniq(allowedScopes),
     };
 };

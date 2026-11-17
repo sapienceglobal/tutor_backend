@@ -11,6 +11,14 @@ import Tutor from '../models/Tutor.js';
 import Settings from '../models/Settings.js';
 import Institute from '../models/Institute.js';
 import Invite from '../models/Invite.js';
+import { getTutorFreeSubscriptionConfig } from '../config/planDefaults.js';
+import { buildWorkspaceBootstrap } from '../services/workspaceBootstrap.js';
+import {
+  getDefaultPermissions,
+  createPendingJoinRecords,
+  notifyPendingJoinRecords,
+  parseSubjectsList,
+} from '../services/admissionService.js';
 
 // Setup JWT Generator from 'crypto';
 
@@ -71,7 +79,23 @@ export const checkUserExists = async (req, res) => {
 // @route   POST /api/auth/register
 export const registerUser = async (req, res) => {
   try {
-    const { name, email, password, phone, role, instituteId, registrationType, inviteToken } = req.body;
+    const {
+      name,
+      email,
+      password,
+      phone,
+      role,
+      instituteId,
+      tutorId,
+      tutorIds,
+      requestedBatchId,
+      requestMessage,
+      subjects,
+      title,
+      bio,
+      registrationType,
+      inviteToken,
+    } = req.body;
 
     if (!name || !email || !password || !phone) {
       return res.status(400).json({
@@ -80,8 +104,9 @@ export const registerUser = async (req, res) => {
       });
     }
 
-    // Initialize assignedInstituteId
+    const normalizedEmail = email.toLowerCase().trim();
     let assignedInstituteId = null;
+    let acceptedInvite = null;
 
     // Check if Registration is globally allowed by Admin
     const settings = await Settings.findOne();
@@ -94,7 +119,7 @@ export const registerUser = async (req, res) => {
 
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
+    if (!emailRegex.test(normalizedEmail)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid email format'
@@ -110,7 +135,7 @@ export const registerUser = async (req, res) => {
     }
 
     // Check if user exists
-    const existingUser = await User.findOne({ email });
+    const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
       return res.status(400).json({
         success: false,
@@ -118,25 +143,11 @@ export const registerUser = async (req, res) => {
       });
     }
 
-    // Security Hardening: Prevent Role Elevation
-    let assignedRole = role || 'student';
-    // Only allow 'student' or 'tutor' to be registered directly. Block 'admin'.
-    if (assignedRole === 'admin') {
-      assignedRole = 'student'; // Force down to student
-    }
+    // Security Hardening: Prevent Role Elevation (only student or tutor can self-register)
+    let assignedRole = ['student', 'tutor'].includes(role) ? role : 'student';
 
-    if (!['student', 'tutor'].includes(assignedRole)) {
-      assignedRole = 'student';
-    }
-
-    // Handle different registration types
-    if (registrationType === 'independent') {
-      // Independent registration - no invite required
-      // Users can register without institute
-      // No instituteId assignment
-      assignedInstituteId = null;
-    } else if (registrationType === 'invite') {
-      // Invite-based registration - invite token required
+    // Handle invite-based registration when inviteToken is present
+    if (registrationType === 'invite' || inviteToken) {
       if (!inviteToken) {
         return res.status(400).json({
           success: false,
@@ -144,9 +155,7 @@ export const registerUser = async (req, res) => {
         });
       }
 
-      // Validate token exists and is valid
       const invite = await Invite.findValidInvite(inviteToken);
-      
       if (!invite) {
         return res.status(400).json({
           success: false,
@@ -154,67 +163,86 @@ export const registerUser = async (req, res) => {
         });
       }
 
-      // Verify email matches invite email
-      if (req.body.email.toLowerCase() !== invite.email.toLowerCase()) {
+      if (normalizedEmail !== invite.email.toLowerCase()) {
         return res.status(400).json({
           success: false,
           message: 'Email does not match the invite email. Use the invited email address.'
         });
       }
 
-      // Set institute from invite
+      if (invite.role && ['student', 'tutor'].includes(invite.role)) {
+        assignedRole = invite.role;
+      }
       assignedInstituteId = invite.instituteId;
-    } else {
-      // Default to independent if no registration type specified
-      assignedInstituteId = null;
+      acceptedInvite = invite;
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create user
-    const user = await User.create({
-      name,
-      email,
+    const userPayload = {
+      name: name.trim(),
+      email: normalizedEmail,
       password: hashedPassword,
       phone,
       role: assignedRole,
-      instituteId: assignedInstituteId
-    });
+      instituteId: assignedInstituteId,
+      isVerified: Boolean(assignedInstituteId),
+    };
 
-    // Auto-create Tutor profile if role is 'tutor'
     if (assignedRole === 'tutor') {
-      const settings = (await Settings.findOne()) || {};
+      userPayload.personalSubscription = getTutorFreeSubscriptionConfig();
+    }
+
+    const user = await User.create(userPayload);
+
+    if (assignedRole === 'tutor') {
       await Tutor.create({
         userId: user._id,
-        isVerified: settings.autoApproveTutors || false
+        instituteId: assignedInstituteId,
+        subjects: parseSubjectsList(subjects),
+        title: title ? String(title).trim() : '',
+        bio: bio ? String(bio).trim() : '',
+        privateTeaching: {
+          isEnabled: true,
+          acceptSelfJoinRequests: true,
+        },
+        isVerified: settings?.autoApproveTutors || Boolean(assignedInstituteId) || false,
       });
     }
 
-    // Create InstituteMembership if instituteId is provided
-    if (assignedInstituteId) {
+    if (acceptedInvite) {
       await InstituteMembership.create({
         userId: user._id,
         instituteId: assignedInstituteId,
         roleInInstitute: assignedRole,
         status: 'active',
-        joinedVia: registrationType === 'invite' ? 'invite' : 'self_request',
-        approvedBy: user._id, // Self-approved for direct registration
+        joinedVia: 'invite',
+        approvedBy: acceptedInvite.invitedBy || user._id,
         approvedAt: new Date(),
-        permissions: getDefaultPermissions(assignedRole)
+        permissions: getDefaultPermissions(assignedRole),
       });
-    }
-
-    // Update invite status to 'accepted' if invite token was used
-    if (registrationType === 'invite' && inviteToken) {
-      const invite = await Invite.findValidInvite(inviteToken);
-      if (invite) {
-        await invite.acceptInvite(user._id);
+      await acceptedInvite.acceptInvite(user._id);
+    } else {
+      const requestedTutorIds = tutorIds || (tutorId ? [tutorId] : []);
+      const pendingData = await createPendingJoinRecords({
+        user,
+        role: assignedRole,
+        instituteId,
+        tutorIds: requestedTutorIds,
+        requestedBatchId,
+        requestMessage,
+        subjects,
+        joinedVia: 'self_request',
+      });
+      if (pendingData.createdMemberships.length > 0 || pendingData.createdLinks.length > 0) {
+        notifyPendingJoinRecords({ user, ...pendingData }).catch((err) =>
+          console.warn('Register join alert warning:', err?.message || err)
+        );
       }
     }
 
-    // Generate token
     const token = generateToken(user._id, assignedRole);
+    const workspaceBootstrap = await buildWorkspaceBootstrap(user);
 
     res.status(201).json({
       success: true,
@@ -231,8 +259,10 @@ export const registerUser = async (req, res) => {
         language: user.language,
         notificationSettings: user.notificationSettings,
         authProvider: user.authProvider,
+        personalSubscription: user.personalSubscription || null,
         hasPassword: true
-      }
+      },
+      workspaceBootstrap,
     });
   } catch (error) {
     console.error('Register error:', error);
@@ -242,32 +272,6 @@ export const registerUser = async (req, res) => {
     });
   }
 };
-
-// Helper function to get default permissions for role
-function getDefaultPermissions(role) {
-  const permissions = {
-    student: {
-      canCreateCourses: false,
-      canCreateExams: false,
-      canViewAnalytics: false,
-      canManageStudents: false
-    },
-    tutor: {
-      canCreateCourses: true,
-      canCreateExams: true,
-      canViewAnalytics: true,
-      canManageStudents: false
-    },
-    admin: {
-      canCreateCourses: true,
-      canCreateExams: true,
-      canViewAnalytics: true,
-      canManageStudents: true
-    }
-  };
-
-  return permissions[role] || permissions.student;
-}
 
 // @desc    Register user with invite
 // @route   POST /api/auth/register-with-invite
@@ -282,9 +286,8 @@ export const registerUserWithInvite = async (req, res) => {
       });
     }
 
-    // Validate invite token
     const membership = await InstituteMembership.findByInviteToken(inviteToken);
-    
+
     if (!membership) {
       return res.status(400).json({
         success: false,
@@ -292,8 +295,8 @@ export const registerUserWithInvite = async (req, res) => {
       });
     }
 
-    // Check if user exists
-    const existingUser = await User.findOne({ email });
+    const normalizedEmail = email.toLowerCase().trim();
+    const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
       return res.status(400).json({
         success: false,
@@ -301,7 +304,6 @@ export const registerUserWithInvite = async (req, res) => {
       });
     }
 
-    // Validate password strength
     if (password.length < 6) {
       return res.status(400).json({
         success: false,
@@ -309,38 +311,46 @@ export const registerUserWithInvite = async (req, res) => {
       });
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create user
-    const user = await User.create({
-      name,
-      email,
+    const userPayload = {
+      name: name.trim(),
+      email: normalizedEmail,
       password: hashedPassword,
       phone,
       role: membership.roleInInstitute,
-      instituteId: membership.instituteId._id
-    });
+      instituteId: membership.instituteId._id,
+      isVerified: true,
+    };
 
-    // Auto-create Tutor profile if role is 'tutor'
+    if (membership.roleInInstitute === 'tutor') {
+      userPayload.personalSubscription = getTutorFreeSubscriptionConfig();
+    }
+
+    const user = await User.create(userPayload);
+
     if (membership.roleInInstitute === 'tutor') {
       const settings = (await Settings.findOne()) || {};
       await Tutor.create({
         userId: user._id,
-        isVerified: settings.autoApproveTutors || false
+        instituteId: membership.instituteId._id,
+        privateTeaching: {
+          isEnabled: true,
+          acceptSelfJoinRequests: true,
+        },
+        isVerified: settings.autoApproveTutors || true,
       });
     }
 
-    // Update membership with user details
     membership.userId = user._id;
     membership.status = 'active';
     membership.approvedAt = new Date();
     membership.approvedBy = membership.invitedBy;
-    
+
     await membership.save();
 
-    // Generate token
     const token = generateToken(user._id, membership.roleInInstitute);
+    const workspaceBootstrap = await buildWorkspaceBootstrap(user);
 
     res.status(201).json({
       success: true,
@@ -357,8 +367,10 @@ export const registerUserWithInvite = async (req, res) => {
         language: user.language,
         notificationSettings: user.notificationSettings,
         authProvider: user.authProvider,
+        personalSubscription: user.personalSubscription || null,
         hasPassword: true
-      }
+      },
+      workspaceBootstrap,
     });
   } catch (error) {
     console.error('Register with invite error:', error);
@@ -467,6 +479,8 @@ export const loginUser = async (req, res) => {
     user.activeSessions.push({ token, device: device.substring(0, 200), ip, browser });
     await user.save();
 
+    const workspaceBootstrap = await buildWorkspaceBootstrap(user);
+
     res.status(200).json({
       success: true,
       message: 'Login successful',
@@ -485,8 +499,10 @@ export const loginUser = async (req, res) => {
         address: user.address,
         authProvider: user.authProvider,
         hasPassword: true,
+        personalSubscription: user.role === 'tutor' ? user.personalSubscription : null,
         twoFactorEnabled: user.twoFactorEnabled || false
-      }
+      },
+      workspaceBootstrap,
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -499,12 +515,9 @@ export const loginUser = async (req, res) => {
 
 // @desc    Get current user
 // @route   GET /api/auth/me
-// @desc    Get current user
-// @route   GET /api/auth/me
 export const getMe = async (req, res) => {
   try {
     const user = await User.findById(req.user.id)
-      // 🌟 CHANGE 1: 'features', 'aiUsageCount', and 'aiUsageQuota' populated from DB
       .populate('instituteId', 'name subdomain isActive subscriptionPlan features aiUsageCount aiUsageQuota')
       .select('+password');
 
@@ -515,10 +528,14 @@ export const getMe = async (req, res) => {
       });
     }
 
+    const workspaceBootstrap = await buildWorkspaceBootstrap(user);
+
     res.status(200).json({
       success: true,
       instituteSuspended: req.instituteSuspended || false,
       userBlocked: req.userBlocked || false,
+      activeWorkspace: req.workspace || null,
+      workspaceBootstrap,
       user: {
         _id: user._id,
         name: user.name,
@@ -532,8 +549,7 @@ export const getMe = async (req, res) => {
           subdomain: user.instituteId.subdomain,
           isActive: user.instituteId.isActive,
           subscriptionPlan: user.instituteId.subscriptionPlan,
-          // 🌟 CHANGE 2: Frontend (SubscriptionContext) ko features & dynamic usage data return kiya!
-          features: user.instituteId.features || {}, 
+          features: user.instituteId.features || {},
           aiUsageCount: user.instituteId.aiUsageCount || 0,
           aiUsageQuota: user.instituteId.aiUsageQuota || 1000,
         } : null,
@@ -545,7 +561,7 @@ export const getMe = async (req, res) => {
         address: user.address,
         authProvider: user.authProvider,
         hasPassword: Boolean(user.password),
-        personalSubscription: user.personalSubscription,
+        personalSubscription: user.role === 'tutor' ? user.personalSubscription : null,
         twoFactorEnabled: user.twoFactorEnabled || false
       }
     });
@@ -987,12 +1003,31 @@ export const updateLanguage = async (req, res) => {
 };
 
 // @desc    List active institutes for public registration
+// @desc    List listed active institutes for onboarding search (safe public metadata only)
 // @route   GET /api/auth/institutes
-export const listPublicInstitutes = async (_req, res) => {
+export const listPublicInstitutes = async (req, res) => {
   try {
-    const institutes = await Institute.find({ isActive: true })
-      .select('name subdomain')
+    const search = String(req.query?.search || '').trim();
+    const city = String(req.query?.city || '').trim();
+    const limit = Math.min(Math.max(parseInt(req.query?.limit || '30', 10) || 30, 1), 100);
+
+    const query = {
+      isActive: true,
+      'discovery.isListedInSearch': { $ne: false },
+    };
+
+    if (search) {
+      const rx = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      query.$or = [{ name: rx }, { subdomain: rx }, { 'discovery.tagline': rx }, { 'discovery.city': rx }];
+    }
+    if (city) {
+      query['discovery.city'] = new RegExp(city.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    }
+
+    const institutes = await Institute.find(query)
+      .select('name subdomain logo discovery')
       .sort({ name: 1 })
+      .limit(limit)
       .lean();
 
     res.status(200).json({
@@ -1004,6 +1039,84 @@ export const listPublicInstitutes = async (_req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to load institutes'
+    });
+  }
+};
+
+// @desc    List opt-in private tutors for onboarding search (safe public identity only)
+// @route   GET /api/auth/tutors
+export const listPublicTutors = async (req, res) => {
+  try {
+    const search = String(req.query?.search || '').trim();
+    const subject = String(req.query?.subject || '').trim();
+    const city = String(req.query?.city || '').trim();
+    const limit = Math.min(Math.max(parseInt(req.query?.limit || '30', 10) || 30, 1), 100);
+
+    const query = {
+      'privateTeaching.isEnabled': { $ne: false },
+      'privateTeaching.acceptSelfJoinRequests': { $ne: false },
+    };
+
+    if (subject) {
+      query.subjects = new RegExp(subject.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    }
+    if (city) {
+      const rxCity = new RegExp(city.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      query.$or = [{ 'privateTeaching.city': rxCity }, { location: rxCity }];
+    }
+
+    const rawTutors = await Tutor.find(query)
+      .populate('userId', 'name profileImage isBlocked')
+      .select('userId title bio subjects experience rating studentsCount privateTeaching location isVerified')
+      .sort({ rating: -1, studentsCount: -1, createdAt: -1 })
+      .limit(search ? 150 : limit)
+      .lean();
+
+    const searchLower = search.toLowerCase();
+    const tutors = rawTutors
+      .filter((t) => t.userId && !t.userId.isBlocked)
+      .filter((t) => {
+        if (!searchLower) return true;
+        const haystack = [
+          t.userId?.name,
+          t.title,
+          t.privateTeaching?.headline,
+          t.privateTeaching?.city,
+          t.location,
+          ...(t.subjects || []),
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return haystack.includes(searchLower);
+      })
+      .slice(0, limit)
+      .map((t) => ({
+        _id: t._id,
+        tutorId: t._id,
+        userId: t.userId?._id,
+        name: t.userId?.name || 'Private Tutor',
+        profileImage: t.userId?.profileImage || null,
+        title: t.title || '',
+        headline: t.privateTeaching?.headline || t.title || '',
+        bio: t.bio || '',
+        subjects: t.subjects || [],
+        experience: t.experience || 0,
+        rating: t.rating || 0,
+        studentsCount: t.studentsCount || 0,
+        city: t.privateTeaching?.city || t.location || '',
+        isVerified: Boolean(t.isVerified),
+      }));
+
+    res.status(200).json({
+      success: true,
+      tutors,
+    });
+  } catch (error) {
+    console.error('List public tutors error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to load tutors',
     });
   }
 };
@@ -1300,7 +1413,17 @@ export const githubCallback = async (req, res) => {
 // @route   POST /api/auth/set-role
 export const setRole = async (req, res) => {
   try {
-    const { role } = req.body;
+    const {
+      role,
+      instituteId,
+      tutorId,
+      tutorIds,
+      requestedBatchId,
+      requestMessage,
+      subjects,
+      title,
+      bio,
+    } = req.body;
 
     if (!role || !['student', 'tutor'].includes(role)) {
       return res.status(400).json({
@@ -1318,6 +1441,9 @@ export const setRole = async (req, res) => {
     }
 
     user.role = role;
+    if (role === 'tutor' && (!user.personalSubscription || !user.personalSubscription.planName)) {
+      user.personalSubscription = getTutorFreeSubscriptionConfig();
+    }
     await user.save();
 
     if (role === 'tutor') {
@@ -1326,18 +1452,49 @@ export const setRole = async (req, res) => {
         const settings = (await Settings.findOne()) || {};
         await Tutor.create({
           userId: user._id,
+          subjects: parseSubjectsList(subjects),
+          title: title ? String(title).trim() : '',
+          bio: bio ? String(bio).trim() : '',
+          privateTeaching: {
+            isEnabled: true,
+            acceptSelfJoinRequests: true,
+          },
           isVerified: settings.autoApproveTutors || false
         });
       }
     }
 
+    const requestedTutorIds = tutorIds || (tutorId ? [tutorId] : []);
+    if (instituteId || requestedTutorIds.length > 0) {
+      const pendingData = await createPendingJoinRecords({
+        user,
+        role,
+        instituteId,
+        tutorIds: requestedTutorIds,
+        requestedBatchId,
+        requestMessage,
+        subjects,
+        joinedVia: 'self_request',
+      });
+      if (pendingData.createdMemberships.length > 0 || pendingData.createdLinks.length > 0) {
+        notifyPendingJoinRecords({ user, ...pendingData }).catch((err) =>
+          console.warn('OAuth setRole join alert warning:', err?.message || err)
+        );
+      }
+    }
+
     const token = generateToken(user._id, user.role);
+    const workspaceBootstrap = await buildWorkspaceBootstrap(user);
 
     res.json({
       success: true,
       message: 'Role set successfully',
       token,
-      user: buildUserResponse(user)
+      user: {
+        ...buildUserResponse(user),
+        personalSubscription: user.role === 'tutor' ? user.personalSubscription : null,
+      },
+      workspaceBootstrap,
     });
   } catch (error) {
     console.error('Set role error:', error);
@@ -1509,6 +1666,8 @@ export const verify2FALogin = async (req, res) => {
     user.activeSessions.push({ token: authToken, device: device.substring(0, 200), ip, browser });
     await user.save();
 
+    const workspaceBootstrap = await buildWorkspaceBootstrap(user);
+
     res.status(200).json({
       success: true,
       message: 'Login successful',
@@ -1519,6 +1678,7 @@ export const verify2FALogin = async (req, res) => {
         email: user.email,
         phone: user.phone,
         role: user.role,
+        instituteId: user.instituteId || null,
         profileImage: user.profileImage,
         language: user.language,
         notificationSettings: user.notificationSettings,
@@ -1526,8 +1686,10 @@ export const verify2FALogin = async (req, res) => {
         address: user.address,
         authProvider: user.authProvider,
         hasPassword: true,
+        personalSubscription: user.role === 'tutor' ? user.personalSubscription : null,
         twoFactorEnabled: user.twoFactorEnabled || false
       },
+      workspaceBootstrap,
     });
   } catch (error) {
     console.error('Verify 2FA login error:', error);
@@ -1648,6 +1810,13 @@ export const upgradePersonalSubscription = async (req, res) => {
   try {
     const { planId, paymentId } = req.body;
 
+    if (req.user.role !== 'tutor') {
+      return res.status(403).json({
+        success: false,
+        message: 'Personal subscriptions are only available for Tutors. Students use Sapience LMS completely free!'
+      });
+    }
+
     if (!planId) {
       return res.status(400).json({ success: false, message: 'Plan ID is required' });
     }
@@ -1659,10 +1828,10 @@ export const upgradePersonalSubscription = async (req, res) => {
     }
 
     if (plan.planType !== 'personal') {
-      return res.status(400).json({ success: false, message: 'Only personal plans can be activated on a user account' });
+      return res.status(400).json({ success: false, message: 'Only Tutor personal plans can be activated on a tutor account' });
     }
 
-    if (plan.planRole && plan.planRole !== 'all' && plan.planRole !== 'both' && plan.planRole !== req.user.role) {
+    if (plan.planRole && !['all', 'tutor'].includes(plan.planRole)) {
       return res.status(403).json({ success: false, message: `This plan is only available for ${plan.planRole} accounts` });
     }
 
@@ -1699,24 +1868,33 @@ export const upgradePersonalSubscription = async (req, res) => {
     // Determine subscription duration from plan billing cycle
     const durationMs = plan.billingCycle === 'yearly'
       ? 365 * 24 * 60 * 60 * 1000
-      : 30 * 24 * 60 * 60 * 1000; // default 30 days
+      : 30 * 24 * 60 * 60 * 1000;
     const subscriptionExpiresAt = plan.billingCycle === 'lifetime'
       ? null
       : new Date(Date.now() + durationMs);
+
+    const defaults = getTutorFreeSubscriptionConfig().features;
+    const planFeatures = plan.features || {};
 
     user.personalSubscription = {
       planName: plan.name,
       isActive: true,
       subscriptionExpiresAt,
       features: {
-        aiFeatures: plan.features.aiAssistant || plan.features.aiAssessment || plan.features.aiIntelligence || false,
-        aiCreditsPerMonth: plan.features.aiCreditsPerMonth || 0,
+        maxPrivateStudents: planFeatures.maxPrivateStudents !== undefined
+          ? planFeatures.maxPrivateStudents
+          : defaults.maxPrivateStudents,
+        maxPrivateCourses: planFeatures.maxPrivateCourses !== undefined
+          ? planFeatures.maxPrivateCourses
+          : defaults.maxPrivateCourses,
+        aiFeatures: Boolean(planFeatures.aiAssistant || planFeatures.aiAssessment || planFeatures.aiIntelligence),
+        aiCreditsPerMonth: planFeatures.aiCreditsPerMonth || 0,
         aiUsageCount: 0,
-        aiAssistant: plan.features.aiAssistant || false,
-        aiAssessment: plan.features.aiAssessment || false,
-        aiIntelligence: plan.features.aiIntelligence || false,
-        hlsStreaming: plan.features.hlsStreaming || false,
-        zoomIntegration: plan.features.zoomIntegration || false
+        aiAssistant: Boolean(planFeatures.aiAssistant),
+        aiAssessment: Boolean(planFeatures.aiAssessment),
+        aiIntelligence: Boolean(planFeatures.aiIntelligence),
+        hlsStreaming: Boolean(planFeatures.hlsStreaming),
+        zoomIntegration: Boolean(planFeatures.zoomIntegration),
       }
     };
 
@@ -1724,7 +1902,7 @@ export const upgradePersonalSubscription = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: `Successfully upgraded to Personal ${plan.name}!`,
+      message: `Successfully activated Tutor ${plan.name} plan!`,
       personalSubscription: user.personalSubscription
     });
   } catch (error) {

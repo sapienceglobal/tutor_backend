@@ -4,6 +4,7 @@ import Course from '../models/Course.js';
 import Enrollment from '../models/Enrollment.js';
 import Payment from '../models/Payment.js';
 import { logAdminAction } from '../utils/logger.js';
+import { encryptSensitive, maskAccountNumber } from '../utils/encryption.js';
 
 const MIN_PAYOUT_AMOUNT = 500;
 const ACTIVE_PAYOUT_STATUSES = ['pending', 'processing'];
@@ -59,13 +60,18 @@ const getTutorFinancialSummary = async (tutorId, options = {}) => {
   const months = clampMonths(options.months, 6);
   const includeDetailed = Boolean(options.includeDetailed);
 
-  const tutorCourses = await Course.find({ tutorId }).select('_id title price enrolledCount').lean();
+  const tutorCourses = await Course.find({ tutorId }).select('_id title price pricingMode enrolledCount').lean();
   const courseIds = tutorCourses.map((course) => course._id);
+  const onlineCourseIds = tutorCourses
+    .filter((course) => course.pricingMode !== 'offline')
+    .map((course) => course._id);
   const priceMap = new Map(tutorCourses.map((course) => [course._id.toString(), Number(course.price || 0)]));
 
   const paymentMatch = {
     type: 'course_purchase',
     status: 'paid',
+    paymentMode: { $ne: 'offline' },
+    transferStatus: { $ne: 'processed' },
     courseId: { $in: courseIds },
   };
 
@@ -87,7 +93,11 @@ const getTutorFinancialSummary = async (tutorId, options = {}) => {
       {
         $group: {
           _id: null,
-          totalRevenue: { $sum: '$amount' },
+          totalRevenue: {
+            $sum: {
+              $cond: [{ $gt: [{ $ifNull: ['$tutorEarnings', 0] }, 0] }, '$tutorEarnings', '$amount'],
+            },
+          },
           transactionCount: { $sum: 1 },
         },
       },
@@ -97,9 +107,15 @@ const getTutorFinancialSummary = async (tutorId, options = {}) => {
   let totalEarnings = Number(totalRevenueAgg?.[0]?.totalRevenue || 0);
   let totalTransactions = Number(totalRevenueAgg?.[0]?.transactionCount || 0);
 
-  if (totalEarnings <= 0 && courseIds.length > 0) {
+  if (totalEarnings <= 0 && onlineCourseIds.length > 0) {
     const enrollmentAgg = await Enrollment.aggregate([
-      { $match: { courseId: { $in: courseIds } } },
+      {
+        $match: {
+          courseId: { $in: onlineCourseIds },
+          status: { $in: ['active', 'completed'] },
+          paymentMode: { $ne: 'offline' },
+        },
+      },
       { $group: { _id: '$courseId', count: { $sum: 1 } } },
     ]);
     const fallbackEstimated = enrollmentAgg.reduce((sum, row) => {
@@ -149,7 +165,9 @@ const getTutorFinancialSummary = async (tutorId, options = {}) => {
       },
       {
         $project: {
-          amount: 1,
+          netAmount: {
+            $cond: [{ $gt: [{ $ifNull: ['$tutorEarnings', 0] }, 0] }, '$tutorEarnings', '$amount'],
+          },
           monthKey: {
             $dateToString: {
               format: '%Y-%m',
@@ -162,7 +180,7 @@ const getTutorFinancialSummary = async (tutorId, options = {}) => {
       {
         $group: {
           _id: '$monthKey',
-          revenue: { $sum: '$amount' },
+          revenue: { $sum: '$netAmount' },
           transactions: { $sum: 1 },
         },
       },
@@ -750,5 +768,174 @@ export const updatePayoutStatus = async (req, res) => {
   } catch (error) {
     console.error('Update payout error:', error);
     return res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// ==========================================
+// PAYOUT KYC & PRIVATE TEACHING SETTINGS
+// ==========================================
+
+const sanitizePayoutAccountResponse = (payoutAccount = {}) => ({
+  method: payoutAccount.method || 'none',
+  accountHolderName: payoutAccount.accountHolderName || '',
+  bankName: payoutAccount.bankName || '',
+  ifscCode: payoutAccount.ifscCode || '',
+  accountNumberMasked: payoutAccount.accountNumberMasked || '',
+  upiId: payoutAccount.upiId || '',
+  verificationStatus: payoutAccount.verificationStatus || 'not_configured',
+  submittedAt: payoutAccount.submittedAt || null,
+  verifiedAt: payoutAccount.verifiedAt || null,
+  rejectionReason: payoutAccount.rejectionReason || '',
+  isRazorpayLinked: Boolean(payoutAccount.razorpayLinkedAccountId),
+});
+
+// @desc    Tutor gets their own payout KYC account details (masked, never decrypts raw number)
+// @route   GET /api/tutors/payout-account
+// @access  Private (Tutor)
+export const getMyPayoutAccount = async (req, res) => {
+  try {
+    const tutor = await Tutor.findOne({ userId: req.user.id })
+      .select('payoutAccount privateTeaching isVerified')
+      .lean();
+
+    if (!tutor) {
+      return res.status(404).json({ success: false, message: 'Tutor profile not found' });
+    }
+
+    return res.status(200).json({
+      success: true,
+      payoutAccount: sanitizePayoutAccountResponse(tutor.payoutAccount || {}),
+      privateTeaching: tutor.privateTeaching || { isEnabled: true, acceptSelfJoinRequests: true },
+    });
+  } catch (error) {
+    console.error('Get payout account error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to load payout account' });
+  }
+};
+
+// @desc    Tutor submits/updates bank account or UPI details for payout KYC (AES-256 encrypted)
+// @route   PUT /api/tutors/payout-account
+// @access  Private (Tutor)
+export const upsertMyPayoutAccount = async (req, res) => {
+  try {
+    const {
+      method,
+      accountHolderName,
+      bankName,
+      accountNumber,
+      ifscCode,
+      upiId,
+    } = req.body;
+
+    if (!['bank_account', 'upi'].includes(method)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Payout method must be bank_account or upi',
+      });
+    }
+
+    const cleanHolder = String(accountHolderName || '').trim();
+    if (!cleanHolder) {
+      return res.status(400).json({ success: false, message: 'Account holder name is required' });
+    }
+
+    const tutor = await Tutor.findOne({ userId: req.user.id }).select('+payoutAccount.accountNumberEncrypted');
+    if (!tutor) {
+      return res.status(404).json({ success: false, message: 'Tutor profile not found' });
+    }
+
+    const existing = tutor.payoutAccount ? (typeof tutor.payoutAccount.toObject === 'function' ? tutor.payoutAccount.toObject() : tutor.payoutAccount) : {};
+    let nextPayout = {
+      ...existing,
+      method,
+      accountHolderName: cleanHolder,
+      verificationStatus: 'pending',
+      submittedAt: new Date(),
+      verifiedAt: null,
+      verifiedBy: null,
+      rejectionReason: '',
+    };
+
+    if (method === 'bank_account') {
+      const cleanBank = String(bankName || '').trim();
+      const cleanAcc = String(accountNumber || '').replace(/\s+/g, '');
+      const cleanIfsc = String(ifscCode || '').trim().toUpperCase();
+
+      if (!cleanBank || !cleanAcc || !cleanIfsc) {
+        return res.status(400).json({
+          success: false,
+          message: 'Bank name, account number, and IFSC code are required for bank payouts',
+        });
+      }
+      if (!/^\d{8,20}$/.test(cleanAcc)) {
+        return res.status(400).json({ success: false, message: 'Account number must be 8-20 digits' });
+      }
+      if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(cleanIfsc)) {
+        return res.status(400).json({ success: false, message: 'Invalid IFSC code format (e.g. SBIN0001234)' });
+      }
+
+      nextPayout.bankName = cleanBank;
+      nextPayout.ifscCode = cleanIfsc;
+      nextPayout.accountNumberEncrypted = encryptSensitive(cleanAcc);
+      nextPayout.accountNumberMasked = maskAccountNumber(cleanAcc);
+      if (upiId) {
+        const cleanUpi = String(upiId).trim().toLowerCase();
+        if (/^[\w.-]{2,}@[a-zA-Z]{2,}$/.test(cleanUpi)) {
+          nextPayout.upiId = cleanUpi;
+        }
+      }
+    } else {
+      const cleanUpi = String(upiId || '').trim().toLowerCase();
+      if (!cleanUpi || !/^[\w.-]{2,}@[a-zA-Z]{2,}$/.test(cleanUpi)) {
+        return res.status(400).json({ success: false, message: 'Valid UPI ID is required (e.g. name@bank)' });
+      }
+      nextPayout.upiId = cleanUpi;
+      nextPayout.bankName = String(bankName || '').trim() || existing.bankName || '';
+    }
+
+    tutor.payoutAccount = nextPayout;
+    await tutor.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Payout details saved and submitted for verification. Online checkout unlocks once verified.',
+      payoutAccount: sanitizePayoutAccountResponse(tutor.payoutAccount),
+    });
+  } catch (error) {
+    console.error('Upsert payout account error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to save payout details' });
+  }
+};
+
+// @desc    Tutor updates Private Tuition visibility & self-request acceptance
+// @route   PUT /api/tutors/private-teaching
+// @access  Private (Tutor)
+export const updatePrivateTeachingSettings = async (req, res) => {
+  try {
+    const { isEnabled, acceptSelfJoinRequests, headline, city } = req.body;
+    const tutor = await Tutor.findOne({ userId: req.user.id });
+
+    if (!tutor) {
+      return res.status(404).json({ success: false, message: 'Tutor profile not found' });
+    }
+
+    if (!tutor.privateTeaching) tutor.privateTeaching = {};
+    if (typeof isEnabled === 'boolean') tutor.privateTeaching.isEnabled = isEnabled;
+    if (typeof acceptSelfJoinRequests === 'boolean') {
+      tutor.privateTeaching.acceptSelfJoinRequests = acceptSelfJoinRequests;
+    }
+    if (typeof headline === 'string') tutor.privateTeaching.headline = headline.trim().slice(0, 140);
+    if (typeof city === 'string') tutor.privateTeaching.city = city.trim().slice(0, 80);
+
+    await tutor.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Private Studio settings updated',
+      privateTeaching: tutor.privateTeaching,
+    });
+  } catch (error) {
+    console.error('Update private teaching settings error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to update Private Studio settings' });
   }
 };

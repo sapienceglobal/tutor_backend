@@ -1,9 +1,10 @@
 import mongoose from 'mongoose';
+import './TutorStudentLink.js';
 
 const visibilityScopeSchema = new mongoose.Schema({
   visibilityScope: {
     type: String,
-    enum: ['global', 'institute', 'private'],
+    enum: ['global', 'institute', 'tutor_network', 'private'],
     default: 'institute',
     index: true
   },
@@ -40,34 +41,45 @@ visibilityScopeSchema.index({ createdBy: 1, visibilityScope: 1 });
 visibilityScopeSchema.statics = {
   async findVisibleToUser(userId, options = {}) {
     const InstituteMembership = mongoose.model('InstituteMembership');
+    const TutorStudentLink = mongoose.models.TutorStudentLink || mongoose.model('TutorStudentLink');
 
-    // Get user's active institute memberships
-    const memberships = await InstituteMembership.findActiveMemberships(userId);
-    const userInstituteIds = memberships.map(m => m.instituteId._id);
+    // Get user's active institute memberships & private tutor links
+    const [memberships, tutorLinks] = await Promise.all([
+      InstituteMembership.findActiveMemberships(userId),
+      TutorStudentLink ? TutorStudentLink.find({ studentId: userId, status: 'active' }).select('tutorUserId') : [],
+    ]);
+    const userInstituteIds = memberships
+      .map(m => m.instituteId?._id || m.instituteId)
+      .filter(Boolean);
+    const linkedTutorUserIds = tutorLinks
+      .map(l => l.tutorUserId?._id || l.tutorUserId)
+      .filter(Boolean);
 
-    // Build visibility query
-    const visibilityQuery = {
-      $or: [
-        { visibilityScope: 'global' },
-        { visibilityScope: 'private', createdBy: userId },
-        {
-          visibilityScope: 'institute',
-          instituteId: { $in: userInstituteIds }
-        },
-        {
-          visibilityScope: 'institute',
-          allowedInstitutes: { $in: userInstituteIds }
-        }
-      ]
-    };
+    // Closed-workspace visibility query: never leak legacy 'global' marketplace items
+    const orClauses = [
+      { visibilityScope: 'private', createdBy: userId },
+      { visibilityScope: 'tutor_network', createdBy: userId },
+    ];
 
-    // Apply additional filters
-    if (options.instituteId) {
-      visibilityQuery.$or.push({
-        visibilityScope: 'institute',
-        instituteId: options.instituteId
+    if (linkedTutorUserIds.length > 0) {
+      orClauses.push({
+        visibilityScope: 'tutor_network',
+        createdBy: { $in: linkedTutorUserIds },
       });
     }
+
+    const allowedInstituteScopeIds = options.instituteId
+      ? userInstituteIds.filter(id => id.toString() === options.instituteId.toString())
+      : userInstituteIds;
+
+    if (allowedInstituteScopeIds.length > 0) {
+      orClauses.push(
+        { visibilityScope: 'institute', instituteId: { $in: allowedInstituteScopeIds } },
+        { visibilityScope: 'institute', allowedInstitutes: { $in: allowedInstituteScopeIds } }
+      );
+    }
+
+    const visibilityQuery = { $or: orClauses };
 
     if (options.createdBy) {
       visibilityQuery.createdBy = options.createdBy;
@@ -79,7 +91,6 @@ visibilityScopeSchema.statics = {
   async findByInstitute(instituteId, options = {}) {
     const query = {
       $or: [
-        { visibilityScope: 'global' },
         { visibilityScope: 'institute', instituteId },
         { visibilityScope: 'institute', allowedInstitutes: instituteId }
       ]
@@ -93,20 +104,31 @@ visibilityScopeSchema.statics = {
   },
 
   async validateAccess(resourceId, userId) {
-    const resource = await this.constructor.findById(resourceId);
+    const model = typeof this.findById === 'function' ? this : this.constructor;
+    const resource = await model.findById(resourceId);
     if (!resource) return false;
+
+    if (resource.createdBy && userId && resource.createdBy.toString() === userId.toString()) {
+      return true;
+    }
 
     const InstituteMembership = mongoose.model('InstituteMembership');
 
     switch (resource.visibilityScope) {
       case 'global':
-        return true;
+        return false;
 
       case 'private':
-        return resource.createdBy.toString() === userId;
+        return resource.createdBy?.toString() === userId?.toString();
 
-      case 'institute':
-        // Check if user is member of the resource's institute
+      case 'tutor_network': {
+        const TutorStudentLink = mongoose.models.TutorStudentLink || mongoose.model('TutorStudentLink');
+        if (!TutorStudentLink || !resource.createdBy || !userId) return false;
+        const link = await TutorStudentLink.checkLinkByUserIds(resource.createdBy, userId);
+        return Boolean(link);
+      }
+
+      case 'institute': {
         const membership = await InstituteMembership.checkMembership(
           userId,
           resource.instituteId
@@ -114,13 +136,15 @@ visibilityScopeSchema.statics = {
 
         if (membership) return true;
 
-        // Check if user's institute is in allowed institutes
         const userMemberships = await InstituteMembership.findActiveMemberships(userId);
-        const userInstituteIds = userMemberships.map(m => m.instituteId._id);
+        const userInstituteIds = userMemberships
+          .map(m => (m.instituteId?._id || m.instituteId)?.toString())
+          .filter(Boolean);
 
-        return resource.allowedInstitutes.some(id =>
-          userInstituteIds.includes(id)
+        return (resource.allowedInstitutes || []).some(id =>
+          userInstituteIds.includes(id.toString())
         );
+      }
 
       default:
         return false;
@@ -155,7 +179,7 @@ visibilityScopeSchema.methods = {
   },
 
   async changeVisibility(newScope, options = {}) {
-    const validScopes = ['global', 'institute', 'private'];
+    const validScopes = ['institute', 'tutor_network', 'private'];
     if (!validScopes.includes(newScope)) {
       throw new Error('Invalid visibility scope');
     }
@@ -166,8 +190,11 @@ visibilityScopeSchema.methods = {
       this.instituteId = options.instituteId;
     }
 
-    if (newScope === 'private') {
+    if (newScope === 'tutor_network' || newScope === 'private') {
       this.allowedInstitutes = [];
+      if (newScope === 'tutor_network') {
+        this.instituteId = null;
+      }
     }
 
     return this.save();
@@ -177,10 +204,10 @@ visibilityScopeSchema.methods = {
 // Middleware for automatic scope validation
 visibilityScopeSchema.pre('save', function () {
   // Auto-correct: if scope says 'institute' but no instituteId is available,
-  // downgrade to 'global' to avoid a hard crash for independent tutors.
+  // assign 'tutor_network' (closed private workspace) rather than public global marketplace.
   if (this.visibilityScope === 'institute' && !this.instituteId) {
-    console.warn('[VisibilityScope] visibilityScope=institute but no instituteId — auto-correcting to global');
-    this.visibilityScope = 'global';
+    console.warn('[VisibilityScope] visibilityScope=institute but no instituteId — auto-correcting to tutor_network');
+    this.visibilityScope = 'tutor_network';
   }
 
   // Clear allowedInstitutes if not institute scope

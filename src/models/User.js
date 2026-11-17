@@ -183,6 +183,8 @@ const userSchema = new mongoose.Schema({
     isActive: { type: Boolean, default: false },
     subscriptionExpiresAt: { type: Date, default: null },
     features: {
+      maxPrivateStudents: { type: Number, default: 15 },
+      maxPrivateCourses: { type: Number, default: 3 },
       aiFeatures: { type: Boolean, default: false },
       aiCreditsPerMonth: { type: Number, default: 0 },
       aiUsageCount: { type: Number, default: 0 },

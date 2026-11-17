@@ -38,13 +38,31 @@ export const createBatch = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Tutor ID is required' });
         }
 
+        let resolvedInstituteId = req.workspace?.type === 'private_tutor'
+            ? null
+            : (req.workspace?.instituteId || req.tenant?._id || null);
+
+        if (courseId) {
+            const linkedCourse = await Course.findById(courseId).select('instituteId').lean();
+            if (linkedCourse) {
+                if (req.workspace?.type === 'private_tutor' && linkedCourse.instituteId) {
+                    return res.status(403).json({
+                        success: false,
+                        code: 'WORKSPACE_ISOLATION_VIOLATION',
+                        message: 'Cannot create a Private Studio batch for an institute course.',
+                    });
+                }
+                resolvedInstituteId = linkedCourse.instituteId || null;
+            }
+        }
+
         const batch = await Batch.create({
             name,
             courseId,
             tutorId,
             instructors: finalInstructors,
             grade,
-            instituteId: req.tenant?._id || null,
+            instituteId: resolvedInstituteId,
             scheduleDescription,
             startDate,
             endDate,
@@ -145,7 +163,13 @@ export const getBatches = async (req, res) => {
             ];
         }
 
-        if (req.tenant) filter.instituteId = req.tenant._id;
+        if (req.workspace?.type === 'private_tutor') {
+            filter.instituteId = null;
+        } else if (req.workspace?.type === 'institute' && req.workspace.instituteId) {
+            filter.instituteId = req.workspace.instituteId;
+        } else if (req.tenant) {
+            filter.instituteId = req.tenant._id;
+        }
 
         const batches = await Batch.find(filter)
             .populate('courseId', 'title thumbnail isFree status')
@@ -166,20 +190,21 @@ export const getBatches = async (req, res) => {
     }
 };
 
-// @desc    Get batches for a student
+// @desc    Get batches for a student in active workspace
 // @route   GET /api/batches/my
 // @access  Private (Student)
 export const getMyBatches = async (req, res) => {
     try {
-        const studentId = req.user._id; 
-        let filter = { students: studentId };
+        const studentId = req.user._id;
+        const filter = { students: studentId };
 
-        if (req.query.scope === 'global') {
+        if (req.workspace?.type === 'private_tutor') {
             filter.instituteId = null;
-        } else if (req.query.scope === 'institute') {
-            filter.instituteId = req.tenant ? req.tenant._id : { $ne: null };
-        } else if (req.query.scope === 'strict') {
-            if (req.tenant) filter.instituteId = req.tenant._id;
+            if (req.workspace.filterTutorId) {
+                filter.tutorId = req.workspace.filterTutorId;
+            }
+        } else if (req.workspace?.type === 'institute' && req.workspace.instituteId) {
+            filter.instituteId = req.workspace.instituteId;
         } else if (req.tenant) {
             filter.instituteId = req.tenant._id;
         }
@@ -211,19 +236,38 @@ export const getMyBatches = async (req, res) => {
     }
 };
 
-// @desc    Get all available batches for a student to browse and self-join
+// @desc    Get available batches for a student to join inside their active closed workspace
 // @route   GET /api/batches/available
 // @access  Private (Student)
 export const getAvailableBatches = async (req, res) => {
     try {
+        if (!req.hasActiveWorkspace && req.user.role !== 'superadmin') {
+            return res.status(403).json({
+                success: false,
+                code: 'PORTAL_APPROVAL_REQUIRED',
+                message: 'Your join request is awaiting approval from an Institute or Private Tutor.',
+            });
+        }
+
         const studentId = req.user._id;
+        let scopeFilter = null;
 
-        // Build scope filter — include institute batches + global batches
-        const scopeFilter = req.tenant
-            ? { $or: [{ instituteId: req.tenant._id }, { instituteId: null }] }
-            : { instituteId: null };
+        if (req.workspace?.type === 'institute' && req.workspace.instituteId) {
+            scopeFilter = { instituteId: req.workspace.instituteId };
+        } else if (req.workspace?.type === 'private_tutor') {
+            const linkedTutors = req.workspace.filterTutorId
+                ? [req.workspace.filterTutorId]
+                : (req.workspace.activeTutorIds || []);
+            if (linkedTutors.length === 0) {
+                return res.status(200).json({ success: true, count: 0, batches: [] });
+            }
+            scopeFilter = { instituteId: null, tutorId: { $in: linkedTutors } };
+        } else if (req.tenant) {
+            scopeFilter = { instituteId: req.tenant._id };
+        } else {
+            return res.status(200).json({ success: true, count: 0, batches: [] });
+        }
 
-        // Exclude batches the student has already joined
         const batches = await Batch.find({
             ...scopeFilter,
             students: { $ne: studentId },
@@ -257,8 +301,19 @@ export const joinBatch = async (req, res) => {
         const batch = await Batch.findById(req.params.id);
 
         if (!batch) return res.status(404).json({ success: false, message: 'Batch not found' });
-        if (batch.instituteId && req.tenant?._id?.toString() !== batch.instituteId.toString()) {
-            return res.status(403).json({ success: false, message: 'This batch is not available in your institute' });
+        if (batch.instituteId) {
+            const instMatch = req.workspace?.type === 'institute'
+                && String(req.workspace.instituteId || req.tenant?._id) === String(batch.instituteId);
+            if (!instMatch) {
+                return res.status(403).json({ success: false, message: 'This batch is not available in your active institute workspace' });
+            }
+        } else {
+            const TutorStudentLink = (await import('../models/TutorStudentLink.js')).default;
+            const hasTutorLink = (req.workspace?.activeTutorIds || []).map(String).includes(String(batch.tutorId))
+                || await TutorStudentLink.exists({ studentId, tutorId: batch.tutorId, status: 'active' });
+            if (!hasTutorLink) {
+                return res.status(403).json({ success: false, message: 'You must be connected with this Private Tutor to join this batch' });
+            }
         }
         if (batch.students.map(s => s.toString()).includes(studentId.toString())) {
             return res.status(400).json({ success: false, message: 'You have already joined this batch' });

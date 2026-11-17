@@ -1,5 +1,5 @@
 import express from 'express';
-import { protect, authorize, optionalAuth } from '../middleware/auth.js';
+import { protect, authorize } from '../middleware/auth.js';
 import { resolveTenant } from '../middleware/tenant.js';
 import { requireLimit } from '../middleware/subscriptionMiddleware.js';
 import {
@@ -21,6 +21,9 @@ import {
     getTutorPayoutReport,
     exportTutorPayoutReport,
     cancelMyPayoutRequest,
+    getMyPayoutAccount,
+    upsertMyPayoutAccount,
+    updatePrivateTeachingSettings,
 } from '../controllers/payoutController.js';
 
 const router = express.Router();
@@ -32,6 +35,11 @@ router.get('/announcements', protect, authorize('tutor'), getTutorAnnouncements)
 router.get('/students', protect, authorize('tutor'), getAllTutorStudents);
 router.get('/students/:id', protect, authorize('tutor'), getTutorStudentDetails);
 
+// Private Teaching & Payout KYC Routes (MUST precede /:id)
+router.put('/private-teaching', protect, authorize('tutor'), updatePrivateTeachingSettings);
+router.get('/payout-account', protect, authorize('tutor'), getMyPayoutAccount);
+router.put('/payout-account', protect, authorize('tutor'), upsertMyPayoutAccount);
+
 // Payout Routes
 router.post('/payouts/request', protect, authorize('tutor'), requestPayout);
 router.get('/payouts', protect, authorize('tutor'), getMyPayouts);
@@ -39,9 +47,9 @@ router.get('/payouts/report', protect, authorize('tutor'), getTutorPayoutReport)
 router.get('/payouts/export', protect, authorize('tutor'), exportTutorPayoutReport);
 router.patch('/payouts/:id/cancel', protect, authorize('tutor'), cancelMyPayoutRequest);
 
-// Public routes (optionalAuth to populate req.user for blocked student filtering)
-router.get('/', optionalAuth, getAllTutors);
-router.get('/category/:categoryId', optionalAuth, getTutorsByCategory);
+// Closed-workspace tutor discovery (authentication required; onboarding search uses /api/auth/tutors)
+router.get('/', protect, getAllTutors);
+router.get('/category/:categoryId', protect, getTutorsByCategory);
 
 // Protected routes (Tutor only)
 router.post('/', protect, authorize('tutor'), requireLimit('tutors'), createTutor);
@@ -50,6 +58,6 @@ router.patch('/:id', protect, authorize('tutor'), updateTutor);
 router.delete('/:id', protect, authorize('tutor'), deleteTutor);
 
 // Generic ID route MUST be last to prevent intercepting /payouts etc.
-router.get('/:id', optionalAuth, getTutorById);
+router.get('/:id', protect, getTutorById);
 
 export default router;

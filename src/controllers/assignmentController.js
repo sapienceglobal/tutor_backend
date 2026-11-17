@@ -13,20 +13,35 @@ import {
     validateAudience,
 } from '../utils/audience.js';
 
-const resolveAssignmentAudience = ({ body, instituteId }) => {
+const getWorkspaceTenantFilter = (req) => {
+    if (req.workspace?.type === 'private_tutor') return { instituteId: null };
+    const instId = req.workspace?.instituteId || req.tenant?._id || null;
+    return instId ? { instituteId: instId } : { instituteId: null };
+};
+
+const resolveAssignmentAudience = ({ body, instituteId, isPrivateWorkspace = false }) => {
+    const fallbackScope = (body.batchId || (Array.isArray(body.batchIds) && body.batchIds.length > 0))
+        ? AUDIENCE_SCOPES.BATCH
+        : (isPrivateWorkspace || !instituteId ? AUDIENCE_SCOPES.TUTOR_NETWORK : AUDIENCE_SCOPES.INSTITUTE);
+
     const normalizedAudience = normalizeAudienceInput({
         audience: body.audience,
-        scope: body.scope,
-        instituteId: body.instituteId || instituteId || null,
+        scope: body.scope === 'global' || body.visibility === 'public' ? fallbackScope : body.scope,
+        instituteId: isPrivateWorkspace ? null : (instituteId || body.instituteId || null),
         batchId: body.batchId || null,
         batchIds: body.batchIds || [],
         studentIds: body.studentIds || [],
     }, {
-        defaultScope: (body.batchId || (Array.isArray(body.batchIds) && body.batchIds.length > 0))
-            ? AUDIENCE_SCOPES.BATCH
-            : (body.instituteId || instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.GLOBAL),
-        defaultInstituteId: body.instituteId || instituteId || null,
+        defaultScope: fallbackScope,
+        defaultInstituteId: isPrivateWorkspace ? null : (instituteId || body.instituteId || null),
     });
+
+    if (normalizedAudience.scope === AUDIENCE_SCOPES.GLOBAL) {
+        normalizedAudience.scope = fallbackScope;
+    }
+    if (isPrivateWorkspace || normalizedAudience.scope === AUDIENCE_SCOPES.TUTOR_NETWORK) {
+        normalizedAudience.instituteId = null;
+    }
 
     return validateAudience(normalizedAudience, {
         requireInstituteId: false,
@@ -40,7 +55,8 @@ const resolveAssignmentAudience = ({ body, instituteId }) => {
 export const createAssignment = async (req, res) => {
     try {
         let { courseId, batchId, moduleId, title, description, dueDate, totalMarks, rubric, attachments, status } = req.body;
-        const instituteId = req.tenant ? req.tenant._id : null;
+        const isPrivateWorkspace = req.workspace?.type === 'private_tutor' || !req.tenant;
+        const instituteId = isPrivateWorkspace ? null : (req.workspace?.instituteId || req.tenant._id);
 
         // Next.js FormData sometimes stringifies arrays/objects
         if (typeof attachments === 'string') {
@@ -63,24 +79,17 @@ export const createAssignment = async (req, res) => {
 
         let audience;
         try {
-            audience = resolveAssignmentAudience({ body: req.body, instituteId });
+            audience = resolveAssignmentAudience({
+                body: req.body,
+                instituteId,
+                isPrivateWorkspace: !course.instituteId,
+            });
         } catch (audienceError) {
             return res.status(400).json({ success: false, message: audienceError.message });
         }
 
-        if (
-            instituteId
-            && audience.scope === AUDIENCE_SCOPES.GLOBAL
-            && req.tenant?.features?.allowGlobalPublishingByInstituteTutors !== true
-        ) {
-            return res.status(403).json({
-                success: false,
-                message: 'Institute policy blocks global publishing for institute tutors',
-            });
-        }
-
         const assignment = new Assignment({
-            instituteId: audience.scope === AUDIENCE_SCOPES.GLOBAL ? null : (audience.instituteId || instituteId || null),
+            instituteId: course.instituteId || null,
             courseId,
             batchId: audience.scope === AUDIENCE_SCOPES.BATCH ? (audience.batchIds[0] || null) : null,
             moduleId,
@@ -134,15 +143,20 @@ export const createAssignment = async (req, res) => {
 export const getCourseAssignments = async (req, res) => {
     try {
         const { courseId } = req.params;
-        const instituteId = req.tenant ? req.tenant._id : null;
-
-        // Check enrollment if student
-        const query = { courseId };
-        if (instituteId) {
-            query.$or = [{ instituteId }, { instituteId: null }];
-        } else {
-            query.instituteId = null;
+        const course = await Course.findById(courseId).select('instituteId tutorId').lean();
+        if (!course) {
+            return res.status(404).json({ success: false, message: 'Course not found' });
         }
+
+        const tenantFilter = getWorkspaceTenantFilter(req);
+        if (course.instituteId && tenantFilter.instituteId === null && req.user.role !== 'superadmin') {
+            return res.status(403).json({ success: false, message: 'Switch to your Institute workspace to view these assignments.' });
+        }
+        if (!course.instituteId && req.workspace?.type === 'institute' && req.user.role !== 'superadmin') {
+            return res.status(403).json({ success: false, message: 'Switch to your Private Tutor workspace to view these assignments.' });
+        }
+
+        const query = { courseId, instituteId: course.instituteId || null };
 
         // If student, only show assignments for their specific batch OR course-wide assignments
         if (req.user.role === 'student') {
@@ -229,9 +243,7 @@ export const getAssignment = async (req, res) => {
     try {
         const assignment = await Assignment.findOne({
             _id: req.params.id,
-            ...(req.tenant
-                ? { $or: [{ instituteId: req.tenant._id }, { instituteId: null }] }
-                : { instituteId: null }),
+            ...getWorkspaceTenantFilter(req),
         });
 
         if (!assignment) {
@@ -279,12 +291,10 @@ export const getAssignment = async (req, res) => {
 // @access  Private (Tutor, Admin)
 export const updateAssignment = async (req, res) => {
     try {
-        const instituteId = req.tenant ? req.tenant._id : null;
+        const tenantFilter = getWorkspaceTenantFilter(req);
         const assignment = await Assignment.findOne({
             _id: req.params.id,
-            ...(instituteId
-                ? { $or: [{ instituteId }, { instituteId: null }] }
-                : { instituteId: null }),
+            ...tenantFilter,
         });
 
         if (!assignment) {
@@ -299,28 +309,22 @@ export const updateAssignment = async (req, res) => {
             || req.body.studentIds !== undefined
             || req.body.instituteId !== undefined
         ) {
+            const isPrivateAssignment = !assignment.instituteId;
             let audience;
             try {
-                audience = resolveAssignmentAudience({ body: req.body, instituteId: instituteId || assignment.instituteId });
+                audience = resolveAssignmentAudience({
+                    body: req.body,
+                    instituteId: assignment.instituteId || tenantFilter.instituteId,
+                    isPrivateWorkspace: isPrivateAssignment,
+                });
             } catch (audienceError) {
                 return res.status(400).json({ success: false, message: audienceError.message });
             }
 
-            if (
-                instituteId
-                && audience.scope === AUDIENCE_SCOPES.GLOBAL
-                && req.tenant?.features?.allowGlobalPublishingByInstituteTutors !== true
-            ) {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Institute policy blocks global publishing for institute tutors',
-                });
-            }
-
             assignment.audience = audience;
-            assignment.instituteId = audience.scope === AUDIENCE_SCOPES.GLOBAL
+            assignment.instituteId = isPrivateAssignment
                 ? null
-                : (audience.instituteId || instituteId || assignment.instituteId || null);
+                : (audience.instituteId || assignment.instituteId || tenantFilter.instituteId || null);
             assignment.batchId = audience.scope === AUDIENCE_SCOPES.BATCH
                 ? (audience.batchIds[0] || null)
                 : null;
@@ -352,9 +356,7 @@ export const deleteAssignment = async (req, res) => {
     try {
         const assignment = await Assignment.findOneAndDelete({
             _id: req.params.id,
-            ...(req.tenant
-                ? { $or: [{ instituteId: req.tenant._id }, { instituteId: null }] }
-                : { instituteId: null }),
+            ...getWorkspaceTenantFilter(req),
         });
 
         if (!assignment) {
@@ -380,15 +382,14 @@ export const submitAssignment = async (req, res) => {
     try {
         const { content, attachments } = req.body;
         const assignmentId = req.params.id;
-        const instituteId = req.tenant ? req.tenant._id : null;
+        const tenantFilter = getWorkspaceTenantFilter(req);
+        const instituteId = tenantFilter.instituteId;
         const studentId = req.user._id;
 
         const assignment = await Assignment.findOne({
             _id: assignmentId,
             status: 'published',
-            ...(instituteId
-                ? { $or: [{ instituteId }, { instituteId: null }] }
-                : { instituteId: null }),
+            ...tenantFilter,
         });
         if (!assignment) {
             return res.status(404).json({ success: false, message: 'Assignment not found or not published' });
@@ -468,9 +469,7 @@ export const getAssignmentSubmissions = async (req, res) => {
     try {
         const submissions = await Submission.find({
             assignmentId: req.params.id,
-            ...(req.tenant
-                ? { $or: [{ instituteId: req.tenant._id }, { instituteId: null }] }
-                : { instituteId: null }),
+            ...getWorkspaceTenantFilter(req),
         })
             .populate('studentId', 'name email avatar')
             .sort({ submittedAt: -1 });
@@ -491,9 +490,7 @@ export const gradeSubmission = async (req, res) => {
 
         const submission = await Submission.findOne({
             _id: req.params.submissionId,
-            ...(req.tenant
-                ? { $or: [{ instituteId: req.tenant._id }, { instituteId: null }] }
-                : { instituteId: null }),
+            ...getWorkspaceTenantFilter(req),
         });
 
         if (!submission) {

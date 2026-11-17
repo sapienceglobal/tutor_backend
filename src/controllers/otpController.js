@@ -1,12 +1,22 @@
 import OTP from '../models/OTP.js';
 import User from '../models/User.js';
 import Invite from '../models/Invite.js';
+import Tutor from '../models/Tutor.js';
+import Settings from '../models/Settings.js';
 import InstituteMembership from '../models/InstituteMembership.js';
 import crypto from 'crypto';
 import nodemailer from 'nodemailer';
 import mongoose from 'mongoose';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import { getTutorFreeSubscriptionConfig } from '../config/planDefaults.js';
+import { buildWorkspaceBootstrap } from '../services/workspaceBootstrap.js';
+import {
+    getDefaultPermissions,
+    createPendingJoinRecords,
+    notifyPendingJoinRecords,
+    parseSubjectsList,
+} from '../services/admissionService.js';
 
 // Email configuration (use existing email setup)
 const createTransporter = () => {
@@ -79,28 +89,48 @@ export const verifyOTPAndRegister = async (req, res) => {
     session.startTransaction();
 
     try {
-        const { name, email, password, role, inviteToken, otp } = req.body;
-
-        console.log('🔍 OTP Registration Request:', {
+        const {
             name,
             email,
+            password,
+            phone,
             role,
-            inviteToken: inviteToken ? 'provided' : 'none',
-            otp: otp ? 'provided' : 'none'
-        });
+            inviteToken,
+            otp,
+            purpose,
+            instituteId,
+            tutorId,
+            tutorIds,
+            requestedBatchId,
+            requestMessage,
+            subjects,
+            title,
+            bio,
+        } = req.body;
 
         // Validate required fields
         if (!name || !email || !password || !role || !otp) {
+            await session.abortTransaction();
             return res.status(400).json({
                 success: false,
                 message: 'All fields are required'
             });
         }
 
-        // Verify OTP
-        const otpResult = await OTP.verifyOTP(email.toLowerCase(), otp, 'invite-registration');
+        const normalizedEmail = email.toLowerCase().trim();
+        let assignedRole = ['student', 'tutor'].includes(role) ? role : 'student';
+
+        // Verify OTP cleanly across supported registration purposes
+        const preferredPurpose = ['invite-registration', 'email-verification'].includes(purpose)
+            ? purpose
+            : 'invite-registration';
+        let otpResult = await OTP.verifyOTP(normalizedEmail, otp, preferredPurpose);
+        if (!otpResult.valid && !purpose && preferredPurpose === 'invite-registration') {
+            otpResult = await OTP.verifyOTP(normalizedEmail, otp, 'email-verification');
+        }
 
         if (!otpResult.valid) {
+            await session.abortTransaction();
             return res.status(400).json({
                 success: false,
                 message: otpResult.message
@@ -111,70 +141,79 @@ export const verifyOTPAndRegister = async (req, res) => {
         await otpResult.otpDoc.updateOne({ isUsed: true });
 
         // Check if user already exists (double check)
-        const existingUser = await User.findOne({ email: email.toLowerCase() });
+        const existingUser = await User.findOne({ email: normalizedEmail }).session(session);
         if (existingUser) {
+            await session.abortTransaction();
             return res.status(400).json({
                 success: false,
                 message: 'User already exists'
             });
         }
 
-        console.log('👤 Creating user with data:', {
-            name,
-            email: email.toLowerCase(),
-            role,
-            isEmailVerified: true
-        });
-
         // Hash password
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        // Create user
-        const user = await User.create([{
-            name,
-            email: email.toLowerCase(),
-            password: hashedPassword,
-            role,
-            isEmailVerified: true // Email is verified via OTP
-        }], { session });
+        let assignedInstituteId = null;
+        let acceptedInvite = null;
 
-        const createdUser = user[0];
-        console.log('✅ User created successfully:', {
-            id: createdUser._id,
-            name: createdUser.name,
-            email: createdUser.email,
-            role: createdUser.role
-        });
-
-        // Handle invite acceptance if inviteToken is provided
         if (inviteToken) {
-            console.log('🎫 Processing invite token:', inviteToken);
-
-            // Find and validate invite
             const invite = await Invite.findOne({
                 token: inviteToken,
                 status: 'pending',
-                email: email.toLowerCase()
+                email: normalizedEmail
             }).populate('instituteId').session(session);
 
-            if (!invite) {
+            if (!invite || !invite.instituteId) {
                 await session.abortTransaction();
-                session.endSession();
                 return res.status(400).json({
                     success: false,
                     message: 'Invalid or expired invite token'
                 });
             }
 
-            console.log('📋 Invite found:', {
-                id: invite._id,
-                instituteId: invite.instituteId._id,
-                instituteName: invite.instituteId.name
-            });
+            if (invite.role && ['student', 'tutor'].includes(invite.role)) {
+                assignedRole = invite.role;
+            }
+            assignedInstituteId = invite.instituteId._id;
+            acceptedInvite = invite;
+        }
 
-            // Update invite status
+        const userPayload = {
+            name: name.trim(),
+            email: normalizedEmail,
+            password: hashedPassword,
+            phone: phone || '',
+            role: assignedRole,
+            instituteId: assignedInstituteId,
+            isVerified: Boolean(assignedInstituteId),
+            isEmailVerified: true,
+        };
+
+        if (assignedRole === 'tutor') {
+            userPayload.personalSubscription = getTutorFreeSubscriptionConfig();
+        }
+
+        const [createdUser] = await User.create([userPayload], { session });
+
+        if (assignedRole === 'tutor') {
+            const settings = (await Settings.findOne().session(session)) || {};
+            await Tutor.create([{
+                userId: createdUser._id,
+                instituteId: assignedInstituteId,
+                subjects: parseSubjectsList(subjects),
+                title: title ? String(title).trim() : '',
+                bio: bio ? String(bio).trim() : '',
+                privateTeaching: {
+                    isEnabled: true,
+                    acceptSelfJoinRequests: true,
+                },
+                isVerified: settings.autoApproveTutors || Boolean(assignedInstituteId) || false,
+            }], { session });
+        }
+
+        if (acceptedInvite) {
             await Invite.updateOne(
-                { _id: invite._id },
+                { _id: acceptedInvite._id },
                 {
                     status: 'accepted',
                     acceptedBy: createdUser._id,
@@ -182,49 +221,55 @@ export const verifyOTPAndRegister = async (req, res) => {
                 }
             ).session(session);
 
-            console.log('✅ Invite status updated to accepted');
-
-            // Create institute membership
-            const membership = await InstituteMembership.create([{
+            await InstituteMembership.create([{
                 userId: createdUser._id,
-                instituteId: invite.instituteId._id,
-                roleInInstitute: role,
+                instituteId: assignedInstituteId,
+                roleInInstitute: assignedRole,
                 status: 'active',
-                joinedVia: 'invite', // Added missing joinedVia field
-                joinedAt: new Date()
+                joinedVia: 'invite',
+                approvedBy: acceptedInvite.invitedBy || createdUser._id,
+                approvedAt: new Date(),
+                joinedAt: new Date(),
+                permissions: getDefaultPermissions(assignedRole),
             }], { session });
-
-            console.log('✅ Institute membership created:', {
-                userId: createdUser._id,
-                instituteId: invite.instituteId._id,
-                role: role
-            });
-
-            // Update user's instituteId
-            await User.updateOne(
-                { _id: createdUser._id },
-                { instituteId: invite.instituteId._id }
-            ).session(session);
-
-            console.log('✅ User instituteId updated');
         }
 
-        // Generate JWT token
+        let pendingJoinData = { createdMemberships: [], createdLinks: [], institutesById: new Map(), tutorsById: new Map() };
+        if (!acceptedInvite) {
+            const requestedTutorIds = tutorIds || (tutorId ? [tutorId] : []);
+            pendingJoinData = await createPendingJoinRecords({
+                user: createdUser,
+                role: assignedRole,
+                instituteId,
+                tutorIds: requestedTutorIds,
+                requestedBatchId,
+                requestMessage,
+                subjects,
+                joinedVia: 'self_request',
+                session,
+            });
+        }
+
+        await session.commitTransaction();
+
+        // Dispatch notifications & emails strictly after transaction commit
+        if (pendingJoinData.createdMemberships.length > 0 || pendingJoinData.createdLinks.length > 0) {
+            notifyPendingJoinRecords({
+                user: createdUser,
+                ...pendingJoinData,
+            }).catch((err) => console.warn('Post-commit join alert warning:', err?.message || err));
+        }
+
         const token = jwt.sign(
             { id: createdUser._id, role: createdUser.role },
             process.env.JWT_SECRET,
             { expiresIn: '30d' }
         );
 
-        // Remove password from output
         createdUser.password = undefined;
+        const workspaceBootstrap = await buildWorkspaceBootstrap(createdUser);
 
-        await session.commitTransaction();
-        session.endSession();
-
-        console.log('🎉 Registration completed successfully!');
-
-        res.status(201).json({
+        return res.status(201).json({
             success: true,
             token,
             user: {
@@ -238,23 +283,28 @@ export const verifyOTPAndRegister = async (req, res) => {
                 language: createdUser.language,
                 notificationSettings: createdUser.notificationSettings,
                 authProvider: createdUser.authProvider,
+                personalSubscription: createdUser.personalSubscription || null,
                 hasPassword: true
             },
+            workspaceBootstrap,
             message: 'Account created successfully'
         });
 
     } catch (error) {
-        await session.abortTransaction();
-        session.endSession();
+        if (session.inTransaction()) {
+            await session.abortTransaction();
+        }
         console.error('❌ Verify OTP and Register error:', {
-            message: 'Internal server error',
+            message: error.message,
             stack: error.stack,
             name: error.name
         });
-        res.status(500).json({
+        return res.status(500).json({
             success: false,
             message: 'Registration failed'
         });
+    } finally {
+        await session.endSession();
     }
 };
 

@@ -30,6 +30,8 @@ const subscriptionPlanSchema = new mongoose.Schema({
    features: {
         maxTutors: { type: Number, default: 5 }, 
         maxStudents: { type: Number, default: 50 }, 
+        maxPrivateStudents: { type: Number, default: 15 },
+        maxPrivateCourses: { type: Number, default: 3 },
         storageLimitGB: { type: Number, default: 5 }, 
         
         // Advanced LMS

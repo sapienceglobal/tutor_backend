@@ -14,28 +14,37 @@ import {
   validateAudience,
 } from "../utils/audience.js";
 
-const resolveLiveClassAudience = ({ body, instituteId }) => {
+const resolveLiveClassAudience = ({ body, instituteId, isPrivateWorkspace = false }) => {
+  const effectiveInstId = isPrivateWorkspace ? null : (instituteId || body.instituteId || null);
+  const defaultScope =
+    body.batchId || (Array.isArray(body.batchIds) && body.batchIds.length > 0)
+      ? AUDIENCE_SCOPES.BATCH
+      : effectiveInstId
+        ? AUDIENCE_SCOPES.INSTITUTE
+        : AUDIENCE_SCOPES.TUTOR_NETWORK;
+
   const normalizedAudience = normalizeAudienceInput(
     {
       audience: body.audience,
-      scope: body.scope,
+      scope: body.scope === "global" || body.visibility === "public" ? defaultScope : body.scope,
       visibility: body.visibility,
-      instituteId: body.instituteId || instituteId || null,
+      instituteId: effectiveInstId,
       batchId: body.batchId || null,
       batchIds: body.batchIds || [],
       studentIds: body.studentIds || [],
     },
     {
-      defaultScope:
-        body.batchId ||
-        (Array.isArray(body.batchIds) && body.batchIds.length > 0)
-          ? AUDIENCE_SCOPES.BATCH
-          : body.instituteId || instituteId
-            ? AUDIENCE_SCOPES.INSTITUTE
-            : AUDIENCE_SCOPES.GLOBAL,
-      defaultInstituteId: body.instituteId || instituteId || null,
+      defaultScope,
+      defaultInstituteId: effectiveInstId,
     },
   );
+
+  if (normalizedAudience.scope === AUDIENCE_SCOPES.GLOBAL) {
+    normalizedAudience.scope = defaultScope;
+  }
+  if (isPrivateWorkspace || normalizedAudience.scope === AUDIENCE_SCOPES.TUTOR_NETWORK) {
+    normalizedAudience.instituteId = null;
+  }
 
   return validateAudience(normalizedAudience, {
     requireInstituteId: false,
@@ -72,7 +81,8 @@ export const createLiveClass = async (req, res) => {
     // Auto-Generate Meeting Logic
     if (autoCreate) {
       if (platform === "zoom") {
-        const instId = req.tenant?._id || tutor.instituteId || null;
+        const isPrivateZoom = req.workspace?.type === "private_tutor" || !req.tenant;
+        const instId = isPrivateZoom ? null : (req.workspace?.instituteId || req.tenant?._id || tutor.instituteId || null);
         const config = await ZoomConfig.findOne({ instituteId: instId });
         
         let clientId = "";
@@ -154,28 +164,20 @@ export const createLiveClass = async (req, res) => {
       });
     }
 
+    const isPrivateWorkspace = req.workspace?.type === "private_tutor" || !req.tenant;
+    const effectiveInstituteId = isPrivateWorkspace ? null : (req.workspace?.instituteId || req.tenant?._id || tutor.instituteId || null);
+
     let audience;
     try {
       audience = resolveLiveClassAudience({
         body: req.body,
-        instituteId: req.tenant?._id || tutor.instituteId || null,
+        instituteId: effectiveInstituteId,
+        isPrivateWorkspace,
       });
     } catch (audienceError) {
       return res.status(400).json({
         success: false,
         message: audienceError.message,
-      });
-    }
-
-    if (
-      (req.tenant?._id || tutor.instituteId) &&
-      audience.scope === AUDIENCE_SCOPES.GLOBAL &&
-      req.tenant?.features?.allowGlobalPublishingByInstituteTutors !== true
-    ) {
-      return res.status(403).json({
-        success: false,
-        message:
-          "Institute policy blocks global publishing for institute tutors",
       });
     }
 
@@ -188,15 +190,8 @@ export const createLiveClass = async (req, res) => {
         audience.scope === AUDIENCE_SCOPES.BATCH
           ? audience.batchIds[0] || null
           : null,
-      instituteId:
-        audience.scope === AUDIENCE_SCOPES.GLOBAL
-          ? null
-          : audience.instituteId ||
-            req.tenant?._id ||
-            tutor.instituteId ||
-            null,
-      visibility:
-        audience.scope === AUDIENCE_SCOPES.GLOBAL ? "public" : "institute",
+      instituteId: isPrivateWorkspace ? null : (audience.instituteId || effectiveInstituteId),
+      visibility: isPrivateWorkspace ? "public" : "institute",
       audience,
       dateTime,
       duration,
@@ -326,12 +321,15 @@ export const getLiveClasses = async (req, res) => {
       query.courseId = req.query.courseId;
     }
 
-    if (req.query.scope === "global") {
+    if (req.workspace?.type === "private_tutor") {
       query.instituteId = null;
-    } else if (req.query.scope === "institute") {
-      query.instituteId = req.tenant ? req.tenant._id : { $ne: null };
-    } else {
-      if (req.tenant) query.instituteId = req.tenant._id;
+      if (req.user.role === "student" && req.workspace.filterTutorId) {
+        query.tutorId = req.workspace.filterTutorId;
+      }
+    } else if (req.workspace?.type === "institute" && req.workspace.instituteId) {
+      query.instituteId = req.workspace.instituteId;
+    } else if (req.tenant) {
+      query.instituteId = req.tenant._id;
     }
 
     // Sort by dateTime ascending (nearest first)
@@ -582,15 +580,13 @@ export const updateLiveClass = async (req, res) => {
       req.body.studentIds !== undefined ||
       req.body.instituteId !== undefined
     ) {
+      const isPrivateClass = !liveClass.instituteId;
       let audience;
       try {
         audience = resolveLiveClassAudience({
           body: req.body,
-          instituteId:
-            liveClass.instituteId ||
-            req.tenant?._id ||
-            tutor.instituteId ||
-            null,
+          instituteId: liveClass.instituteId || req.workspace?.instituteId || req.tenant?._id || null,
+          isPrivateWorkspace: isPrivateClass,
         });
       } catch (audienceError) {
         return res.status(400).json({
@@ -599,29 +595,11 @@ export const updateLiveClass = async (req, res) => {
         });
       }
 
-      if (
-        (liveClass.instituteId || req.tenant?._id || tutor.instituteId) &&
-        audience.scope === AUDIENCE_SCOPES.GLOBAL &&
-        req.tenant?.features?.allowGlobalPublishingByInstituteTutors !== true
-      ) {
-        return res.status(403).json({
-          success: false,
-          message:
-            "Institute policy blocks global publishing for institute tutors",
-        });
-      }
-
       liveClass.audience = audience;
-      liveClass.visibility =
-        audience.scope === AUDIENCE_SCOPES.GLOBAL ? "public" : "institute";
-      liveClass.instituteId =
-        audience.scope === AUDIENCE_SCOPES.GLOBAL
-          ? null
-          : audience.instituteId ||
-            liveClass.instituteId ||
-            req.tenant?._id ||
-            tutor.instituteId ||
-            null;
+      liveClass.visibility = isPrivateClass ? "public" : "institute";
+      liveClass.instituteId = isPrivateClass
+        ? null
+        : audience.instituteId || liveClass.instituteId || req.tenant?._id || null;
       liveClass.batchId =
         audience.scope === AUDIENCE_SCOPES.BATCH
           ? audience.batchIds[0] || null

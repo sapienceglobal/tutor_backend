@@ -11,7 +11,14 @@ const paymentSchema = new mongoose.Schema({
         ref: 'Course',
         default: null,
     },
-    // For institute subscription renewals
+    // For private tutor course settlements & payouts
+    tutorId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Tutor',
+        default: null,
+        index: true,
+    },
+    // For institute subscription renewals & institute course settlements
     instituteId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Institute',
@@ -78,6 +85,16 @@ const paymentSchema = new mongoose.Schema({
         default: null,
     },
     // --- FINANCIAL SETTLEMENT FIELDS (NEW) ---
+    paymentMode: {
+        type: String,
+        enum: ['online', 'offline', 'free'],
+        default: 'online',
+    },
+    settlementTarget: {
+        type: String,
+        enum: ['platform', 'institute', 'tutor'],
+        default: 'platform',
+    },
     platformFee: {
         type: Number,
         default: 0,
@@ -87,6 +104,24 @@ const paymentSchema = new mongoose.Schema({
         type: Number,
         default: 0,
         // Institute ka actual cut (amount - platformFee)
+    },
+    tutorEarnings: {
+        type: Number,
+        default: 0,
+        // Private Tutor ka direct earnings (amount - platformFee)
+    },
+    razorpayTransferId: {
+        type: String,
+        default: null,
+    },
+    razorpayLinkedAccountId: {
+        type: String,
+        default: null,
+    },
+    transferStatus: {
+        type: String,
+        enum: ['not_applicable', 'pending', 'processed', 'failed'],
+        default: 'not_applicable',
     },
     isSettled: {
         type: Boolean,

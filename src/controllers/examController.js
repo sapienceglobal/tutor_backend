@@ -19,20 +19,30 @@ import {
   validateAudience,
 } from '../utils/audience.js';
 
-const resolveExamAudience = ({ body, tenant, fallbackBatchId = null, fallbackInstituteId = null }) => {
+const resolveExamAudience = ({ body, tenant, fallbackBatchId = null, fallbackInstituteId = null, isPrivateWorkspace = false }) => {
+  const resolvedInst = isPrivateWorkspace ? null : (fallbackInstituteId || tenant?._id || body.instituteId || null);
+  const defaultScope = (body.batchId || fallbackBatchId)
+    ? AUDIENCE_SCOPES.BATCH
+    : (resolvedInst ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.TUTOR_NETWORK);
+
   const normalizedAudience = normalizeAudienceInput({
     audience: body.audience,
-    scope: body.scope,
-    instituteId: body.instituteId || fallbackInstituteId || tenant?._id || null,
+    scope: body.scope === 'global' || body.visibility === 'public' ? defaultScope : body.scope,
+    instituteId: resolvedInst,
     batchId: body.batchId || fallbackBatchId || null,
     batchIds: body.batchIds || [],
     studentIds: body.studentIds || [],
   }, {
-    defaultScope: (body.batchId || fallbackBatchId)
-      ? AUDIENCE_SCOPES.BATCH
-      : ((body.instituteId || fallbackInstituteId || tenant?._id) ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.GLOBAL),
-    defaultInstituteId: body.instituteId || fallbackInstituteId || tenant?._id || null,
+    defaultScope,
+    defaultInstituteId: resolvedInst,
   });
+
+  if (normalizedAudience.scope === AUDIENCE_SCOPES.GLOBAL) {
+    normalizedAudience.scope = defaultScope;
+  }
+  if (isPrivateWorkspace || normalizedAudience.scope === AUDIENCE_SCOPES.TUTOR_NETWORK) {
+    normalizedAudience.instituteId = null;
+  }
 
   return validateAudience(normalizedAudience, {
     requireInstituteId: false,
@@ -71,7 +81,13 @@ export const getExamsByCourse = async (req, res) => {
         matchQuery.batchId = null;
       }
     }
-    if (req.tenant) matchQuery.instituteId = new mongoose.Types.ObjectId(req.tenant._id);
+    if (req.workspace?.type === 'private_tutor') {
+      matchQuery.instituteId = null;
+    } else if (req.workspace?.type === 'institute' && req.workspace.instituteId) {
+      matchQuery.instituteId = new mongoose.Types.ObjectId(req.workspace.instituteId);
+    } else if (req.tenant) {
+      matchQuery.instituteId = new mongoose.Types.ObjectId(req.tenant._id);
+    }
 
     let exams = await Exam.aggregate([
       {
@@ -376,13 +392,15 @@ export const createExam = async (req, res) => {
       { passingPercentage, passingMarks },
       totalMarksFromQuestions
     );
+    const isPrivateCourse = !course.instituteId;
     let audience;
     try {
       audience = resolveExamAudience({
         body: req.body,
         tenant: req.tenant,
         fallbackBatchId: batchId || null,
-        fallbackInstituteId: course.instituteId || req.tenant?._id || null,
+        fallbackInstituteId: course.instituteId || req.workspace?.instituteId || req.tenant?._id || null,
+        isPrivateWorkspace: isPrivateCourse,
       });
     } catch (audienceError) {
       return res.status(400).json({
@@ -391,24 +409,11 @@ export const createExam = async (req, res) => {
       });
     }
 
-    if (
-      course.instituteId
-      && audience.scope === AUDIENCE_SCOPES.GLOBAL
-      && req.tenant?.features?.allowGlobalPublishingByInstituteTutors !== true
-    ) {
-      return res.status(403).json({
-        success: false,
-        message: 'Institute policy blocks global publishing for institute tutors',
-      });
-    }
-
     const exam = await Exam.create({
       courseId,
       batchId: audience.scope === AUDIENCE_SCOPES.BATCH ? (audience.batchIds[0] || null) : null,
       tutorId: course.tutorId._id,
-      instituteId: audience.scope === AUDIENCE_SCOPES.GLOBAL
-        ? null
-        : (audience.instituteId || course.instituteId || req.tenant?._id || null),
+      instituteId: isPrivateCourse ? null : (audience.instituteId || course.instituteId || req.tenant?._id || null),
       title,
       description,
       type: type || 'assessment',
@@ -536,6 +541,7 @@ export const updateExam = async (req, res) => {
       || req.body.studentIds !== undefined
       || req.body.instituteId !== undefined
     ) {
+      const isPrivateExam = !(exam.instituteId || exam.courseId?.instituteId);
       let audience;
       try {
         audience = resolveExamAudience({
@@ -543,6 +549,7 @@ export const updateExam = async (req, res) => {
           tenant: req.tenant,
           fallbackBatchId: exam.batchId || null,
           fallbackInstituteId: exam.instituteId || exam.courseId?.instituteId || req.tenant?._id || null,
+          isPrivateWorkspace: isPrivateExam,
         });
       } catch (audienceError) {
         return res.status(400).json({
@@ -551,20 +558,9 @@ export const updateExam = async (req, res) => {
         });
       }
 
-      if (
-        (exam.instituteId || exam.courseId?.instituteId)
-        && audience.scope === AUDIENCE_SCOPES.GLOBAL
-        && req.tenant?.features?.allowGlobalPublishingByInstituteTutors !== true
-      ) {
-        return res.status(403).json({
-          success: false,
-          message: 'Institute policy blocks global publishing for institute tutors',
-        });
-      }
-
       exam.audience = audience;
       exam.batchId = audience.scope === AUDIENCE_SCOPES.BATCH ? (audience.batchIds[0] || null) : null;
-      exam.instituteId = audience.scope === AUDIENCE_SCOPES.GLOBAL
+      exam.instituteId = isPrivateExam
         ? null
         : (audience.instituteId || exam.instituteId || req.tenant?._id || null);
     }
@@ -1529,57 +1525,59 @@ export const getExamsByTutor = async (req, res) => {
 // @route   GET /api/exams/student/all
 export const getStudentExams = async (req, res) => {
   try {
+    if (req.user.role !== 'superadmin' && (!req.hasActiveWorkspace || req.workspace?.type === 'none')) {
+      return res.status(403).json({
+        success: false,
+        code: 'PORTAL_APPROVAL_REQUIRED',
+        message: 'Your join request is awaiting approval from an Institute or Private Tutor.',
+      });
+    }
+
     const userId = req.user.id;
-    const scope = req.query.scope;
-    const shouldResolveEntitlements = scope === 'institute' || featureFlags.audienceEnforceV2 || featureFlags.audienceReadV2Shadow;
-    const entitlements = shouldResolveEntitlements ? await getEntitlementsForUser(req.user) : null;
-    const allowedInstituteObjectIds = scope === 'institute'
-      ? (entitlements?.membershipInstituteIds || [])
-        .concat(entitlements?.activeInstituteId ? [entitlements.activeInstituteId] : [])
-        .filter(Boolean)
-        .filter((id, index, arr) => arr.indexOf(id) === index)
+    const entitlements = (featureFlags.audienceEnforceV2 || featureFlags.audienceReadV2Shadow)
+      ? await getEntitlementsForUser(req.user, req.workspace?.instituteId || null)
+      : null;
+
+    const enrollments = await Enrollment.find({ studentId: userId, status: 'active' }).select('courseId').lean();
+    const enrolledCourseIds = enrollments.map((e) => e.courseId);
+
+    const workspaceCourseMatch = {};
+    if (req.workspace?.type === 'institute' && req.workspace.instituteId) {
+      workspaceCourseMatch['course.instituteId'] = new mongoose.Types.ObjectId(req.workspace.instituteId);
+    } else if (req.workspace?.type === 'private_tutor') {
+      const tutorObjectIds = (req.workspace.filterTutorId ? [req.workspace.filterTutorId] : (req.workspace.activeTutorIds || []))
         .filter((id) => mongoose.Types.ObjectId.isValid(id))
-        .map((id) => new mongoose.Types.ObjectId(id))
-      : [];
+        .map((id) => new mongoose.Types.ObjectId(id));
+      if (tutorObjectIds.length === 0) {
+        return res.status(200).json({ success: true, exams: [] });
+      }
+      workspaceCourseMatch['course.instituteId'] = null;
+      workspaceCourseMatch['course.tutorId'] = { $in: tutorObjectIds };
+    } else {
+      return res.status(200).json({ success: true, exams: [] });
+    }
 
-    // 1. Get Student's Enrollments
-    const enrollments = await Enrollment.find({ studentId: userId, status: 'active' });
-    const enrolledCourseIds = enrollments.map(e => e.courseId);
-
-    // 2. Find Exams
-    // - Belong to enrolled courses AND are published AND (quiz/midterm/final)
-    // - OR are Public Practice Sets
     let exams = await Exam.aggregate([
       {
         $match: {
           status: 'published',
           $or: [
-            { courseId: { $in: enrolledCourseIds } }, // Access via enrollment
-            { isPublic: true }, // Publicly accessible
-            { isFree: true }, // Free exams accessible to all
-            { type: 'practice' } // All practice sets
-          ]
-        }
+            { courseId: { $in: enrolledCourseIds } },
+            { isFree: true },
+            { type: 'practice' },
+          ],
+        },
       },
-      // Lookup Course details
       {
         $lookup: {
           from: 'courses',
           localField: 'courseId',
           foreignField: '_id',
-          as: 'course'
-        }
+          as: 'course',
+        },
       },
       { $unwind: '$course' },
-      ...(scope === 'global' ? [{ $match: { 'course.visibility': 'public' } }] : []),
-      ...(scope === 'institute'
-        ? [
-          { $match: { 'course.visibility': 'institute' } },
-          ...(allowedInstituteObjectIds.length > 0
-            ? [{ $match: { 'course.instituteId': { $in: allowedInstituteObjectIds } } }]
-            : [{ $match: { _id: null } }]),
-        ]
-        : []),
+      { $match: workspaceCourseMatch },
       // Lookup Student's attempts for each exam
       {
         $lookup: {

@@ -3,6 +3,8 @@ import LiveClass from '../models/LiveClass.js';
 import TutorProfile from '../models/TutorProfile.js';
 import User from '../models/User.js';
 import InstituteMembership from '../models/InstituteMembership.js';
+import TutorStudentLink from '../models/TutorStudentLink.js';
+import Tutor from '../models/Tutor.js';
 
 /**
  * @desc    Check if user can access course
@@ -93,33 +95,39 @@ export const checkLiveClassAccess = async (req, res) => {
  */
 export const getVisibleCourses = async (req, res) => {
     try {
-        const userId = req.user.id;
-        const { page = 1, limit = 20, category, search } = req.query;
-
-        // Build query based on user type
-        const user = await User.findById(userId);
-        let query = { status: 'published' };
-
-        if (user.instituteId) {
-            // User has institute - show institute courses + public courses
-            query.$or = [
-                { visibility: 'public' },
-                { visibility: 'institute', instituteId: user.instituteId }
-            ];
-        } else {
-            // Independent user - show only public courses
-            query.visibility = 'public';
+        if (req.user?.role !== 'superadmin' && (!req.hasActiveWorkspace || req.workspace?.type === 'none')) {
+            return res.status(403).json({
+                success: false,
+                code: 'PORTAL_APPROVAL_REQUIRED',
+                message: 'Your join request is awaiting approval from an Institute or Private Tutor.',
+            });
         }
 
-        // Add filters
+        const { page = 1, limit = 20, category, search } = req.query;
+        const query = { status: 'published' };
+
+        if (req.workspace?.type === 'institute' && req.workspace.instituteId) {
+            query.instituteId = req.workspace.instituteId;
+        } else if (req.workspace?.type === 'private_tutor') {
+            query.instituteId = null;
+            if (req.user.role === 'tutor') {
+                query.tutorId = req.workspace.tutorId;
+            } else if (req.user.role === 'student') {
+                const tutorIds = req.workspace.filterTutorId
+                    ? [req.workspace.filterTutorId]
+                    : (req.workspace.activeTutorIds || []);
+                if (tutorIds.length === 0) {
+                    return res.json({ success: true, courses: [], pagination: { page: 1, limit: parseInt(limit), total: 0, pages: 0 } });
+                }
+                query.tutorId = { $in: tutorIds };
+            }
+        }
+
         if (category) {
             query.categoryId = category;
         }
-
         if (search) {
-            query.$text = {
-                $search: search
-            };
+            query.$text = { $search: search };
         }
 
         const courses = await Course.find(query)
@@ -157,31 +165,36 @@ export const getVisibleCourses = async (req, res) => {
  */
 export const getVisibleLiveClasses = async (req, res) => {
     try {
-        const userId = req.user.id;
-        const { page = 1, limit = 20, search } = req.query;
-
-        // Build query based on user type
-        const user = await User.findById(userId);
-        let query = {};
-
-        if (user.instituteId) {
-            // User has institute - show institute classes + public classes
-            query.$or = [
-                { visibility: 'public' },
-                { visibility: 'institute', instituteId: user.instituteId }
-            ];
-        } else {
-            // Independent user - show only public classes
-            query.visibility = 'public';
+        if (req.user?.role !== 'superadmin' && (!req.hasActiveWorkspace || req.workspace?.type === 'none')) {
+            return res.status(403).json({
+                success: false,
+                code: 'PORTAL_APPROVAL_REQUIRED',
+                message: 'Your join request is awaiting approval from an Institute or Private Tutor.',
+            });
         }
 
-        // Add time filter for future classes
-        query.dateTime = { $gte: new Date() };
+        const { page = 1, limit = 20, search } = req.query;
+        const query = { dateTime: { $gte: new Date() } };
+
+        if (req.workspace?.type === 'institute' && req.workspace.instituteId) {
+            query.instituteId = req.workspace.instituteId;
+        } else if (req.workspace?.type === 'private_tutor') {
+            query.instituteId = null;
+            if (req.user.role === 'tutor') {
+                query.tutorId = req.workspace.tutorId;
+            } else if (req.user.role === 'student') {
+                const tutorIds = req.workspace.filterTutorId
+                    ? [req.workspace.filterTutorId]
+                    : (req.workspace.activeTutorIds || []);
+                if (tutorIds.length === 0) {
+                    return res.json({ success: true, liveClasses: [], pagination: { page: 1, limit: parseInt(limit), total: 0, pages: 0 } });
+                }
+                query.tutorId = { $in: tutorIds };
+            }
+        }
 
         if (search) {
-            query.$text = {
-                $search: search
-            };
+            query.$text = { $search: search };
         }
 
         const liveClasses = await LiveClass.find(query)
@@ -293,56 +306,57 @@ export const checkAppointmentAccess = async (req, res) => {
  */
 async function checkContentAccess(userId, content, contentType) {
     const user = await User.findById(userId);
-    
     if (!user) return false;
+    if (user.role === 'superadmin') return true;
 
-    // Public content - everyone can access
-    if (content.visibility === 'public') {
-        return true;
+    if (content.instituteId) {
+        if (String(user.instituteId) === String(content.instituteId)) return true;
+        const hasMembership = await InstituteMembership.exists({
+            userId,
+            instituteId: content.instituteId,
+            status: 'active',
+        });
+        return Boolean(hasMembership);
     }
 
-    // Institute content - only same institute members can access
-    if (content.visibility === 'institute') {
-        if (!user.instituteId) return false; // Independent user can't access institute content
-        
-        // Check if user belongs to the same institute as the content
-        if (content.instituteId) {
-            return user.instituteId.toString() === content.instituteId.toString();
-        }
-        
-        // If content doesn't have instituteId, check tutor's institute
-        if (contentType === 'course') {
-            const tutor = await User.findById(content.tutorId);
-            return tutor && user.instituteId.toString() === (tutor.instituteId || '').toString();
-        }
-        
-        if (contentType === 'liveClass') {
-            const tutor = await User.findById(content.tutorId);
-            return tutor && user.instituteId.toString() === (tutor.instituteId || '').toString();
-        }
+    // Private Tutor Studio content requires owner tutor or active TutorStudentLink
+    let contentTutorId = content.tutorId?._id || content.tutorId || null;
+    if (!contentTutorId && content.createdBy) {
+        const tutorDoc = await Tutor.findOne({ userId: content.createdBy }).select('_id').lean();
+        contentTutorId = tutorDoc?._id || null;
+    }
+    if (user.role === 'tutor') {
+        const selfTutor = await Tutor.findOne({ userId }).select('_id').lean();
+        return Boolean(selfTutor && contentTutorId && String(selfTutor._id) === String(contentTutorId));
+    }
+
+    if (contentTutorId) {
+        const hasLink = await TutorStudentLink.exists({
+            studentId: userId,
+            tutorId: contentTutorId,
+            status: 'active',
+        });
+        return Boolean(hasLink);
     }
 
     return false;
 }
 
 /**
- * Helper function to get user type
+ * Helper function to get user workspace posture
  */
 async function getUserType(userId) {
-    const user = await User.findById(userId);
-    
-    if (!user) return 'unknown';
-    
-    if (user.instituteId) {
-        // Check if user has active membership
-        const membership = await InstituteMembership.findOne({
-            userId,
-            instituteId: user.instituteId,
-            status: 'active'
-        });
-        
-        return membership ? 'institute' : 'independent';
-    }
-    
-    return 'independent';
+    const [memberships, tutorLinks, tutor] = await Promise.all([
+        InstituteMembership.countDocuments({ userId, status: 'active' }),
+        TutorStudentLink.countDocuments({ studentId: userId, status: 'active' }),
+        Tutor.findOne({ userId }).select('privateTeaching').lean(),
+    ]);
+
+    const hasInstitute = memberships > 0;
+    const hasPrivate = tutorLinks > 0 || tutor?.privateTeaching?.isEnabled === true;
+
+    if (hasInstitute && hasPrivate) return 'dual';
+    if (hasInstitute) return 'institute';
+    if (hasPrivate) return 'private_tutor';
+    return 'pending';
 }

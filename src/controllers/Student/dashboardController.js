@@ -17,9 +17,44 @@ const formatDayKey = (date) => {
     return `${year}-${month}-${day}`;
 };
 
-const getLast7DaySlots = () => {
+const getTimeSlots = (period = 'week') => {
     const today = new Date();
     today.setHours(23, 59, 59, 999);
+    const p = String(period).toLowerCase();
+
+    if (p === 'year') {
+        const slots = [];
+        for (let i = 5; i >= 0; i -= 1) {
+            const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+            const end = new Date(today.getFullYear(), today.getMonth() - i + 1, 0, 23, 59, 59, 999);
+            slots.push({
+                key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
+                label: d.toLocaleString('default', { month: 'short' }),
+                start: d,
+                end,
+            });
+        }
+        return slots;
+    }
+
+    if (p === 'month') {
+        const slots = [];
+        for (let i = 3; i >= 0; i -= 1) {
+            const end = new Date(today);
+            end.setDate(today.getDate() - (i * 7));
+            end.setHours(23, 59, 59, 999);
+            const start = new Date(end);
+            start.setDate(end.getDate() - 6);
+            start.setHours(0, 0, 0, 0);
+            slots.push({
+                key: `W${4 - i}`,
+                label: `${start.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}`,
+                start,
+                end,
+            });
+        }
+        return slots;
+    }
 
     const slots = [];
     for (let i = 6; i >= 0; i -= 1) {
@@ -38,31 +73,34 @@ const getLast7DaySlots = () => {
     return slots;
 };
 
-const getScopeMatcher = ({ scope, instituteId }) => {
-    if (scope === 'global') {
-        return (value) => !value;
+const resolveWorkspaceScope = (req, fallbackInstituteId = null) => {
+    if (req.workspace?.type === 'private_tutor') {
+        return { mode: 'private_tutor', instituteId: null };
     }
-
-    if (scope === 'institute') {
-        if (!instituteId) return () => false;
-        const expected = instituteId.toString();
-        return (value) => value && value.toString() === expected;
+    if (req.workspace?.type === 'institute' && req.workspace.instituteId) {
+        return { mode: 'institute', instituteId: req.workspace.instituteId };
     }
-
-    return () => true;
+    if (fallbackInstituteId) {
+        return { mode: 'institute', instituteId: fallbackInstituteId };
+    }
+    return { mode: 'private_tutor', instituteId: null };
 };
 
-const buildScopeQuery = ({ scope, instituteId }) => {
-    if (scope === 'global') {
+const getScopeMatcher = ({ mode, instituteId }) => {
+    if (mode === 'private_tutor') {
+        return (value) => !value;
+    }
+    if (!instituteId) return () => false;
+    const expected = instituteId.toString();
+    return (value) => Boolean(value && value.toString() === expected);
+};
+
+const buildScopeQuery = ({ mode, instituteId }) => {
+    if (mode === 'private_tutor') {
         return { $or: [{ instituteId: null }, { instituteId: { $exists: false } }] };
     }
-
-    if (scope === 'institute') {
-        if (!instituteId) return { _id: null };
-        return { instituteId };
-    }
-
-    return {};
+    if (!instituteId) return { _id: null };
+    return { instituteId };
 };
 
 // @desc    Get student dashboard activity (chart data)
@@ -70,25 +108,35 @@ const buildScopeQuery = ({ scope, instituteId }) => {
 export const getStudentActivity = async (req, res) => {
     try {
         const studentId = req.user.id;
-        const scope = req.query.scope || 'all';
         const user = await User.findById(studentId).select('instituteId').lean();
-        const activeInstituteId = user?.instituteId || null;
+        const scopeCtx = resolveWorkspaceScope(req, user?.instituteId || null);
 
-        const slots = getLast7DaySlots();
+        const period = req.query.period || 'week';
+        const slots = getTimeSlots(period);
         const firstDayStart = slots[0].start;
+        const scopeFilter = buildScopeQuery(scopeCtx);
         const eventQuery = {
             userId: studentId,
             createdAt: { $gte: firstDayStart },
-            ...buildScopeQuery({ scope, instituteId: activeInstituteId }),
+            ...scopeFilter,
         };
 
-        const events = await LearningEvent.find(eventQuery)
-            .select('eventType meta createdAt')
-            .sort({ createdAt: 1 })
-            .lean();
+        const [events, allPeerExamEvents] = await Promise.all([
+            LearningEvent.find(eventQuery)
+                .select('eventType meta createdAt')
+                .sort({ createdAt: 1 })
+                .lean(),
+            LearningEvent.find({
+                eventType: 'exam_submitted',
+                createdAt: { $gte: firstDayStart },
+                ...scopeFilter,
+            }).select('meta createdAt').lean(),
+        ]);
 
         const dayMap = new Map(slots.map((slot) => [slot.key, {
             label: slot.label,
+            start: slot.start,
+            end: slot.end,
             eventCounts: {
                 attendance_marked: 0,
                 live_class_joined: 0,
@@ -96,11 +144,21 @@ export const getStudentActivity = async (req, res) => {
                 exam_submitted: 0,
             },
             examPercentages: [],
+            peerExamPercentages: [],
         }]));
 
+        const findSlotForDate = (dt) => {
+            const ts = new Date(dt).getTime();
+            for (const slot of slots) {
+                if (ts >= slot.start.getTime() && ts <= slot.end.getTime()) {
+                    return dayMap.get(slot.key);
+                }
+            }
+            return null;
+        };
+
         events.forEach((event) => {
-            const key = formatDayKey(new Date(event.createdAt));
-            const day = dayMap.get(key);
+            const day = findSlotForDate(event.createdAt);
             if (!day) return;
 
             if (day.eventCounts[event.eventType] !== undefined) {
@@ -115,12 +173,26 @@ export const getStudentActivity = async (req, res) => {
             }
         });
 
+        allPeerExamEvents.forEach((event) => {
+            const day = findSlotForDate(event.createdAt);
+            if (!day) return;
+            const pct = Number(event?.meta?.percentage);
+            if (Number.isFinite(pct)) {
+                day.peerExamPercentages.push(Math.max(0, Math.min(100, pct)));
+            }
+        });
+
         const activityData = slots.map((slot) => {
             const day = dayMap.get(slot.key);
             const examCount = day.examPercentages.length;
             const examAverage = examCount > 0
                 ? day.examPercentages.reduce((sum, v) => sum + v, 0) / examCount
                 : null;
+
+            const peerCount = day.peerExamPercentages.length;
+            const benchmarkScore = peerCount > 0
+                ? Math.round(day.peerExamPercentages.reduce((sum, v) => sum + v, 0) / peerCount)
+                : 0;
 
             const engagementRaw =
                 (day.eventCounts.attendance_marked * EVENT_WEIGHTS.attendance_marked)
@@ -138,6 +210,7 @@ export const getStudentActivity = async (req, res) => {
                 month: slot.label,
                 name: slot.label,
                 score,
+                benchmarkScore,
                 hours: Number((engagementRaw / 25).toFixed(1)),
                 exams: day.eventCounts.exam_submitted,
                 assignments: day.eventCounts.assignment_submitted,
@@ -165,13 +238,24 @@ export const getStudentActivity = async (req, res) => {
 export const getStudentStats = async (req, res) => {
     try {
         const studentId = req.user.id;
-        const scope = req.query.scope || 'all';
-
         const user = await User.findById(studentId).select('instituteId').lean();
-        const activeInstituteId = user?.instituteId || null;
-        const scopeMatcher = getScopeMatcher({ scope, instituteId: activeInstituteId });
+        const scopeCtx = resolveWorkspaceScope(req, user?.instituteId || null);
+        const scopeMatcher = getScopeMatcher(scopeCtx);
 
-        const enrollments = await Enrollment.find({ studentId, status: { $in: ['active', 'completed'] } });
+        const rawEnrollments = await Enrollment.find({
+            studentId,
+            status: { $in: ['active', 'completed'] },
+        }).populate('courseId', 'instituteId tutorId');
+
+        const enrollments = rawEnrollments.filter((e) => {
+            if (!e.courseId) return false;
+            if (!scopeMatcher(e.courseId.instituteId)) return false;
+            if (scopeCtx.mode === 'private_tutor' && req.workspace?.filterTutorId) {
+                return String(e.courseId.tutorId) === String(req.workspace.filterTutorId);
+            }
+            return true;
+        });
+
         const completed = enrollments.filter((e) => e.status === 'completed' || e.progress?.percentage === 100).length;
         const inProgress = enrollments.length - completed;
 
@@ -189,7 +273,7 @@ export const getStudentStats = async (req, res) => {
         const examEvents = await LearningEvent.find({
             userId: studentId,
             eventType: 'exam_submitted',
-            ...buildScopeQuery({ scope, instituteId: activeInstituteId }),
+            ...buildScopeQuery(scopeCtx),
         }).select('meta').lean();
 
         const validExamPercentages = examEvents

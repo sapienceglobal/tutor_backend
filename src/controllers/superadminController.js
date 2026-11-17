@@ -964,7 +964,7 @@ export const getSubscriptionsOverview = async (req, res) => {
     }
 };
 
-// Delete Institute Permanently (Safe for Global Users)
+// Delete Institute Permanently (preserves multi-workspace users)
 export const deleteInstitute = async (req, res) => {
     const session = await mongoose.startSession();
     session.startTransaction();
@@ -974,19 +974,43 @@ export const deleteInstitute = async (req, res) => {
 
         const institute = await Institute.findById(id).session(session);
         if (!institute) {
+            await session.abortTransaction();
+            session.endSession();
             return res.status(404).json({ success: false, message: 'Institute not found.' });
         }
 
-        // 🌟 THE FIX: Users ko delete NAHI karna hai, sirf Institute se UNLINK karna hai
-        await User.updateMany(
-            { instituteId: id },
-            { $set: { instituteId: null } } // Isse user global/independent ban jayega
-        ).session(session);
+        const detachedUsers = await User.find({ instituteId: id }).select('_id').session(session);
+        const detachedUserIds = detachedUsers.map((u) => u._id);
 
-        // Institute Membership delete karna zaroori hai kyunki wo specific is institute ka data tha
         await InstituteMembership.deleteMany({ instituteId: id }).session(session);
+        await User.updateMany({ instituteId: id }, { $set: { instituteId: null } }).session(session);
 
-        // Finally, sirf Institute ko delete karo
+        if (detachedUserIds.length > 0) {
+            const fallbackMemberships = await InstituteMembership.find({
+                userId: { $in: detachedUserIds },
+                status: 'active',
+            }).select('userId instituteId').session(session);
+
+            const fallbackMap = new Map();
+            fallbackMemberships.forEach((m) => {
+                if (!fallbackMap.has(String(m.userId))) {
+                    fallbackMap.set(String(m.userId), m.instituteId);
+                }
+            });
+
+            if (fallbackMap.size > 0) {
+                await User.bulkWrite(
+                    Array.from(fallbackMap.entries()).map(([userId, nextInstituteId]) => ({
+                        updateOne: {
+                            filter: { _id: userId },
+                            update: { $set: { instituteId: nextInstituteId } },
+                        },
+                    })),
+                    { session }
+                );
+            }
+        }
+
         await Institute.findByIdAndDelete(id).session(session);
 
         await session.commitTransaction();
@@ -994,7 +1018,7 @@ export const deleteInstitute = async (req, res) => {
 
         res.json({
             success: true,
-            message: 'Institute deleted successfully. All associated users are now independent.'
+            message: 'Institute deleted successfully. Associated users retain any remaining workspaces.',
         });
     } catch (error) {
         await session.abortTransaction();

@@ -369,3 +369,166 @@ export const getExamPublishedEmailTemplate = (studentName, examTitle, courseName
     </p>
   `,
 });
+
+const escapeEmailHtml = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+// ─── 9. Workspace Join Request Submitted (Applicant Confirmation) ────────────
+export const getJoinRequestSubmittedEmailTemplate = (
+    applicantName,
+    targetName,
+    targetKind = 'institute',
+    roleInTarget = 'student'
+) => {
+    const safeApplicant = escapeEmailHtml(applicantName || 'Learner');
+    const safeTarget = escapeEmailHtml(targetName || 'Workspace');
+    const kindLabel = targetKind === 'tutor' ? 'Private Tutor' : 'Institute';
+    const roleLabel = escapeEmailHtml(roleInTarget === 'tutor' ? 'Tutor' : 'Student');
+    return baseTemplate({
+        previewText: `Your join request to ${safeTarget} has been sent`,
+        body: `
+        ${greeting(safeApplicant)}
+        <p style="font-size:15px; color:#6b7280; margin:0 0 24px; line-height:1.6;">
+          Your request to join <strong>${safeTarget}</strong> has been submitted successfully. You will receive an email as soon as your request is reviewed.
+        </p>
+
+        <div style="background:#f5f3ff; border:1.5px solid #ddd6fe; border-radius:14px; padding:22px; margin:0 0 24px;">
+          <p style="font-size:12px; font-weight:700; color:#7c3aed; text-transform:uppercase; letter-spacing:0.1em; margin:0 0 12px;">📩 Request Summary</p>
+          <table cellpadding="0" cellspacing="0" border="0" width="100%">
+            ${infoRow('🏛️', `<strong>${kindLabel}:</strong> ${safeTarget}`)}
+            ${infoRow('👤', `<strong>Role Requested:</strong> ${roleLabel}`)}
+            ${infoRow('⏳', `<strong>Status:</strong> Pending Approval`)}
+          </table>
+        </div>
+
+        ${alertBox('info', 'No action needed right now. Once approved, this workspace will appear automatically in your Sapience LMS Workspace Switcher.')}
+        ${divider()}
+
+        <p style="font-size:13px; color:#9ca3af; margin:0; line-height:1.7;">
+          Best regards,<br/>
+          <strong style="color:#4f46e5;">The Sapience LMS Team</strong>
+        </p>
+      `,
+    });
+};
+
+// ─── 10. New Join Request Received (For Institute Admin or Private Tutor) ─────
+export const getNewJoinRequestForOwnerEmailTemplate = (
+    ownerName,
+    applicantName,
+    applicantEmail,
+    targetName,
+    targetKind = 'institute',
+    roleRequested = 'student',
+    reviewLink = `${process.env.NEXT_PUBLIC_APP_URL || '#'}/dashboard`
+) => {
+    const safeOwner = escapeEmailHtml(ownerName || 'Admin');
+    const safeApplicant = escapeEmailHtml(applicantName || 'Applicant');
+    const safeEmail = escapeEmailHtml(applicantEmail || '');
+    const safeTarget = escapeEmailHtml(targetName || 'Workspace');
+    const safeRole = escapeEmailHtml(roleRequested === 'tutor' ? 'Tutor' : 'Student');
+    const kindLabel = targetKind === 'tutor' ? 'Private Tuition Classroom' : 'Institute';
+    return baseTemplate({
+        previewText: `New ${safeRole} join request from ${safeApplicant}`,
+        body: `
+        ${greeting(safeOwner)}
+        <p style="font-size:15px; color:#6b7280; margin:0 0 24px; line-height:1.6;">
+          A new <strong>${safeRole}</strong> has requested to join your ${kindLabel} <strong>${safeTarget}</strong>.
+        </p>
+
+        <div style="background:#f5f3ff; border:1.5px solid #ddd6fe; border-radius:14px; padding:22px; margin:0 0 24px;">
+          <p style="font-size:12px; font-weight:700; color:#7c3aed; text-transform:uppercase; letter-spacing:0.1em; margin:0 0 12px;">🙋 Applicant Details</p>
+          <table cellpadding="0" cellspacing="0" border="0" width="100%">
+            ${infoRow('👤', `<strong>Name:</strong> ${safeApplicant}`)}
+            ${safeEmail ? infoRow('✉️', `<strong>Email:</strong> ${safeEmail}`) : ''}
+            ${infoRow('🏷️', `<strong>Role:</strong> ${safeRole}`)}
+            ${infoRow('🏛️', `<strong>Workspace:</strong> ${safeTarget}`)}
+          </table>
+        </div>
+
+        ${primaryButton('Review Request', reviewLink)}
+        ${divider()}
+
+        <p style="font-size:13px; color:#9ca3af; margin:0; line-height:1.7;">
+          Regards,<br/>
+          <strong style="color:#4f46e5;">The Sapience LMS Team</strong>
+        </p>
+      `,
+    });
+};
+
+// ─── 11. Workspace Join Request Approved ─────────────────────────────────────
+export const getJoinRequestApprovedEmailTemplate = (
+    applicantName,
+    targetName,
+    targetKind = 'institute',
+    roleInTarget = 'student',
+    workspaceLink = `${process.env.NEXT_PUBLIC_APP_URL || '#'}/dashboard`
+) => {
+    const safeApplicant = escapeEmailHtml(applicantName || 'Learner');
+    const safeTarget = escapeEmailHtml(targetName || 'Workspace');
+    const kindLabel = targetKind === 'tutor' ? 'Private Tutor Classroom' : 'Institute';
+    const roleLabel = escapeEmailHtml(roleInTarget === 'tutor' ? 'Tutor' : 'Student');
+    return baseTemplate({
+        previewText: `Approved! You now have access to ${safeTarget}`,
+        body: `
+        ${greeting(safeApplicant)}
+
+        <div style="background:linear-gradient(135deg,#f0fdf4,#dcfce7); border:1.5px solid #86efac; border-radius:16px; padding:24px; text-align:center; margin:0 0 24px;">
+          <div style="font-size:36px; margin:0 0 8px;">🎉</div>
+          <p style="font-size:18px; font-weight:800; color:#166534; margin:0 0 4px;">Request Approved!</p>
+          <p style="font-size:14px; color:#15803d; margin:0;">You are now connected to <strong>${safeTarget}</strong> as a ${roleLabel}</p>
+        </div>
+
+        <div style="background:#f5f3ff; border:1.5px solid #ddd6fe; border-radius:14px; padding:22px; margin:0 0 24px;">
+          <table cellpadding="0" cellspacing="0" border="0" width="100%">
+            ${infoRow('🏛️', `<strong>${kindLabel}:</strong> ${safeTarget}`)}
+            ${infoRow('👤', `<strong>Role:</strong> ${roleLabel}`)}
+            ${infoRow('🔄', `<strong>Access:</strong> Switch anytime via your top Workspace Switcher`)}
+          </table>
+        </div>
+
+        ${primaryButton('Open Workspace', workspaceLink)}
+        ${divider()}
+
+        <p style="font-size:13px; color:#9ca3af; margin:0; line-height:1.7;">
+          Happy learning!<br/>
+          <strong style="color:#4f46e5;">The Sapience LMS Team</strong>
+        </p>
+      `,
+    });
+};
+
+// ─── 12. Workspace Join Request Rejected ─────────────────────────────────────
+export const getJoinRequestRejectedEmailTemplate = (
+    applicantName,
+    targetName,
+    targetKind = 'institute',
+    reason = ''
+) => {
+    const safeApplicant = escapeEmailHtml(applicantName || 'Applicant');
+    const safeTarget = escapeEmailHtml(targetName || 'Workspace');
+    const safeReason = escapeEmailHtml(reason || '');
+    const kindLabel = targetKind === 'tutor' ? 'private tutor classroom' : 'institute';
+    return baseTemplate({
+        previewText: `Update on your join request for ${safeTarget}`,
+        body: `
+        ${greeting(safeApplicant)}
+        <p style="font-size:15px; color:#6b7280; margin:0 0 24px; line-height:1.6;">
+          Your request to join the ${kindLabel} <strong>${safeTarget}</strong> was not approved at this time.
+        </p>
+
+        ${safeReason ? alertBox('warning', `<strong>Note from reviewer:</strong> ${safeReason}`) : alertBox('info', 'You can search and request access to another institute or private tutor anytime from your dashboard.')}
+        ${divider()}
+
+        <p style="font-size:13px; color:#9ca3af; margin:0; line-height:1.7;">
+          Regards,<br/>
+          <strong style="color:#4f46e5;">The Sapience LMS Team</strong>
+        </p>
+      `,
+    });
+};

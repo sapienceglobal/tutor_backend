@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import User from '../models/User.js';
 import Institute from '../models/Institute.js';
 import { logBillingEvent } from '../utils/billingLogger.js';
+import { getInstituteFreePlanFeatures, getTutorFreeSubscriptionConfig } from '../config/planDefaults.js';
 
 /**
  * 🔐 Subscription Lifecycle Cron Jobs
@@ -20,44 +21,34 @@ export const initSubscriptionCronJobs = () => {
         console.log(`🔒 [Cron] Running subscription expiry check at ${now.toISOString()}...`);
 
         try {
-            // 1. Deactivate expired PERSONAL subscriptions
+            // 1. Downgrade expired Tutor personal subscriptions to Free tier (15 students, 3 courses, 0 AI)
+            const freeTutorConfig = getTutorFreeSubscriptionConfig();
             const personalResult = await User.updateMany(
                 {
-                    'personalSubscription.isActive': true,
-                    'personalSubscription.subscriptionExpiresAt': { $lte: now, $ne: null }
+                    'personalSubscription.subscriptionExpiresAt': { $lte: now, $ne: null },
                 },
                 {
                     $set: {
-                        'personalSubscription.isActive': false,
-                        'personalSubscription.planName': 'Free'
-                    }
+                        personalSubscription: freeTutorConfig,
+                    },
                 }
             );
 
             if (personalResult.modifiedCount > 0) {
-                console.log(`🔒 [Cron] Deactivated ${personalResult.modifiedCount} expired personal subscriptions.`);
+                console.log(`🔒 [Cron] Downgraded ${personalResult.modifiedCount} expired personal subscriptions to Free tier.`);
             }
 
-            // 2. Downgrade expired INSTITUTE subscriptions
+            // 2. Downgrade expired INSTITUTE subscriptions to Free tier (5 tutors, 50 students, 0 AI)
             const instituteResult = await Institute.updateMany(
                 {
                     subscriptionExpiresAt: { $lte: now, $ne: null },
-                    subscriptionPlan: { $ne: 'Free', $ne: 'free' }
                 },
                 {
                     $set: {
-                        subscriptionPlan: 'Free',
-                        'features.hlsStreaming': false,
-                        'features.customBranding': false,
-                        'features.zoomIntegration': false,
-                        'features.aiFeatures': false,
-                        'features.aiAssistant': false,
-                        'features.aiAssessment': false,
-                        'features.aiIntelligence': false,
-                        'features.customDomain': false,
-                        'features.advancedAnalytics': false,
-                        'features.apiAccess': false
-                    }
+                        subscriptionPlan: 'free',
+                        subscriptionExpiresAt: null,
+                        features: getInstituteFreePlanFeatures(),
+                    },
                 }
             );
 

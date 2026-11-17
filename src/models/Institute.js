@@ -96,6 +96,13 @@ const instituteSchema = new mongoose.Schema({
     },
 
     isActive:     { type: Boolean, default: true },
+    discovery: {
+        isListedInSearch:       { type: Boolean, default: true },
+        acceptSelfJoinRequests: { type: Boolean, default: true },
+        acceptTutorRequests:    { type: Boolean, default: true },
+        city:                   { type: String,  trim: true, default: '' },
+        tagline:                { type: String,  trim: true, maxlength: 180, default: '' },
+    },
     contactEmail: { type: String,  trim: true },
     superadminId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 

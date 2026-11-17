@@ -1,7 +1,9 @@
 export const AUDIENCE_SCOPES = Object.freeze({
+    /** @deprecated Legacy open-marketplace scope; retained during Expand-Migrate-Contract only and never grants public access. */
     GLOBAL: 'global',
     INSTITUTE: 'institute',
     BATCH: 'batch',
+    TUTOR_NETWORK: 'tutor_network',
     PRIVATE: 'private',
 });
 
@@ -81,6 +83,9 @@ export const normalizeIdArray = (value) => {
 };
 
 const resolveScopeFromLegacy = ({ visibilityScope, visibility, hasBatchIds, hasStudentIds, defaultScope }) => {
+    if (visibilityScope === AUDIENCE_SCOPES.TUTOR_NETWORK) {
+        return AUDIENCE_SCOPES.TUTOR_NETWORK;
+    }
     if (visibilityScope === AUDIENCE_SCOPES.GLOBAL || visibility === 'public') {
         return AUDIENCE_SCOPES.GLOBAL;
     }
@@ -101,7 +106,7 @@ const resolveScopeFromLegacy = ({ visibilityScope, visibility, hasBatchIds, hasS
 
 export const normalizeAudienceInput = (input = {}, options = {}) => {
     const audienceInput = (input && typeof input.audience === 'object') ? input.audience : {};
-    const defaultScope = options.defaultScope || AUDIENCE_SCOPES.GLOBAL;
+    const defaultScope = options.defaultScope || AUDIENCE_SCOPES.TUTOR_NETWORK;
 
     const batchIds = normalizeIdArray(
         audienceInput.batchIds
@@ -136,7 +141,7 @@ export const normalizeAudienceInput = (input = {}, options = {}) => {
         ?? null
     );
 
-    if (scope === AUDIENCE_SCOPES.GLOBAL) {
+    if (scope === AUDIENCE_SCOPES.GLOBAL || scope === AUDIENCE_SCOPES.TUTOR_NETWORK) {
         instituteId = null;
     }
 
@@ -191,13 +196,20 @@ export const syncLegacyAudience = (target, audience) => {
 
     target.audience = audience;
 
+    const isNonInstituteScope = (
+        audience.scope === AUDIENCE_SCOPES.GLOBAL
+        || audience.scope === AUDIENCE_SCOPES.TUTOR_NETWORK
+    );
+
     if (Object.prototype.hasOwnProperty.call(target, 'visibility')) {
-        target.visibility = audience.scope === AUDIENCE_SCOPES.GLOBAL ? 'public' : 'institute';
+        target.visibility = isNonInstituteScope ? 'public' : 'institute';
     }
 
     if (Object.prototype.hasOwnProperty.call(target, 'visibilityScope')) {
         if (audience.scope === AUDIENCE_SCOPES.GLOBAL) {
             target.visibilityScope = AUDIENCE_SCOPES.GLOBAL;
+        } else if (audience.scope === AUDIENCE_SCOPES.TUTOR_NETWORK) {
+            target.visibilityScope = AUDIENCE_SCOPES.TUTOR_NETWORK;
         } else if (audience.scope === AUDIENCE_SCOPES.PRIVATE) {
             target.visibilityScope = AUDIENCE_SCOPES.PRIVATE;
         } else {
@@ -206,7 +218,7 @@ export const syncLegacyAudience = (target, audience) => {
     }
 
     if (Object.prototype.hasOwnProperty.call(target, 'instituteId')) {
-        target.instituteId = audience.scope === AUDIENCE_SCOPES.GLOBAL ? null : audience.instituteId;
+        target.instituteId = isNonInstituteScope ? null : audience.instituteId;
     }
 
     if (Object.prototype.hasOwnProperty.call(target, 'batchId')) {
@@ -237,7 +249,7 @@ export const hasIntersection = (left = [], right = []) => {
     return left.some((entry) => rightSet.has(toStringId(entry)));
 };
 
-export const canAudienceAccess = ({ audience, entitlements, ownerId = null }) => {
+export const canAudienceAccess = ({ audience, entitlements, ownerId = null, tutorId = null }) => {
     if (!entitlements?.userId) {
         return { allowed: false, reason: 'unauthenticated' };
     }
@@ -253,14 +265,29 @@ export const canAudienceAccess = ({ audience, entitlements, ownerId = null }) =>
 
     const normalizedAudience = validateAudience(
         normalizeAudienceInput({ audience }, {
-            defaultScope: AUDIENCE_SCOPES.GLOBAL,
+            defaultScope: AUDIENCE_SCOPES.TUTOR_NETWORK,
             defaultInstituteId: entitlements.activeInstituteId,
         }),
         { requireInstituteId: false, allowEmptyPrivate: true }
     );
 
     if (normalizedAudience.scope === AUDIENCE_SCOPES.GLOBAL) {
-        return { allowed: true, reason: 'global' };
+        return { allowed: false, reason: 'global_marketplace_disabled' };
+    }
+
+    if (normalizedAudience.scope === AUDIENCE_SCOPES.TUTOR_NETWORK) {
+        const activeTutorIds = normalizeIdArray(entitlements.activeTutorIds);
+        const activeTutorUserIds = normalizeIdArray(entitlements.activeTutorUserIds);
+        const targetTutorId = toStringId(tutorId);
+        const targetOwnerId = toStringId(ownerId);
+        const hasTutorAccess = Boolean(
+            (targetTutorId && activeTutorIds.includes(targetTutorId))
+            || (targetOwnerId && activeTutorUserIds.includes(targetOwnerId))
+        );
+        return {
+            allowed: hasTutorAccess,
+            reason: hasTutorAccess ? 'tutor_network_member' : 'tutor_network_mismatch',
+        };
     }
 
     const membershipInstituteIds = normalizeIdArray(entitlements.membershipInstituteIds);

@@ -3,6 +3,7 @@ import Razorpay from 'razorpay';
 import Payment from '../models/Payment.js';
 import { Institute } from '../models/Institute.js';
 import { logBillingEvent } from '../utils/billingLogger.js';
+import { getInstituteFreePlanFeatures, getTutorFreeSubscriptionConfig } from '../config/planDefaults.js';
 
 // Lazy Razorpay initialization
 let razorpay = null;
@@ -270,32 +271,19 @@ export const refundPayment = async (req, res) => {
             );
         } else if (payment.type === 'subscription_renewal') {
             if (payment.instituteId) {
-                // Revoke institute active plan
                 await Institute.findByIdAndUpdate(payment.instituteId, {
                     $set: {
                         subscriptionPlan: 'free',
-                        subscriptionExpiresAt: new Date(),
-                        "features.hlsStreaming": false,
-                        "features.customBranding": false,
-                        "features.zoomIntegration": false,
-                        "features.aiFeatures": false,
-                        "features.aiAssistant": false,
-                        "features.aiAssessment": false,
-                        "features.aiIntelligence": false,
-                        "features.customDomain": false,
-                        "features.advancedAnalytics": false,
-                        "features.apiAccess": false
-                    }
+                        subscriptionExpiresAt: null,
+                        features: getInstituteFreePlanFeatures(),
+                    },
                 });
             } else {
-                // Revoke personal plan
                 const User = mongoose.model('User');
                 await User.findByIdAndUpdate(payment.studentId, {
                     $set: {
-                        "personalSubscription.isActive": false,
-                        "personalSubscription.planName": "Free",
-                        "personalSubscription.subscriptionExpiresAt": new Date()
-                    }
+                        personalSubscription: getTutorFreeSubscriptionConfig(),
+                    },
                 });
             }
         }

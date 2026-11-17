@@ -11,13 +11,13 @@ import {
   addCourseAnnouncement,
   getInProgressCourses,
 } from '../controllers/courseController.js';
-import { protect, authorize, optionalAuth } from '../middleware/auth.js';
+import { protect, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Public routes
-router.get('/', optionalAuth, getAllCourses);
-router.get('/tutor/:tutorId', getCoursesByTutor);
+// Closed-workspace routes (authentication & active workspace required)
+router.get('/', protect, getAllCourses);
+router.get('/tutor/:tutorId', protect, getCoursesByTutor);
 
 // Protected routes
 router.get('/my-courses', protect, authorize('tutor', 'admin'), getMyCourses);

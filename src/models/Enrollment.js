@@ -33,8 +33,18 @@ const enrollmentSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'active', 'completed', 'dropped'],
+    enum: ['pending', 'pending_payment', 'active', 'completed', 'dropped'],
     default: 'active',
+  },
+  paymentMode: {
+    type: String,
+    enum: ['free', 'offline', 'online'],
+    default: 'free',
+  },
+  offlinePayment: {
+    receiptNote: { type: String, trim: true, default: '' },
+    verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    verifiedAt: { type: Date, default: null },
   },
   lastAccessed: {
     type: Date,

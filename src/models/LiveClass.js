@@ -48,7 +48,7 @@ const liveClassSchema = new mongoose.Schema({
             enum: Object.values(AUDIENCE_SCOPES),
             default: function () {
                 if (this?.batchId) return AUDIENCE_SCOPES.BATCH;
-                return this?.instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.GLOBAL;
+                return this?.instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.TUTOR_NETWORK;
             },
             index: true,
         },
@@ -122,7 +122,7 @@ liveClassSchema.pre('save', function () {
     }, {
         defaultScope: this.batchId
             ? AUDIENCE_SCOPES.BATCH
-            : (this.instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.GLOBAL),
+            : (this.instituteId ? AUDIENCE_SCOPES.INSTITUTE : AUDIENCE_SCOPES.TUTOR_NETWORK),
         defaultInstituteId: this.instituteId,
     });
 
