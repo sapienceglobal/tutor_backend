@@ -263,6 +263,12 @@ export const getLiveClasses = async (req, res) => {
       }
       query.tutorId = tutor._id;
 
+      if (req.workspace?.type === 'private_tutor') {
+        query.instituteId = null;
+      } else if (req.workspace?.type === 'institute' && req.workspace.instituteId) {
+        query.instituteId = req.workspace.instituteId;
+      }
+
       // Validate if specific course is requested, tutor MUST own it
       if (req.query.courseId) {
         const ownsCourse = await Course.exists({
