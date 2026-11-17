@@ -912,19 +912,23 @@ export const getTutorStats = async (req, res) => {
       });
     }
 
+    const workspaceFilter = getTutorWorkspaceCourseFilter(req);
+
     // Get courses statistics
-    const totalCourses = await Course.countDocuments({ tutorId: tutor._id });
+    const totalCourses = await Course.countDocuments({ tutorId: tutor._id, ...workspaceFilter });
     const publishedCourses = await Course.countDocuments({
       tutorId: tutor._id,
       status: 'published',
+      ...workspaceFilter,
     });
     const draftCourses = await Course.countDocuments({
       tutorId: tutor._id,
       status: 'draft',
+      ...workspaceFilter,
     });
 
     // Get all courses for this tutor in active workspace
-    const courses = await Course.find({ tutorId: tutor._id, ...getTutorWorkspaceCourseFilter(req) });
+    const courses = await Course.find({ tutorId: tutor._id, ...workspaceFilter });
 
     // Calculate total enrolled students (Active Students)
     const totalStudents = courses.reduce(
@@ -977,13 +981,15 @@ export const getTutorStats = async (req, res) => {
     // 1. Total Quizzes (Exams excluding practice sets)
     const totalQuizzes = await Exam.countDocuments({
       tutorId: tutor._id,
-      type: { $ne: 'practice' }
+      type: { $ne: 'practice' },
+      ...workspaceFilter,
     });
 
     // 2. Total Practice Sets
     const totalPracticeSets = await Exam.countDocuments({
       tutorId: tutor._id,
-      type: 'practice'
+      type: 'practice',
+      ...workspaceFilter,
     });
 
     // 3. Total Questions
@@ -995,7 +1001,7 @@ export const getTutorStats = async (req, res) => {
     // To avoid over-complexity/performance issues with massive question banks, we can simplify or use aggregation.
     // For now, let's sum up questions in all exams + question sets. 
     // Note: This might double count if questions are imported, but without a dedicated 'Question' model collection, this is best approximation.
-    const allExams = await Exam.find({ tutorId: tutor._id }, 'totalQuestions questions');
+    const allExams = await Exam.find({ tutorId: tutor._id, ...workspaceFilter }, 'totalQuestions questions');
     const examQuestionCount = allExams.reduce((acc, exam) => acc + (exam.totalQuestions || exam.questions.length), 0);
 
     const totalQuestions = questionSetCount + examQuestionCount;
